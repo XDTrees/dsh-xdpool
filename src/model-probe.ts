@@ -110,7 +110,14 @@ export async function probeModelConnectivity(
       provider,
       model,
       system: 'You are being called by a connection test. Answer in one short word.',
-      messages: [{ role: 'user', content: PROBE_PROMPT }],
+      // Content blocks, never a bare string. The host's typed contract is
+      // `content: readonly ContentBlock[]`, and `@deepseek-ai/dsh-llm-pi-ai`
+      // validates every outgoing message with `message.content.some(...)`.
+      // A string has no `.some`, so the probe died inside the host before the
+      // request left the process, and the card printed
+      // `content.some is not a function` — a shape error of ours wearing the
+      // costume of a broken model.
+      messages: [{ role: 'user', content: [{ type: 'text', text: PROBE_PROMPT }] }],
       maxTokens: PROBE_MAX_TOKENS,
       signal: timeout.signal,
     })
