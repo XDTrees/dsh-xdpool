@@ -1130,7 +1130,14 @@ export const SHARED_CARD_CSS = `
 .dsm-btn{appearance:none;font:inherit;cursor:pointer;border:1px solid transparent;border-radius:8px;padding:5px 14px;font-size:13px;line-height:1.5}
 .dsm-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
 .dsm-btn:disabled{opacity:.4;cursor:default;filter:saturate(.35);transform:none}
-.dsm-btn:disabled:hover{transform:none;background:transparent}
+/* Only the transform is neutralised here. Every variant's hover background is
+   already gated with ":not(:disabled)", so a disabled button never acquires one
+   and this rule has nothing to undo — but background:transparent used to sit
+   beside it, and at specificity (0,3,0) it beat .dsm-btn-primary's (0,1,0)
+   fill. The primary label is a dark colour designed for a light background, so
+   on a dark panel the fill went transparent, the text stayed dark, and the
+   button appeared to vanish the moment the cursor reached it. */
+.dsm-btn:disabled:hover{transform:none}
 .dsm-btn-outline{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);background:transparent;font-weight:500}
 .dsm-btn-outline:hover:not(:disabled){color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-dimmed);background:rgba(255,255,255,.04)}
 .dsm-btn-primary{background:var(--dsw-alias-label-primary,#e6e6e6);color:var(--dsw-alias-bg-layer-3,#202126)}
