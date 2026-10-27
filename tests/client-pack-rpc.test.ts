@@ -79,6 +79,53 @@ describe('installPackRpc', () => {
     // host, not to this module.
     expect(() => mod.installPackRpc({})).not.toThrow()
   })
+
+  it('lazily resolves the bridge when connection becomes available after installation', async () => {
+    let connection: unknown = undefined
+    const delayedCtx = {
+      get(name: string): unknown {
+        if (name === 'connection') return connection
+        return undefined
+      },
+    }
+    const mod = await freshModule()
+    mod.installPackRpc(delayedCtx)
+
+    // Initially connection is undefined, then it arrives before the first call:
+    const rpc = { call: vi.fn().mockResolvedValue({ ok: true, value: { accounts: [{ id: 'test-1' }] } }) }
+    connection = { rpc }
+
+    // callPack must lazily resolve and use the bridge rather than failing to raw fetch:
+    const res = await mod.callPack('account.list', { provider: 'test' })
+    expect(rpc.call).toHaveBeenCalledTimes(1)
+    expect(res).toEqual({ ok: true, value: { accounts: [{ id: 'test-1' }] } })
+  })
+
+  it('resets the bridge on transport failure so subsequent calls can re-resolve', async () => {
+    let rpcCall = vi.fn().mockRejectedValue(new Error('connection reset'))
+    let connection: unknown = { rpc: { call: rpcCall } }
+    const dynamicCtx = {
+      get(name: string): unknown {
+        if (name === 'connection') return connection
+        return undefined
+      },
+    }
+    const mod = await freshModule()
+    mod.installPackRpc(dynamicCtx)
+
+    // First call throws:
+    const res1 = await mod.callPack('account.list', {})
+    expect(res1.ok).toBe(false)
+    expect(res1.error?.message).toBe('connection reset')
+
+    // Connection recovers with a new healthy rpc:
+    const newRpcCall = vi.fn().mockResolvedValue({ ok: true, value: { recovered: true } })
+    connection = { rpc: { call: newRpcCall } }
+
+    const res2 = await mod.callPack('account.list', {})
+    expect(newRpcCall).toHaveBeenCalledTimes(1)
+    expect(res2).toEqual({ ok: true, value: { recovered: true } })
+  })
 })
 
 describe('callPack envelope round trip', () => {
@@ -91,6 +138,19 @@ describe('callPack envelope round trip', () => {
     const mod = await freshModule()
     mod.installPackRpc(hostileCtx({ rpc }))
     expect(mod.accountsFrom(await mod.callPack('account.list', { provider: 'zcode' }))).toEqual(accounts)
+  })
+
+  it('preserves distinct accounts that share the same nickname', async () => {
+    const accounts = [
+      { id: 'cline-1', provider: 'cline', nickname: 'user@example.com' },
+      { id: 'cline-2', provider: 'cline', nickname: 'user@example.com' },
+    ]
+    const rpc = { call: vi.fn().mockResolvedValue({ ok: true, value: { accounts } }) }
+    const mod = await freshModule()
+    mod.installPackRpc(hostileCtx({ rpc }))
+    const received = mod.accountsFrom(await mod.callPack('account.list', { provider: 'cline' }))
+    expect(received).toHaveLength(2)
+    expect(received.map(a => a.id)).toEqual(['cline-1', 'cline-2'])
   })
 
   it('keeps an account with no provider string rather than dropping it', async () => {

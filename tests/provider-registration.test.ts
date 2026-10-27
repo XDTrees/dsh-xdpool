@@ -112,6 +112,16 @@ describe('the startup trace distinguishes the two failure shapes', () => {
     expect(hostSource).toContain('registration FAILED:')
     expect(hostSource).toContain('providers registered')
   })
+  it('aliases buddy and workbuddy on the pool adapters to suppress duplicate pack registrations', () => {
+    const block = registrationBlock()
+    expect(block).toMatch(/registerAdapter\(\s*\[POOL_PROVIDER_BY_REGION\.cn,\s*['"]buddy['"]\]/)
+    expect(block).toMatch(/registerAdapter\(\s*\[POOL_PROVIDER_BY_REGION\.global,\s*['"]workbuddy['"]\]/)
+  })
+  it('aligns CODEBUDDY display name with WorkBuddy in the vendored pack', () => {
+    const packSource = readFileSync(new URL('../vendor/channel-pack/pack.js', import.meta.url), 'utf8')
+    expect(packSource).toMatch(/displayName:\s*["']WorkBuddy \((\\u56FD\\u5185\\u7248|国内版)\)["']/)
+    expect(packSource).toMatch(/attributionName:\s*["']WorkBuddy["']/)
+  })
   it('renders a thrown LlmError as text an operator can act on', () => {
     class LlmError extends Error {
       readonly code: string

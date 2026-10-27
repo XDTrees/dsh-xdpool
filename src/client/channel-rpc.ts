@@ -116,6 +116,9 @@ function resolvePackRpcBridge(): PackRpcBridge | undefined {
  * message.
  */
 export async function callPack(method: string, payload: Record<string, unknown>): Promise<ChannelRpcEnvelope> {
+  if (packRpcBridge === undefined) {
+    packRpcBridge = resolvePackRpcBridge()
+  }
   if (packRpcBridge !== undefined) {
     try {
       // The connection layer hands back `result.value` with one shell already
@@ -136,6 +139,8 @@ export async function callPack(method: string, payload: Record<string, unknown>)
       }
       return { ok: false, error: { message: 'rpc-empty' } }
     } catch (cause: unknown) {
+      // Clear the bridge so next call can re-resolve; do not replay mutation
+      packRpcBridge = undefined
       const message = cause instanceof Error ? cause.message : String(cause)
       return { ok: false, error: { message } }
     }

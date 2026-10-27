@@ -1739,11 +1739,11 @@ function canonicalJson(value: unknown): string {
         // keep being served.
         try {
           releaseAdapterCn = ctx.llm.registerAdapter(
-            [POOL_PROVIDER_BY_REGION.cn],
+            [POOL_PROVIDER_BY_REGION.cn, 'buddy'],
             adaptersByRegion.cn.adapter,
           )
           releaseAdapterGlobal = ctx.llm.registerAdapter(
-            [POOL_PROVIDER_BY_REGION.global],
+            [POOL_PROVIDER_BY_REGION.global, 'workbuddy'],
             adaptersByRegion.global.adapter,
           )
           releaseAdapterAggregate = ctx.llm.registerAdapter(

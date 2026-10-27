@@ -125,32 +125,14 @@ interface ChannelEntry {
 }
 
 /**
- * Collapse repeated sign-ins of the same person into one row.
- *
- * The pack's `account.create` appends unconditionally — it has no idea an
- * account with the same nickname already exists — so clicking "add account"
- * twice leaves two entries. The pack prunes them on disk, but the prune only
- * runs at mount and on the next login, so a card can still render the
- * pre-prune list. Same provider plus same nickname is the same person (the
- * pack rewrites the nickname from a random id to the real display name the
- * moment a login lands), so the newest entry wins: it is the one whose
- * credential was written last.
+ * Collapse repeated accounts by id.
  */
 function dedupeAccounts(accounts: readonly ChannelAccount[]): readonly ChannelAccount[] {
-  const byNickname = new Map<string, ChannelAccount>()
-  const order: string[] = []
+  const byId = new Map<string, ChannelAccount>()
   for (const account of accounts) {
-    const nickname = (account.nickname ?? '').trim()
-    const key = nickname === '' ? `id:${account.id}` : `n:${nickname}`
-    const kept = byNickname.get(key)
-    if (kept === undefined) {
-      byNickname.set(key, account)
-      order.push(key)
-      continue
-    }
-    byNickname.set(key, account)
+    byId.set(account.id, account)
   }
-  return order.map(key => byNickname.get(key)).filter((account): account is ChannelAccount => account !== undefined)
+  return [...byId.values()]
 }
 
 /** A refusal shaped like the pack's own envelope, so one catch covers both. */
@@ -245,19 +227,11 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
         // blank the other half of the card.
         const accountsPromise = callPack('account.list', { provider })
         const modelsPromise = callPack('model.list', { provider })
-        const balancesPromise = wantBalances
-          ? callPack('credits.balances', { provider })
-          : Promise.resolve(undefined)
-        const statusesPromise = wantBalances && channels.find(c => c.id === provider)?.credits?.status === true
-          ? callPack('credits.status', { provider })
-          : Promise.resolve(undefined)
-        // `callPack` answers an `ok: false` envelope as a value rather than a
-        // rejection, so the catch arms only cover the transport itself.
-        const [accounts, models, balances, creditStatuses] = await Promise.all([
+        // In phase 1 we only await accounts and models (local in-memory queries in pack.js),
+        // so cards land on screen immediately without being blocked by network requests.
+        const [accounts, models] = await Promise.all([
           accountsPromise.catch(() => refused('account.list failed')),
           modelsPromise.catch(() => refused('model.list failed')),
-          balancesPromise.catch(() => refused('credits.balances failed')),
-          statusesPromise.catch(() => refused('credits.status failed')),
         ])
         // `model.list` answers with a FLAT array for the one provider it was
         // asked about (`{models: [...]}`), not a provider→rows map, so it is
@@ -266,7 +240,6 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
         // published" line.
         const modelRows = modelsFrom(models.value)
         const modelEmptyBecauseRefused = modelRows.length === 0 && models.ok !== true
-        const balanceRows = balances === undefined ? [] : balancesFrom(balances)
         return [
           provider,
           {
@@ -276,12 +249,10 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
             // reader answers "which one do I pick?" in.
             models: sortChannelModels(modelRows),
             facts: new Map<string, PoolWebChannelModel>(),
-            balances: balanceRows,
-            statuses: creditStatuses === undefined ? [] : creditStatusesFrom(creditStatuses),
-            balancePending: false,
-            balanceError: balances !== undefined && !balances.ok && balanceRows.length === 0
-              ? (balances.error?.message ?? 'credits.balances refused')
-              : undefined,
+            balances: [] as readonly ChannelBalance[],
+            statuses: [] as readonly ChannelCreditStatus[],
+            balancePending: wantBalances,
+            balanceError: undefined as string | undefined,
             modelError: modelEmptyBecauseRefused
               ? (models.error?.message ?? 'model.list refused')
               : undefined,
@@ -299,39 +270,62 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
         }))
       if (!mountedRef.current) return
 
-      // Two phases, because the two halves answer at very different speeds.
-      // `provider.status` and `account.list` come back in tens of milliseconds,
-      // while the fact sweep (`/channels/models`, which resolves every model
-      // against the host's adapters) measured 16.5 seconds on a cold host. Doing
-      // that before `setEntries` kept every card blank for the whole sweep, which
-      // reads as "the pool did not load at all". So the cards land first and the
-      // facts are merged in when they arrive.
+      // Two phases: Phase 1 renders all available channel cards immediately.
+      // Balances, credit statuses and fact descriptors are enriched per provider
+      // asynchronously in Phase 2 so slow remote requests cannot gate the cards.
       setEntries(next)
       setError(undefined)
 
       if (next.length === 0) {
-        // Nothing to enrich, and the empty page would otherwise be silent. A
-        // statuses answer that named providers but counted zero accounts is a
-        // real "no sign-ins"; an answer that came back refused is not, and must
-        // say so or the reader cannot tell the two apart.
         if (!statusAnswer.ok) {
           setError(statusAnswer.error?.message ?? 'provider.status refused')
         }
         return
       }
 
-      const idsByProvider: Record<string, readonly string[]> = {}
-      for (const [provider, entry] of perProvider) {
-        if (entry.models.length > 0) idsByProvider[provider] = entry.models.map(model => model.id)
+      // Phase 2: Enrich each provider independently in the background.
+      const updateProvider = (provider: string, patch: Partial<ChannelEntry>): void => {
+        if (!mountedRef.current) return
+        setEntries(previous => previous.map(entry =>
+          entry.channel.id === provider ? { ...entry, ...patch } : entry
+        ))
       }
-      const facts = await fetchChannelModels(next.map(entry => entry.channel.id), idsByProvider)
-        .catch((): ReadonlyMap<string, readonly PoolWebChannelModel[]> => new Map())
-      if (!mountedRef.current) return
-      if (facts.size === 0) return
-      setEntries(previous => previous.map(entry => ({
-        ...entry,
-        facts: new Map((facts.get(entry.channel.id) ?? []).map(model => [model.id, model])),
-      })))
+
+      for (const entry of next) {
+        const provider = entry.channel.id
+        if (entry.channel.credits !== undefined) {
+          void callPack('credits.balances', { provider })
+            .catch(() => refused('credits.balances failed'))
+            .then(answer => {
+              const balances = balancesFrom(answer)
+              updateProvider(provider, {
+                balances,
+                balancePending: false,
+                balanceError: !answer.ok && balances.length === 0
+                  ? (answer.error?.message ?? 'credits.balances refused')
+                  : undefined,
+              })
+            })
+          if (entry.channel.credits.status === true) {
+            void callPack('credits.status', { provider })
+              .catch(() => refused('credits.status failed'))
+              .then(answer => {
+                updateProvider(provider, {
+                  statuses: creditStatusesFrom(answer),
+                })
+              })
+          }
+        }
+        const ids = entry.models.map(model => model.id)
+        void fetchChannelModels([provider], ids.length > 0 ? { [provider]: ids } : {})
+          .catch((): ReadonlyMap<string, readonly PoolWebChannelModel[]> => new Map())
+          .then(facts => {
+            if (!facts.has(provider)) return
+            updateProvider(provider, {
+              facts: new Map((facts.get(provider) ?? []).map(model => [model.id, model])),
+            })
+          })
+      }
     } catch (cause) {
       if (!mountedRef.current) return
       setError(cause instanceof Error ? cause.message : String(cause))
