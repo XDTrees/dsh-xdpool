@@ -1,7 +1,78 @@
 # Changelog
 本项目的所有重要变更都会记录在此文件。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
-## 未发布 — CodeArts 的输出上限是上限，不是默认值
+
+## 2.5.0 — 十张 issue 一起收：失效账号、第三条指纹、CodeArts 上限、保存回滚、侧栏开关
+
+> #68 到 #83 攒了十来张单子，其中三张（#72/#73/#74）是同一类毛病：代码把一个「没数据」和「数据是空」当成了同一件事。这批按这个线索统一收拾，另外把社区两个 PR 收了进来。
+
+### 最要紧的三条
+
+| 症状 | 真实原因 |
+| --- | --- |
+| 一个失效账号吃掉整次请求的 8 次重试，最后报「API 密钥无效」 | 以「刷新拿到了新 token」判定账号仍可用。有一类账号 refresh 长期有效、chat 恒回 403，判死条件因此恒假 |
+| buddy 某一轮被中断后，之后每一轮都失败（`a message has empty content`） | 中断留下的 assistant 消息只有 reasoning、没有正文，序列化时空字符串被原样发到 wire，国内网关 400/11151 且不在重试集合里 |
+| zcode 全部模型勾选后，每次重启又变回全禁用 | 用户全开时黑名单是空对象，与「从未选过」无法区分，启动补静音据此又把它们全关一遍 |
+
+### #68 失效账号耗尽重试预算
+
+池车道以「刷新成功」当「账号可用」。对 refresh 长期有效而业务侧恒 403 的账号，`recovered` 与 `accessToken !== before` 恒真 ⇒ 永不 `penalizeCredentialDead` ⇒ `available()` 不排除 ⇒ `priority` 下 `acquire()` 一直返回同一个 ⇒ 8 次预算全花在它身上。
+
+改法：单次请求内只允许该账号换一次票（`refreshedThisRequest`），第二次仍报 `session_dead` 就直接判死并轮到下一个账号。压缩重试路径同步。取「第二次」而不是把惩罚提到刷新之前，是为了仍给真正过期的 token 一次机会。
+
+### #70 侧栏入口开关
+
+新增 `sidebarRow` 配置（默认开）。**只**控制左侧栏那一行：设置页的 XD Pool 卡片始终注册，模型池不受影响 —— 关掉入口不能把开关本身也锁在门外。开关写在卡片里，`apply()` 与卡片读同一份设置镜像，因此两边不会给出不同答案；宿主发布了变更通知的平台上无需重启。
+
+### #72 订阅包余额虚高 30 倍
+
+`fetchCredits` 只把 `CapacityType === 4` 当月包，而实际有三种：`1`=一次性包、`2`=**周期订阅包**（12 期 × 4000，`CapacityRemain` 是整期剩余、`CycleCapacityRemain` 才是当期剩余）、`4`=月包。`type=2` 落进「一次性」分支，整期额度被当余额。三账号实测：官方 3,399.8 / 插件 102,396 → 修复后 3,366；另两个只有月包的账号（3,049 / 2,771）不变，所以长期没被发现。
+
+`expiresAtMs` 对 `type=2` 取 `DeductionEndTime`，**不能用 `CycleEndTime`** —— 它每月都到，会让「会过期」天天报警。空包只在一次性包时丢弃，月包当期耗尽要留着显示「0/500 · 下月回满」。
+
+Refs #72。
+
+### #73 中断回合留下的空 assistant 消息
+
+`serializeMessages2` 出口加 `isBlankWireMessage` / `dropBlankWireMessages`，`serializeMessages4` 同步。三点取舍都用真实请求验证过：`user` 空消息不动（两网关都容忍）；不伪造占位内容（会污染模型看到的对话）；**有 `tool_calls` 的 assistant 消息绝不删**（它是 tool 结果的配对锚点，删了造孤儿）。
+
+实测矩阵（国内）：空 assistant 400/11151；空 system 同样 400/11151；空 user 200；`content:null` + `tool_calls` 200；删掉空 assistant 后正常 SSE。国际网关对全部形态都 200，所以故障面目前只在 buddy 车道。
+
+Refs #73。
+
+### #74 全开渠道每次重启被重新禁用
+
+`setModelDisabled` 打开模型时是**删键**而不是写 `false`，于是「用户全开」与「从未选择」在磁盘上是同一个空对象。新增持久标记 `selectionTouched`：四个用户入口（`setModelDisabled` / `setModelsDisabled` / `clearModelsDisabled` / `clearDisabledModels`）都置位，启动补静音只在标记缺失时执行，且自身写黑名单时传 `{ mark: false }` 不置位。
+
+影响面是「所有模型都打开」的渠道，目录越小越必然（zcode 2 个、gemini/minimax/raccoon 同理）；部分启用的渠道免疫，这解释了为什么只有 zcode 反复被报。
+
+Refs #74。
+
+### #75 保存模型选择后界面回滚 30 秒
+
+`saveModels` 收尾是 `setDraftFor(region, undefined)`，而它的语义是「退回池子最后报告的状态」，那份状态靠 30 秒轮询刷新 —— 于是保存后卡片画的是**保存前**的清单，用户在这 30 秒里再点一次保存，写入的就是回滚后的旧清单。另外 `settingsScope.set` 被声明成 `Promise<void>`，把宿主 revision 冲突时返回的 `false` 丢掉了，被拒绝也提示「已保存」。
+
+改法：先 `refresh(region)` 再清草稿（重读失败则保留草稿）；`set` 返回类型放宽到 `boolean | void`，`=== false` 时保留草稿、报「设置已在别处被修改」、不显示已保存。
+
+Refs #75。
+
+### #82 RPC 桥惰性解析
+
+2.4.6 的 CHANGELOG 声称这条已修，但发布产物里 `installPackRpc` 仍只捕获一次。现已改为每次 `callPack` 前 `if (packRpcBridge === undefined) packRpcBridge = resolvePackRpcBridge()`：`connection` 就绪晚于 `apply()` 时，桥不会再永久为空、退化成裸 `fetch('/api/channel-pack')` 吃 401 而让账号池整片空白。
+
+Refs #82。
+
+### 同批合并的社区 PR
+
+- **#81（[@jmglsi](https://github.com/jmglsi)）** 第三条内容指纹：`Relative paths resolve from the workspace root` → `are resolved against the workspace root`。用陈述句的过去分词形式，语义、长度、换行位置都不变，被网关字符串表收录的子串消失。
+- **#84（[@Refeain](https://github.com/Refeain)）** CodeArts 输出上限见下节。
+
+### #69 / #71 尚未定性
+
+`#69 CodeArts 提示密钥无效` 只有一句话。它至少有两条来源：本条 `InferHub.4001.200`（SSE 帧里的 200，不是 4xx）与真正的 401/403。前者已随 #83 修掉；后者需要失败时的原始响应才能确认。
+`#71 kimi k3.1 pro 没有响应` 同样只有一句话，且目录里没有 `kimi-k3.1-pro` 这个 id（有 `kimi-k3-1`）。请在 issue 里补一下：是空回复、卡住不动、还是有报错文案。
+
+### 详情：CodeArts 的输出上限是上限，不是默认值
 
 > 华为这条链接 65536 能用、131072 就空流，代码里也一直写着这个数字。但它是 `options.maxTokens ?? 65536` —— 只兜底，不设界。
 
@@ -38,7 +109,7 @@ TRAE 与 Cline 早就这么做了（`clampTraeMaxTokens` / `clampClineMaxTokens`
 
 Refs #83, #69。
 
-## 未发布 — 第三条内容指纹：文件引用指引里的 “resolve from the workspace root”
+### 详情：第三条内容指纹：文件引用指引里的 “resolve from the workspace root”
 
 > 2.4.1/2.4.2 修好的两个指纹管了一周，10 月 28 日又整片 400/11128。这次被点名的不是产品名，而是一句普通说明。
 
@@ -58,6 +129,12 @@ DSH 在 agent 有 `read` 工具时会贡献一段文件引用指引，开头是�
 
 ### 其他
 - 全套 79 文件 1028 用例（1026 通过 + 2 跳过）。
+
+### 验证
+
+- 全套 **80 文件 / 1033 用例**（含 #81 的 5 例、#84 的 5 例、本批新增）
+- `pack.js` 每次改动后 `node --check` 通过
+- server `tsc` 0 错；client `tsc` 的 6 条是既存问题（`accounts.ts` / `context-budget.ts` / `free-upstream.ts` 的 Node 类型不匹配），改前改后数量一致
 
 ## 2.4.6 — 扫码账号每次打开都空白：一份数据卡在两个细节里
 

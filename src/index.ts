@@ -555,7 +555,12 @@ export const Config: z<Config> = z.object({
   modelSelectionCn: asVolatile(modelSelectionSchema.description('Model selection for the domestic gateway')),
   modelSelectionGlobal: asVolatile(modelSelectionSchema.description('Model selection for the international gateway')),
   automation: asVolatile(automationSchema.description('Daily points automation (activity report, task claiming, check-in)')),
-  automationEarnings: asVolatile(z.any().description('Automation earnings ledger (written by the scheduler)'))
+  automationEarnings: asVolatile(z.any().description('Automation earnings ledger (written by the scheduler)')),
+  // Issue #70. Read by the client bundle (which owns the sidebar registration)
+  // as well as stored here, so it must be a plain schema field rather than a
+  // scheduler-shaped blob: the settings mirror is the only channel both sides
+  // share, and an undeclared key would be stripped on the way in.
+  sidebarRow: asVolatile(z.boolean().default(true).description('Show the XD Pool entry in the left sidebar (the Settings page keeps working either way)'))
 })
 /** Everything the CLI needs from a live plugin instance. */
 export interface WorkBuddyPoolApi {
@@ -1647,7 +1652,13 @@ function canonicalJson(value: unknown): string {
         // service first owns it. So the wiring is attempted either way, and a
         // loss is not an error: it is just another reader of the same object.
         if (stopped) return
-        void adoptChannelPackAccounts(ctx, core.pool, ctx.logger)
+        // `scoped`, not `ctx`: the pack runs on this injected fiber and
+        // `ctx.provide('accountPool', …)` publishes into THAT fiber's service
+        // store. Cordis scopes the store per isolate, so reading it from the
+        // outer apply ctx finds nothing — and the pool then silently keeps
+        // serving only the desktop credentials, which is exactly how the scanned
+        // accounts went missing while the channel cards still rendered.
+        void adoptChannelPackAccounts(scoped, core.pool, ctx.logger)
       })
   })
   // The compressor behind the billion card. Mounted from its own fiber, off the

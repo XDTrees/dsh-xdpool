@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { createElement as h } from 'react'
+import { SIDEBAR_ROW_FIELD, readSidebarRow } from './sidebar-row.ts'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
@@ -80,8 +81,15 @@ export interface PoolCardInjected {
 export interface PoolCardSettingsScope {
   getSnapshot(): { writable?: boolean; value?: unknown }
   subscribe?(listener: () => void): () => void
-  /** Write one field of the plugin settings section. */
-  set?(field: string, value: unknown): Promise<void> | void
+  /**
+   * Write one field of the plugin settings section.
+   *
+   * The host answers `false` when it refused the write (a revision conflict —
+   * it has already re-read the document for us, so it does not throw), and an
+   * older host answers nothing at all. Both have to be representable, otherwise
+   * a refusal is indistinguishable from a success (issue #75).
+   */
+  set?(field: string, value: unknown): Promise<boolean | void> | boolean | void
 }
 /** Props delivered by the Plugin configuration item slot. */
 /**
@@ -456,6 +464,19 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
   // The slot tells us whether the settings document is writable; a
   // read-only scope (locked profile) renders the model rows disabled.
   const settingsWritable = settingsScope?.getSnapshot().writable === true
+  /**
+   * Whether the plugin owns a row in the left sidebar (issue #70).
+   *
+   * Seeded from, and kept in step with, the settings mirror rather than from the
+   * pool status: the row is registered by `apply()`, before any card exists, and
+   * both sides must answer the same question the same way.
+   */
+  const [sidebarRow, setSidebarRowState] = useState(() => readSidebarRow(settingsScope))
+  const [sidebarRowBusy, setSidebarRowBusy] = useState(false)
+  useEffect(() => {
+    const unsubscribe = settingsScope?.subscribe?.(() => { setSidebarRowState(readSidebarRow(settingsScope)) })
+    return () => { unsubscribe?.() }
+  }, [settingsScope])
   /** Which region tab is showing. A CN-only install never leaves this. */
   const [activeRegion, setActiveRegion] = useState<'cn' | 'global'>('cn')
   /**
@@ -1110,7 +1131,34 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
       for (const [id, entry] of Object.entries(local)) {
         if (entry.budget !== undefined) contextBudgets[id] = entry.budget
       }
-      await write.call(settingsScope, MODEL_SELECTION_KEY[region], { enabledModelIds, imageModelIds, contextBudgets })
+      // The host reports a revision conflict by RETURNING false, not by throwing
+      // (it has already re-read the document). Discarding that value is how a
+      // rejected write used to be announced as "saved" (issue #75).
+      const accepted = await write.call(
+        settingsScope,
+        MODEL_SELECTION_KEY[region],
+        { enabledModelIds, imageModelIds, contextBudgets },
+      )
+      if (accepted === false) {
+        // Keep the draft: the user's ticks are still the thing they meant to
+        // save, and a rollback would invite them to re-save the stale list.
+        if (mounted.current) {
+          setError(t?.('row.modelsConflict') ?? 'The settings changed elsewhere; review and save again')
+        }
+        return
+      }
+      // Re-read BEFORE dropping the draft. `setDraftFor(region, undefined)` does
+      // not mean "keep showing what I just wrote" — it means "fall back to the
+      // last status the pool reported", which is refreshed by a 30s poll. Without
+      // this read the card paints the PRE-save list for up to half a minute, and
+      // a second click in that window saves the rolled-back selection.
+      const reread = await refresh(region)
+      if (reread === undefined) {
+        // The write landed but we cannot prove what it landed on; keeping the
+        // draft is the honest state, and the poll will settle it shortly.
+        if (mounted.current) setFlash(t?.('row.modelsSaved') ?? 'Saved')
+        return
+      }
       setDraftFor(region, undefined)
       if (mounted.current) setFlash(t?.('row.modelsSaved') ?? 'Saved')
     } catch (cause: unknown) {
@@ -1148,6 +1196,39 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
       for (const other of REGION_CARDS) await refresh(other)
     } catch (cause: unknown) {
       if (mounted.current) setError(String(cause))
+    }
+  }
+  /**
+   * Turn the sidebar row on or off (issue #70).
+   *
+   * Written through the same settings field `apply()` reads, so the two agree
+   * without a new endpoint. The row itself is owned by the bundle registration,
+   * so the mirror's change notification is what makes this take effect without a
+   * restart on hosts that publish one; everywhere else it lands on next launch,
+   * which the hint text says rather than implies.
+   */
+  const setSidebarRow = async (next: boolean): Promise<void> => {
+    const write = settingsScope?.set
+    if (write === undefined) {
+      setError(t?.('row.modelsSaveError', { message: 'settings scope is read-only' })
+        ?? 'settings scope is read-only')
+      return
+    }
+    setSidebarRowBusy(true)
+    setFlash(undefined)
+    try {
+      const accepted = await write.call(settingsScope, SIDEBAR_ROW_FIELD, next)
+      if (accepted === false) {
+        if (mounted.current) {
+          setError(t?.('row.modelsConflict') ?? 'The settings changed elsewhere; review and save again')
+        }
+        return
+      }
+      if (mounted.current) setSidebarRowState(next)
+    } catch (cause: unknown) {
+      if (mounted.current) setError(String(cause))
+    } finally {
+      if (mounted.current) setSidebarRowBusy(false)
     }
   }
   /**
@@ -1482,6 +1563,37 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                     </p>
                   </section>}
               
+              {/* Issue #70: a switch over the sidebar entry, and only over it.
+                  The Settings page keeps the card either way (that is the
+                  escape hatch — hiding the row must never leave the switch out
+                  of reach), and the model pool is untouched: this is a question
+                  about where the page is reachable from, not about what it
+                  serves. */}
+              <section className="dsm-xdpool-card dsm-xdpool-sidebar-row" aria-label={t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}>
+                <div className="dsm-xdpool-sidebar-row-head">
+                  <h3 className="dsm-xdpool-usage-title">{t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}</h3>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={sidebarRow}
+                    disabled={!settingsWritable || sidebarRowBusy}
+                    className={`dsm-xdpool-auto-switch${sidebarRow ? ' dsm-xdpool-auto-switch-on' : ''}`}
+                    onClick={() => { void setSidebarRow(!sidebarRow) }}
+                  >
+                    {sidebarRowBusy
+                      ? (t?.('row.autoBusy') ?? 'Saving…')
+                      : sidebarRow
+                        ? (t?.('row.autoOn') ?? 'On')
+                        : (t?.('row.autoOff') ?? 'Off')}
+                  </button>
+                </div>
+                <p className="dsm-xdpool-usage-note">
+                  {sidebarRow
+                    ? (t?.('row.sidebarRowOn') ?? 'XD Pool has its own row in the left sidebar. Turn it off to open the pool from Settings instead.')
+                    : (t?.('row.sidebarRowOff') ?? 'The sidebar row is hidden; the pool still opens from Settings → XD Pool, and models are unaffected.')}
+                </p>
+              </section>
+
               {/* Two region cards side by side, one per supplier lane.
                   Both are always rendered, so a lane with no accounts reads as
                   "not signed in here yet" rather than a tab that only appears
