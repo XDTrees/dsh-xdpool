@@ -29453,6 +29453,15 @@ var channelPackSchema = Schema.object({
   // **必须显式声明**：SettingsStore 的 `scope.replace()` 是整体覆盖，
   // schema 里没声明的键会被 schemastery 剥掉，写回时就此静默丢失。
   contextBudgets: Schema.dict(Schema.any()).default({}),
+  // ── 本地扩展（dsh-xdpool，2026-10-26）────────────────────────────────
+  // 记录「用户亲手动过这个 provider 的模型选择」，用来把「用户把模型全部
+  // 打开」和「用户从未选择过」区分开。`disabledModels` 本身做不到这件事：
+  // 打开模型时我们**删除**键而不是写 false（见 setModelDisabled 注释），
+  // 所以「全开」与「从未碰过」都表现为空表。启动补静音原先拿
+  // `disabledModelsFor(provider).size === 0` 当判据，于是把「全开」当成
+  // 「从未选择」，每次重启又把整目录静音回去 —— 目录越小的渠道越必然中招
+  // （zcode 只有两个模型，用户勾满之后每次重启都变回全禁用）。
+  selectionTouched: Schema.dict(Schema.any()).default({}),
   loomyPermanentLocked: Schema.boolean().default(false),
   gatewayEnabled: Schema.boolean().default(true),
   providerOrder: Schema.array(Schema.string()).default([])
@@ -29511,6 +29520,14 @@ function sanitizeContextBudgets(raw) {
   }
   return result;
 }
+function sanitizeSelectionTouched(raw) {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const result = {};
+  for (const [provider, value] of Object.entries(raw)) {
+    if (value === true && provider.length > 0) result[provider] = true;
+  }
+  return result;
+}
 function sanitizeAccounts(raw) {
   if (!Array.isArray(raw)) return [];
   const accounts = [];
@@ -29542,6 +29559,7 @@ var SettingsStore = class {
       accounts: sanitizeAccounts(value.accounts),
       disabledModels: sanitizeDisabledModels(value.disabledModels),
       contextBudgets: sanitizeContextBudgets(value.contextBudgets),
+    selectionTouched: sanitizeSelectionTouched(value.selectionTouched),
       // 只是**镜像**（权威表在 permanent-locks.json）；老文档没这个键 → false。
       loomyPermanentLocked: value.loomyPermanentLocked === true,
       // 老文档没这个键 → 启用，与升级前行为一致。
@@ -29557,6 +29575,9 @@ var SettingsStore = class {
       // 预算表丢失的后果只是「下次选择器回到原生窗口」，用户重选一次即可
       // （纯偏好、可逆），故接受老版本重写时丢掉本键。
       contextBudgets: state.contextBudgets ?? {},
+      // 丢了这个标记的后果是「下次启动把该渠道重新静音一次」，用户再勾一遍
+      // 就会重新置位，属可逆，故与 contextBudgets 同样接受老版本重写时丢掉。
+      selectionTouched: state.selectionTouched ?? {},
       // 镜像字段由 AccountPool 与独立文档**同源写出**：同机上只认这个字段的
       // 旧版本代码（其它 profile）读它、也会原样写回它，故两边不会脱节。
       loomyPermanentLocked: state.loomyPermanentLocked === true,
@@ -29661,6 +29682,7 @@ var FileStore = class {
         accounts: sanitizeAccounts(value.accounts),
         disabledModels: sanitizeDisabledModels(value.disabledModels),
         contextBudgets: sanitizeContextBudgets(value.contextBudgets),
+    selectionTouched: sanitizeSelectionTouched(value.selectionTouched),
         // 只是镜像（权威表在 permanent-locks.json）；老文档没这个键 → false。
         loomyPermanentLocked: value.loomyPermanentLocked === true,
         // 老文档没这个键 → 启用，与升级前行为一致。
@@ -29705,6 +29727,9 @@ var FileStore = class {
         accounts,
         disabledModels: {},
         contextBudgets: {},
+        // 从凭据文件重建的文档不含任何选择历史 → 空表，让补静音照常生效
+        // （这些账号确实是「从未选择过」，正是补静音要照顾的情形）。
+        selectionTouched: {},
         // 凭据文件里没有任何锁定信息 → 镜像写 false（权威表另有其文档）。
         loomyPermanentLocked: false,
         // 恢复出的文档本来就不含任何开关信息 → 启用（与全新安装一致）。
@@ -29857,6 +29882,17 @@ var AccountPool = class {
    */
   contextBudgetCache = {};
   /**
+   * 「用户动过该 provider 的模型选择」标记的进程内权威副本。
+   *
+   * 存在的唯一理由是把「用户把模型全部打开」与「用户从未选择过」区分开：
+   * 打开模型时黑名单里**删除**键（见 {@link setModelDisabled}），所以「全开」
+   * 与「从未碰过」的 `disabledModels` 都是空表，单看黑名单无法分辨，启动补
+   * 静音就会把「全开」当成「从未选择」再静音一次。
+   *
+   * ⚠️ 只记录已置位的 provider（缺键 = 从未选择）。
+   */
+  selectionTouchedCache = {};
+  /**
    * 「锁定永久积分」开关表的**权威进程内副本**（与 {@link cache} 同理）。
    *
    * ⚠️ 每个 provider 一项（Loomy / CodeBuddy / WorkBuddy 各自独立），
@@ -29907,6 +29943,7 @@ var AccountPool = class {
       this.cache = state.accounts;
       this.modelCache = state.disabledModels;
       this.contextBudgetCache = state.contextBudgets ?? {};
+      this.selectionTouchedCache = state.selectionTouched ?? {};
       this.gatewayEnabledCache = state.gatewayEnabled !== false;
       this.providerOrderCache = state.providerOrder ?? [];
     }
@@ -29984,6 +30021,7 @@ var AccountPool = class {
         accounts: this.cache,
         disabledModels: this.modelCache,
         contextBudgets: this.contextBudgetCache,
+        selectionTouched: this.selectionTouchedCache,
         ...this.lockFields(),
         // ⚠️ 必须与账号、黑名单取自**同一时刻**的快照（见本方法的注释）：
         // 分两次快照会让同一份文档里的字段互相矛盾。
@@ -30105,6 +30143,9 @@ var AccountPool = class {
     else delete perProvider[modelId];
     if (Object.keys(perProvider).length === 0) delete next[provider];
     else next[provider] = perProvider;
+    // 先置位再落盘：`writeModels` 排队的快照里已带上标记，一次写入同时完成
+    // 「改黑名单」和「记录用户动过选择」，不会出现只落了一半的状态。
+    this.selectionTouchedCache = { ...this.selectionTouchedCache, [provider]: true };
     await this.writeModels(next);
   }
   /**
@@ -30130,6 +30171,29 @@ var AccountPool = class {
   contextBudgetsFor(provider) {
     this.ensureLoaded();
     return { ...this.contextBudgetCache[provider] ?? {} };
+  }
+  /**
+   * 该 provider 的模型选择是否被用户动过。
+   *
+   * 启动补静音据此判断「要不要补」：动过就尊重用户的当前状态（哪怕是全开，
+   * 表现为空黑名单），没动过才补静音。
+   */
+  selectionTouched(provider) {
+    this.ensureLoaded();
+    return this.selectionTouchedCache[provider] === true;
+  }
+  /**
+   * 置位「用户动过该 provider 的模型选择」并落盘。
+   *
+   * ⚠️ 幂等：已置位直接返回，不产生写入 —— 否则每次勾选都要重写整份文档。
+   */
+  async touchSelection(provider) {
+    this.ensureLoaded();
+    if (this.selectionTouchedCache[provider] === true) return;
+    const next = { ...this.selectionTouchedCache, [provider]: true };
+    this.selectionTouchedCache = next;
+    if (this.store.kind === "memory") return;
+    await this.queueStoreSave();
   }
   /**
    * 设置/清除单个模型的上下文预算。
@@ -30160,13 +30224,18 @@ var AccountPool = class {
    * 注意这与 {@link clearDisabledModels} **不对称** —— 后者的语义是「清空」，
    * 即使传入空列表也仍有事可做（详见该方法注释）。
    */
-  async setModelsDisabled(provider, modelIds) {
+  async setModelsDisabled(provider, modelIds, options) {
     if (modelIds.length === 0) return;
     this.ensureLoaded();
     const next = { ...this.modelCache };
     const perProvider = { ...next[provider] ?? {} };
     for (const id of modelIds) perProvider[id] = true;
     next[provider] = perProvider;
+    // @param options.mark - 默认 true（用户动作）；自动静音传 false，见
+    // touchSelection 的说明 —— 它不是「用户动过选择」。
+    if (options?.mark !== false) {
+      this.selectionTouchedCache = { ...this.selectionTouchedCache, [provider]: true };
+    }
     await this.writeModels(next);
   }
   /**
@@ -30199,6 +30268,9 @@ var AccountPool = class {
     const next = { ...this.modelCache };
     if (Object.keys(nextPerProvider).length === 0) delete next[provider];
     else next[provider] = nextPerProvider;
+    // 注意这条路径也会让黑名单变成空表（用户把该组全开），正是「全开」最
+    // 容易发生的场景，必须同样置位，否则启动补静音会把它们再关回去。
+    this.selectionTouchedCache = { ...this.selectionTouchedCache, [provider]: true };
     await this.writeModels(next);
   }
   /**
@@ -30265,6 +30337,8 @@ var AccountPool = class {
     if (this.modelCache[provider] === void 0) return;
     const next = { ...this.modelCache };
     delete next[provider];
+    // 「全部打开」的最高频入口，必须置位（见 selectionTouched 注释）。
+    this.selectionTouchedCache = { ...this.selectionTouchedCache, [provider]: true };
     await this.writeModels(next);
   }
   /** 持久化模型黑名单（同时更新进程内权威副本）。 */
@@ -34712,6 +34786,37 @@ function contentToText2(content) {
   return content.filter((block) => typeof block === "object" && block !== null && block.type === "text").map((block) => String(block.text)).join("");
 }
 var TOOL_RESULT_IMAGE_TEXT = "Attached image(s) from tool result:";
+/**
+ * LOCAL ADAPTATION: a wire message that carries no payload at all.
+ *
+ * The domestic gateway rejects `{ role: "assistant", content: "" }` with
+ * 400 / code 11151 "a message has empty content". That shape is reachable
+ * without the model doing anything wrong: a turn interrupted while the model
+ * was still thinking leaves an assistant message holding only reasoning, and
+ * the serializers below emit it with an empty body because the domestic
+ * gateway does not read `reasoning_content`. One such message then poisons
+ * every later turn of that conversation, and retrying cannot help because the
+ * offending message is history.
+ *
+ * `user` messages are deliberately NOT filtered: both gateways accept an empty
+ * user message (verified against live endpoints), and dropping one would erase
+ * a turn boundary the model is reading.
+ */
+function isBlankWireMessage(entry) {
+  if (entry === null || typeof entry !== "object") return false;
+  if (entry.role !== "assistant" && entry.role !== "system") return false;
+  // A tool call IS content: it anchors the matching tool result, so removing
+  // the message would orphan that result and fail differently.
+  if (Array.isArray(entry.tool_calls) && entry.tool_calls.length > 0) return false;
+  const content = entry.content;
+  if (typeof content === "string") return content.trim().length === 0;
+  if (Array.isArray(content)) return content.length === 0;
+  return false;
+}
+function dropBlankWireMessages(wire) {
+  const kept = wire.filter((entry) => !isBlankWireMessage(entry));
+  return kept.length === wire.length ? wire : kept;
+}
 function serializeMessages2(messages, imageUrls) {
   const wire = [];
   let pendingToolImages = [];
@@ -34790,7 +34895,7 @@ function serializeMessages2(messages, imageUrls) {
     }
   }
   flushToolImages();
-  return wire;
+  return dropBlankWireMessages(wire);
 }
 function errorMessage2(error) {
   if (error instanceof Error) return error.message;
@@ -38247,7 +38352,7 @@ function serializeMessages4(messages, imageUrls) {
     }
   }
   flushToolImages();
-  return wire;
+  return dropBlankWireMessages(wire);
 }
 function errorMessage4(error) {
   if (error instanceof Error) return error.message;
@@ -68177,12 +68282,19 @@ function apply(ctx, config = {}) {
         all.map((account) => account.provider).filter((provider) => typeof provider === "string" && provider !== "" && !POOL_OWNED_PROVIDERS.has(provider))
       );
       for (const provider of providers) {
+        // 「黑名单为空」有两种可能：用户从未选择过，或者用户把模型**全部打开**了
+        // （打开时我们删除键，所以两者都是空表）。单看黑名单无法分辨，一律补静音
+        // 就会把用户特意全开的渠道每次重启又关回去 —— 目录越小的渠道越必然中招。
+        // 只有「用户没动过选择」才补。
+        if (pool.selectionTouched(provider)) continue;
         if (pool.disabledModelsFor(provider).size !== 0) continue;
         const catalog = channelPackModelAdaptersRef?.[provider]?.listAllModels();
         if (!Array.isArray(catalog) || catalog.length === 0) continue;
-        await pool.setModelsDisabled(provider, catalog.map((model) => model.id));
+        // mark: false —— 自动静音不是「用户动过选择」，不能让它把标记置位，
+        // 否则此后用户全开也会因为标记已在而被永久跳过后续逻辑。
+        await pool.setModelsDisabled(provider, catalog.map((model) => model.id), { mark: false });
         ctx.logger.info(
-          `[channel-pack] ${provider} 启动补静音（已有账号但黑名单为空）：已默认静音 ${catalog.length} 个模型（可在账号池页勾选启用）`
+          `[channel-pack] ${provider} 启动补静音（已有账号但从未选择过模型）：已默认静音 ${catalog.length} 个模型（可在账号池页勾选启用）`
         );
       }
     } catch (error) {
@@ -68196,15 +68308,19 @@ function apply(ctx, config = {}) {
     const isFirstForProvider = pool.listAccountsByProvider(entry.provider).length === 0;
     const hadEmptyBlocklist = pool.disabledModelsFor(entry.provider).size === 0;
     const result = await rawAddAccount(entry);
-    if ((isFirstForProvider || hadEmptyBlocklist) && !POOL_OWNED_PROVIDERS.has(entry.provider)) {
+    // 同上：`hadEmptyBlocklist` 分不清「从未选择」与「用户全开」，再加一道
+    // `selectionTouched` 判据，否则给已有账号的渠道新加一个号就会把用户刚打开的
+    // 整目录模型全部关掉。
+    const untouched = !pool.selectionTouched(entry.provider);
+    if ((isFirstForProvider || hadEmptyBlocklist) && untouched && !POOL_OWNED_PROVIDERS.has(entry.provider)) {
       void Promise.resolve().then(async () => {
         try {
           const adapters = channelPackModelAdaptersRef;
           const catalog = adapters?.[entry.provider]?.listAllModels();
           if (!Array.isArray(catalog) || catalog.length === 0) return;
-          await pool.setModelsDisabled(entry.provider, catalog.map((model) => model.id));
+          await pool.setModelsDisabled(entry.provider, catalog.map((model) => model.id), { mark: false });
           ctx.logger.info(
-            `[channel-pack] ${entry.provider} ${isFirstForProvider ? "首次登录" : "补静音（黑名单为空）"}：已默认静音 ${catalog.length} 个模型（可在账号池页勾选启用）`
+            `[channel-pack] ${entry.provider} ${isFirstForProvider ? "首次登录" : "补静音（从未选择过）"}：已默认静音 ${catalog.length} 个模型（可在账号池页勾选启用）`
           );
         } catch (error) {
           ctx.logger.warn(

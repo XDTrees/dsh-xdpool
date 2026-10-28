@@ -300,6 +300,7 @@ export const POOL_CARD_CSS = `
 .dsm-xdpool-usage-model{font-size:12px;font-weight:600;word-break:break-all}
 .dsm-xdpool-usage-numbers{color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:17px;word-break:break-word}
 .dsm-xdpool-usage-note{margin:0;color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:17px}
+.dsm-xdpool-sidebar-row-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
 .dsm-xdpool-models-actions{display:flex;align-items:center;gap:8px;flex:none}
 /* "Built-in list (offline)" chip: a warning tint, since the user is looking at
    a SHORTER roster than the gateway offers and may wonder where models went. */

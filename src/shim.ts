@@ -1254,6 +1254,22 @@ function withBareModelId(raw: string, modelId: string): string {
     // never the whole one.
     const tried: string[] = []
     let last: { kind: UpstreamErrorKind; status: number; message: string } | undefined
+    // An account gets ONE token refresh per user request (issue #68).
+    //
+    // Refreshing proves the authorisation server still honours the refresh
+    // token; it proves nothing about the business-side account state that
+    // answers 403. There is a whole class of accounts where the refresh keeps
+    // succeeding — a brand new access token every round — while every chat call
+    // comes back 403. Reading "the refresh worked" as "the account is usable"
+    // therefore never cools such an account, `available()` keeps returning it,
+    // `priority` order keeps handing back `pool[0]`, and all `maxAttempts`
+    // land on the same dead account. The user sees `after 8 account(s) [A → A →
+    // A …]` and an "invalid API key" prompt that points at the wrong remedy.
+    //
+    // So the second dead-session hit inside one request is conclusive, whatever
+    // the refresh says: one retry to rule out a genuinely stale token, then cool
+    // it so the budget reaches the healthy accounts.
+    const refreshedThisRequest = new Set<string>()
     // One identity per user request, minted once, so every account the pool
     // rotates through - and the compaction retry below - file under the SAME
     // turn. Counting those separately would overstate how much the user asked
@@ -1368,6 +1384,18 @@ function withBareModelId(raw: string, modelId: string): string {
       // this, every one of `maxAttempts` hit the same dead account while healthy
       // accounts were never tried.
       if (result.kind === 'session_dead') {
+        if (refreshedThisRequest.has(account.id)) {
+          // Second refusal from the same account inside one request: a fresh
+          // token did not help, so this is an account-state problem, not a stale
+          // token. Cool it and spend the rest of the budget elsewhere.
+          pool.penalizeCredentialDead(account.id)
+          logger?.warn(
+            `dsh-xdpool: ${account.label} still refused after a token refresh `
+              + `(attempt ${attempt + 1}/${maxAttempts}); rotating`,
+          )
+          continue
+        }
+        refreshedThisRequest.add(account.id)
         logger?.warn(`dsh-xdpool: ${account.label} session dead; refreshing token and retrying`)
         const before = account.credential.accessToken
         const recovered = await pool.refreshAccount(account.id, { force: true })
@@ -1770,6 +1798,8 @@ async function recoverFromContextOverrun(options: RecoverOptions): Promise<Recov
   }
   const retryBody = client.buildChatBody(parsed, compacted, region ?? 'cn')
   const tried: string[] = []
+  // Same one-refresh-per-request rule as the main loop (issue #68).
+  const refreshedThisRequest = new Set<string>()
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (controller.signal.aborted) return { ok: false, detail: 'client disconnected' }
     const account = await pool.acquire(modelId, region)
@@ -1806,8 +1836,13 @@ async function recoverFromContextOverrun(options: RecoverOptions): Promise<Recov
       return { ok: false, detail: 'prompt still exceeded the window after compaction' }
     }
     if (result.kind === 'session_dead') {
-      // Same rule as the main loop: try a refresh, and if the credential is
-      // proven dead cool it so this retry budget is not spent on it again.
+      // Same rule as the main loop (issue #68): one refresh per request, and a
+      // second refusal is an account-state verdict rather than a stale token.
+      if (refreshedThisRequest.has(account.id)) {
+        pool.penalizeCredentialDead(account.id)
+        continue
+      }
+      refreshedThisRequest.add(account.id)
       const before = account.credential.accessToken
       const recovered = await pool.refreshAccount(account.id, { force: true })
       if (!recovered || account.credential.accessToken === before) pool.penalizeCredentialDead(account.id)

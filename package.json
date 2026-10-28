@@ -2,7 +2,7 @@
   "name": "dsh-xdpool",
   "displayName": "DSH XD Pool",
   "description": "One DSH model pool for every free quota you have: merge all locally signed-in WorkBuddy accounts with auto-failover, sign in to 13 vendors by QR/web, aggregate 76 vendors' free tiers, plus a usage dashboard, model routing, a local OpenAI-compatible gateway and a points-automation suite.",
-  "version": "2.4.6",
+  "version": "2.5.0",
   "license": "MIT",
   "author": "XDTrees",
   "homepage": "https://github.com/XDTrees/dsh-xdpool#readme",

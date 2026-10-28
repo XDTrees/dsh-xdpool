@@ -1749,14 +1749,38 @@ export class WorkBuddyUpstreamClient {
       if (typeof raw !== 'object' || raw === null) continue
       const account = raw as Record<string, unknown>
       const num = (key: string): number => (typeof account[key] === 'number' ? account[key] as number : 0)
-      const monthly = num('CapacityType') === 4
-      const size = monthly ? num('CycleCapacitySize') : num('CapacitySize')
-      const remain = monthly ? num('CycleCapacityRemain') : num('CapacityRemain')
+      // CapacityType has three values, not two: 1 is a one-off package, 2 is a
+      // subscription (N cycles of M credits) and 4 is a monthly package. For the
+      // two periodic kinds `CapacitySize`/`CapacityRemain` describe the WHOLE
+      // period while the Cycle pair describes the current one, so reading the
+      // non-Cycle pair as a balance reported 102,396 where the official page
+      // said 3,399.8 — a 30x overstatement on any account holding a
+      // subscription. Only type 2 was affected, which is why it went unnoticed:
+      // accounts with monthly packages already took the Cycle branch.
+      const capacityType = num('CapacityType')
+      const monthly = capacityType === 4
+      const periodic = monthly || capacityType === 2
+      const size = periodic ? num('CycleCapacitySize') : num('CapacitySize')
+      const remain = periodic ? num('CycleCapacityRemain') : num('CapacityRemain')
       const capped = remain < 0 ? 0 : remain
       const cycleEndMs = parseDate(account['CycleEndTime'])
-      const expiresAtMs = monthly ? undefined : parseDate(account['ExpiredTime']) ?? cycleEndMs
+      // A monthly package refills on its cycle boundary, so it never expires. A
+      // subscription expires when its deduction period ends — deliberately NOT
+      // `CycleEndTime`, which lands every month and would keep the "expires
+      // soon" warning firing forever.
+      const expiresAtMs = monthly
+        ? undefined
+        : capacityType === 2
+          ? parseDate(account['DeductionEndTime'])
+          : parseDate(account['ExpiredTime']) ?? cycleEndMs
       const refreshAtMs = monthly ? (cycleEndMs === undefined ? undefined : cycleEndMs + 1000) : undefined
-      if (!monthly && (capped <= 0 || (expiresAtMs !== undefined && expiresAtMs <= Date.now()))) continue
+      // Expired packages are gone whatever their kind. But an EMPTY package is
+      // only worth hiding when it is a one-off: a monthly or subscription cycle
+      // that has been drained is normal, and the card has to keep rendering it
+      // to say "0 of 500, refills on the 1st" instead of silently dropping the
+      // only evidence that the account still has an allowance coming.
+      if (expiresAtMs !== undefined && expiresAtMs <= Date.now()) continue
+      if (!periodic && capped <= 0) continue
       total += capped
       if (expiresAtMs !== undefined) {
         if (nearestExpiryMs === undefined || expiresAtMs < nearestExpiryMs) nearestExpiryMs = expiresAtMs
