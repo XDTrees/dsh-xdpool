@@ -1,0 +1,78 @@
+## PR 的守门人：只有它全绿，auto-merge 才会真正合并。
+##
+## 检查名在 GitHub 上显示为 `CI / verify`，main 的 ruleset 直接引用这个名字 ——
+## **改 job id / job name 会让分支保护失效**，改这里必须同步改 ruleset。
+##
+## 与 release.yml 共享同一套踩坑结论（那边的注释更细，改依赖相关的东西先读它）：
+##   - pnpm 必须显式 version: '11'（package.json 没有 packageManager 字段）
+##   - Node 24
+##   - registry 必须显式指向官方 registry：本机 .npmrc 默认是淘宝镜像
+##   - 必须 --frozen-lockfile + --config.auto-install-peers=false：
+##     @deepseek-ai/dsh-* 锁的是 0.1.x 预发布版，放开解析会 ERR_PNPM_NO_MATCHING_VERSION
+##   - script 一律直接调 ./node_modules/.bin/*，不走 pnpm run：
+##     pnpm 跑 script 前的自动 install 不带上面那些参数
+##   - package-manager-cache: false 是 setup-node v7 才有的输入
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  # 手动留一个入口：不建 PR 也能验证这套环境是不是好的
+  workflow_dispatch:
+
+## 只读就够：CI 不写仓库、不评论、不合并
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      # 这两个环境变量要喂给所有子进程，包括 pnpm 自己触发的自动 install
+      npm_config_auto_install_peers: 'false'
+      npm_config_registry: 'https://registry.npmjs.org'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: '11'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile \
+            --registry=https://registry.npmjs.org \
+            --config.auto-install-peers=false
+      - name: Show resolved toolchain
+        # 失败时先看得到环境，免得把依赖问题误判成代码问题
+        run: |
+          node --version
+          pnpm --version
+      - name: Typecheck (host)
+        run: ./node_modules/.bin/tsc -p tsconfig.json --noEmit
+      - name: Typecheck (client)
+        # ⚠ 这一步目前是**红**的，而且是既有的坏，不是谁这次改坏的：
+        # src/client 的 tsconfig 开了 exactOptionalPropertyTypes，被它 import
+        # 进来的 src/accounts.ts、src/context-budget.ts、src/free-upstream.ts
+        # 一共 6 处对不上。仓库从来没有在 CI 里跑过 `typecheck:client`，
+        # 所以这 6 处一直没人发现。
+        #
+        # 所以这里用 continue-on-error：CI 保持可用，同时每次 PR 都把这 6 处
+        # 重新打在日志里，不至于被忘掉。等它们修完，**删掉这一行**，
+        # 它就自动变成必须通过的检查。
+        continue-on-error: true
+        run: ./node_modules/.bin/tsc -p tsconfig.client.json --noEmit
+      - name: Build
+        run: ./node_modules/.bin/tsdown
+      - name: Test
+        run: ./node_modules/.bin/vitest run

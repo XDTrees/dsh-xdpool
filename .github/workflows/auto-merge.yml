@@ -1,0 +1,104 @@
+## 其他用户的 PR 自动合并。
+##
+## 安全底线（改这个文件时别破坏）：
+##   - 触发用 pull_request_target：它能拿到写权限去合并，但**本文件里没有
+##     actions/checkout**，所以 PR 里的任何代码都不会被下载、被执行。
+##     想加 checkout 先想清楚：那等于让 fork 作者在我们的 token 下跑脚本。
+##   - PR 标题 / 分支名一律经 env: 传入，绝不在 shell 里直接展开
+##     （`${{ }}` 写进 run: 会被 PR 作者用 `$(...)` 注入）。
+##   - 默认只有两类 PR 会被合并：带 `automerge` 标签的，或 dependabot 的
+##     patch/minor。major 永远不自动合。要放开成「所有 PR」得显式改
+##     Decide 那一步，别顺手删条件。
+##   - 合并用 PAT（AUTOMERGE_TOKEN）而不是 GITHUB_TOKEN：
+##     GITHUB_TOKEN 合并产生的事件**不会触发**后续 workflow，
+##     用它会把「合并 → release-please 刷版」这条链静默掐断。
+name: Auto-merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+
+## 最小权限：合并动作由 PAT 完成，这里只是兜底声明
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # draft 一律不动：等它 ready_for_review 再进来
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Inspect the PR (no checkout, no PR code runs)
+        id: gate
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+          # 用前后逗号包住做精确匹配，避免 'automerge-old' 之类的误命中
+          case ",$PR_LABELS," in
+            *,automerge,*) echo "has_label=true"  >> "$GITHUB_OUTPUT" ;;
+            *)             echo "has_label=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          if [ "$PR_AUTHOR" = "dependabot[bot]" ]; then
+            echo "is_dependabot=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_dependabot=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Read the Dependabot update type
+        id: dep
+        if: steps.gate.outputs.is_dependabot == 'true'
+        # GitHub 官方 action，只读 PR 的依赖元数据，不 checkout、不跑代码
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Decide whether to auto-merge
+        id: allow
+        env:
+          HAS_LABEL: ${{ steps.gate.outputs.has_label }}
+          IS_DEP: ${{ steps.gate.outputs.is_dependabot }}
+          UPDATE_TYPE: ${{ steps.dep.outputs.update-type }}
+        run: |
+          set -euo pipefail
+          allow=false
+          reason=""
+          # 口径一：显式打了 automerge 标签 —— 任何作者都算（含 fork PR）
+          if [ "$HAS_LABEL" = "true" ]; then
+            allow=true
+            reason="label:automerge"
+          # 口径二：dependabot 且仅 patch/minor；major 永远不自动合
+          elif [ "$IS_DEP" = "true" ]; then
+            case "$UPDATE_TYPE" in
+              version-update:semver-patch|version-update:semver-minor)
+                allow=true
+                reason="dependabot:$UPDATE_TYPE" ;;
+              *)
+                reason="dependabot-rejected:$UPDATE_TYPE" ;;
+            esac
+          else
+            reason="no-label-and-not-dependabot"
+          fi
+          echo "allow=$allow"   >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          echo "判定：allow=$allow reason=$reason"
+
+      - name: Enable auto-merge (squash)
+        if: steps.allow.outputs.allow == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.AUTOMERGE_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::secret AUTOMERGE_TOKEN 未配置。GITHUB_TOKEN 合并不会触发 release-please，故拒绝降级执行。"
+            exit 1
+          fi
+          # --auto：等 required checks 全绿后由 GitHub 真正合并，CI 没过就不会合
+          gh pr merge --auto --squash "$PR_URL"

@@ -1,0 +1,39 @@
+## 合并进 main 之后自动刷版：
+##   release-please 开一个「版本 bump + CHANGELOG」PR（带 automerge 标签）
+##   → auto-merge.yml 等 CI 全绿后自动合并它
+##   → 合并后 release-please 打 tag vX.Y.Z
+##   → tag 触发 release.yml（OIDC 发布到 npm）+ 创建 GitHub Release
+##
+## 为什么要 PAT（AUTOMERGE_TOKEN）而不是 GITHUB_TOKEN，缺一处链路就断：
+##   1) 本 workflow 创建的 release PR 必须能触发 auto-merge workflow。
+##      GITHUB_TOKEN 产生的 pull_request 事件**不会启动**新 workflow，
+##      PR 会一直等着人点合并。
+##   2) 反过来，auto-merge 用 PAT 合并后，push main 才会触发本 workflow。
+##      两处只要有任意一处降级成 GITHUB_TOKEN，这条链就静默停在那里。
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  # 手动补跑：链路中途断了，可以点一下重放，不用等下一次 push
+  workflow_dispatch:
+
+## release-please 要改 package.json / CHANGELOG、开 PR、打 tag、建 Release
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-please-main
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run release-please
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.AUTOMERGE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

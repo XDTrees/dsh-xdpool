@@ -1,0 +1,34 @@
+## Dependabot 只负责「产出候选 PR」，能不能自动合由 auto-merge.yml 判定：
+## 那边对 dependabot 只放行 patch / minor，major 永远要人看。
+##
+## 分组（groups）是必须的：不分组的话每周会给每个依赖各开一个 PR，
+## 这个仓库 devDependencies 有 20 多个，会瞬间刷出二十个 PR。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
