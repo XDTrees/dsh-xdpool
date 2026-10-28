@@ -200,3 +200,77 @@ describe('the runtime-context fingerprint the gateway blocks', () => {
     expect(merged).not.toContain('DeepSeek Harness Web GUI')
   })
 })
+
+/*
+  A third fingerprint, measured 2026-10-28 after the two rewrites above had been
+  shipping for a week: the file-reference guidance DSH contributes whenever the
+  agent has a `read` tool brought the same 400/11128 back. Neither sentence is
+  the trigger alone — each 200s in isolation and the pair 400s — and the pair
+  names no product, so this one is matched for its text, not for identifying
+  another client. The rewrite keeps the statement's meaning and length class.
+*/
+const BANNED_FILE_REFERENCE =
+  'Tokens prefixed with @ are paths the user explicitly referenced. ' +
+  'Relative paths resolve from the workspace root; absolute paths identify files or directories on the host. ' +
+  'A trailing slash marks a directory: list it when its contents matter.'
+const SAFE_FILE_REFERENCE =
+  'Tokens prefixed with @ are paths the user explicitly referenced. ' +
+  'Relative paths are resolved against the workspace root; absolute paths identify files or directories on the host. ' +
+  'A trailing slash marks a directory: list it when its contents matter.'
+
+describe('the file-reference fingerprint the gateway blocks', () => {
+  it('rewrites the workspace-root sentence and keeps the rest of the paragraph byte-identical', () => {
+    expect(sanitizeSystemContent(BANNED_FILE_REFERENCE)).toBe(SAFE_FILE_REFERENCE)
+  })
+
+  it('rewrites it case-insensitively and every occurrence', () => {
+    const lowered = sanitizeSystemContent(BANNED_FILE_REFERENCE.toLowerCase()) as string
+    expect(lowered).not.toMatch(/relative paths resolve from the workspace root/i)
+    expect(lowered).toContain('Relative paths are resolved against the workspace root')
+    expect(sanitizeSystemContent('Relative paths resolve from the workspace root and Relative paths resolve from the workspace root'))
+      .toBe('Relative paths are resolved against the workspace root and Relative paths are resolved against the workspace root')
+  })
+
+  it('leaves an innocent resolve-from-the-root mention alone', () => {
+    // Only the file-reference wording is the fingerprint. A different sentence
+    // that happens to use "resolve" must not be touched.
+    const clean = 'Module specifiers resolve from the package root, not the cwd.'
+    expect(sanitizeSystemContent(clean)).toBe(clean)
+  })
+
+  it('rewrites the paragraph in system and assistant messages, not in user text', () => {
+    const client = new WorkBuddyUpstreamClient({ fetchImpl: () => Promise.reject(new Error('unused')) })
+    const raw = JSON.stringify({
+      model: 'deepseek-v4.1-flash',
+      messages: [
+        { role: 'system', content: [{ type: 'text', text: BANNED_FILE_REFERENCE }] },
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: BANNED_FILE_REFERENCE },
+        { role: 'user', content: BANNED_FILE_REFERENCE },
+      ],
+      stream: false,
+    })
+    const body = JSON.parse(client.prepareChatBody(raw)) as {
+      messages: { role: string; content: unknown }[]
+    }
+    expect(body.messages[0]?.content).toEqual([{ type: 'text', text: SAFE_FILE_REFERENCE }])
+    expect(body.messages[1]?.content).toBe('hi')
+    expect(body.messages[2]?.content).toBe(SAFE_FILE_REFERENCE)
+    // The user's own text must survive untouched.
+    expect(body.messages[3]?.content).toBe(BANNED_FILE_REFERENCE)
+    expect(JSON.stringify(body.messages[0])).not.toMatch(/resolve from the workspace root/i)
+    expect(JSON.stringify(body.messages[2])).not.toMatch(/resolve from the workspace root/i)
+  })
+
+  it('applies all three fingerprints to one prompt', () => {
+    const merged = sanitizeSystemContent(
+      `${BANNED}\n\n${BANNED_RUNTIME_CONTEXT}\n\n${BANNED_FILE_REFERENCE}`,
+    ) as string
+    expect(merged).toContain(SAFE)
+    expect(merged).toContain(SAFE_RUNTIME_CONTEXT)
+    expect(merged).toContain(SAFE_FILE_REFERENCE)
+    expect(merged).not.toMatch(/powered by DeepSeek Harness/i)
+    expect(merged).not.toContain('DeepSeek Harness Web GUI')
+    expect(merged).not.toMatch(/resolve from the workspace root/i)
+  })
+})

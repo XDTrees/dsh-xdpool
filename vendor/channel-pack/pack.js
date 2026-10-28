@@ -35326,9 +35326,13 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
     // pair (measured on a live account 2026-10-21; the pool's own copy of this
     // list is BANNED_SYSTEM_PHRASES in src/upstream.ts). Runs AFTER the prepend
     // above, because that is where the host's system text lands.
+    // The third entry is the file-reference guidance DSH adds whenever the
+    // agent has a `read` tool: the "Relative paths…" half is the substring the
+    // gateway lists, and the sentence names no product, so it is rewritten for
+    // its text rather than for claiming another client (measured 2026-10-28).
     for (const message of messages) {
       if ((message.role === "system" || message.role === "assistant") && typeof message.content === "string") {
-        message.content = message.content.replace(/powered by DeepSeek Harness/gi, "running on DeepSeek Harness").replace(/DeepSeek Harness Web GUI/gi, "DeepSeek Harness web interface");
+        message.content = message.content.replace(/powered by DeepSeek Harness/gi, "running on DeepSeek Harness").replace(/DeepSeek Harness Web GUI/gi, "DeepSeek Harness web interface").replace(/Relative paths resolve from the workspace root/gi, "Relative paths are resolved against the workspace root");
       }
     }
     const tools = options.tools?.map((tool) => ({

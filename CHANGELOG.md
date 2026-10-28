@@ -1,6 +1,27 @@
 # Changelog
 本项目的所有重要变更都会记录在此文件。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+## 未发布 — 第三条内容指纹：文件引用指引里的 “resolve from the workspace root”
+
+> 2.4.1/2.4.2 修好的两个指纹管了一周，10 月 28 日又整片 400/11128。这次被点名的不是产品名，而是一句普通说明。
+
+### 触发点在 read 工具的文件引用指引
+
+DSH 在 agent 有 `read` 工具时会贡献一段文件引用指引，开头是「Tokens prefixed with @ are paths the user explicitly referenced.」，第二句是 **「Relative paths resolve from the workspace root」**。把当次真实系统提示（约 41k 字符）整段发上去稳定 400/11128，逐段二分到 204 字符命中这段，再逐句验证：两句**单独发都是 200**，两句同现才 400；改其中任意一处小改动也 200 —— 所以这是内容指纹，不是长度规则、也不是头部规则。
+
+这也解释了为什么它看起来「不像」前两条：前两条是识别别的客户端的文案，这一条只是被网关的字符串表收进去了，句子本身没有任何产品名。
+
+### 改法：把陈述句改成同一句的过去分词形式
+
+`Relative paths resolve from the workspace root` → `Relative paths are resolved against the workspace root`。语义、长度量级、换行位置都不变，被列表收录的子串消失。同一账号上整段 41k 系统提示由 400 转 200；渠道车道与池车道同步补上，`pack.js` 的三处 `[xdpool-local]` 标记保持原样。
+
+- 池车道：`BANNED_SYSTEM_PHRASES` 增加第三行
+- 渠道车道：`vendor/channel-pack/pack.js` 的同一个 `replace` 链增加第三段
+- 回归：`tests/system-fingerprint.test.ts` 新增 5 例（含「三处指纹同现」整段用例）；`tests/chat-identity-headers.test.ts` 对已发布 bundle 的字节断言补上第三段，pack 刷新若把它冲掉会变红
+
+### 其他
+- 全套 79 文件 1028 用例（1026 通过 + 2 跳过）。
+
 ## 2.4.6 — 扫码账号每次打开都空白：一份数据卡在两个细节里
 
 > 2.4.4/2.4.5 之后侧栏能进、能滚了，但扫码过的渠道在账号池里经常整片空白，重开也一样。磁盘上账号是齐的（`state.json` 里 15 条），所以问题全在读取链。

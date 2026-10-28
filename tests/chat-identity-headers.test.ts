@@ -273,6 +273,10 @@ describe('the vendored channel pack carries the same three fixes', () => {
     // has to go — a leading newline only defeats the start-anchored one.
     expect(window).toContain('"running on DeepSeek Harness"')
     expect(window).toContain('"DeepSeek Harness web interface"')
+    // The file-reference guidance is the third fingerprint (2026-10-28); the
+    // channel lane has to carry it in the same place as the pool lane, or
+    // channel accounts keep the 11128 the pool lane already clears.
+    expect(window).toContain('"Relative paths are resolved against the workspace root"')
     expect(window).toContain('message.role === "assistant"')
   })
 })
