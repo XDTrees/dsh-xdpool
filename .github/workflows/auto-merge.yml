@@ -55,7 +55,7 @@ jobs:
         id: dep
         if: steps.gate.outputs.is_dependabot == 'true'
         # GitHub 官方 action，只读 PR 的依赖元数据，不 checkout、不跑代码
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@v3
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
