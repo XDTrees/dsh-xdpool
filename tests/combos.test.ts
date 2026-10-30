@@ -48,6 +48,7 @@ function poolWith(
   unavailable: { reason: string; total?: number } = { reason: 'empty' },
 ): WorkBuddyAccountPool {
   return {
+    list: () => [], // No reserved accounts in this scripted pool.
     acquire,
     unavailableReason: () => ({ total: unavailable.total ?? 0, cooling: 0, disabled: 0, reason: unavailable.reason }),
     noteServed: () => {},
@@ -180,7 +181,7 @@ describe('a chain serves its first member that answers', () => {
       await response.text()
       // The pool member was tried first and declined; only then did the chain
       // reach the third-party gateway, under the bare model id.
-      expect(acquire).toHaveBeenCalledWith('hy3', 'cn')
+      expect(acquire).toHaveBeenCalledWith('hy3', 'cn', expect.any(String))
       expect(seen).toHaveLength(1)
       expect(seen[0]?.model).toBe(MODEL_ID)
     } finally {

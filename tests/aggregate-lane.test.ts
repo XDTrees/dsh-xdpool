@@ -41,6 +41,7 @@ function poolCatalog(): WorkBuddyCatalog {
 }
 function poolWith(acquire: () => Promise<unknown>): WorkBuddyAccountPool {
   return {
+    list: () => [], // No reserved accounts in this scripted pool.
     acquire,
     unavailableReason: () => ({ total: 0, cooling: 0, disabled: 0, reason: 'empty' }),
     noteServed: () => {},

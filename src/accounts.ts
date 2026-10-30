@@ -1134,7 +1134,7 @@ export class WorkBuddyAccountPool {
    * model id the legacy account-wide check applies (callers that cannot name a
    * model, e.g. CLI diagnostics).
    */
-  private available(now: number, modelId?: string, region?: WorkBuddyRegion): WorkBuddyAccount[] {
+  private available(now: number, modelId?: string, region?: WorkBuddyRegion, reserveExempt?: ReadonlySet<string>): WorkBuddyAccount[] {
     return this.accounts.filter(account => {
       // Switched off on the card: never serves a request, but still listed so
       // the card can switch it back on.
@@ -1143,7 +1143,7 @@ export class WorkBuddyAccountPool {
       // reached the floor the user set for it. An account with no reading stays
       // in play (see creditBalances), so an unprobed pool is not stranded.
       const reserve = this.creditReserves.get(account.id)
-      if (reserve !== undefined && reserve > 0) {
+      if (!reserveExempt?.has(account.id) && reserve !== undefined && reserve > 0) {
         const balance = this.creditBalances.get(account.id)
         if (balance !== undefined && balance <= reserve) return false
       }
@@ -1173,7 +1173,7 @@ export class WorkBuddyAccountPool {
    * Counts are over the region's accounts, since a provider only ever sees its
    * own gateway.
    */
-  unavailableReason(modelId?: string, region?: WorkBuddyRegion): {
+  unavailableReason(modelId?: string, region?: WorkBuddyRegion, reserveExempt?: ReadonlySet<string>): {
     total: number
     cooling: number
     disabled: number
@@ -1198,7 +1198,7 @@ export class WorkBuddyAccountPool {
       const modelCooling = modelId !== undefined && (account.modelCooldowns[modelId] ?? 0) > now
       if (account.cooldownUntilMs > now || modelCooling) { cooling += 1; continue }
       const reserve = this.creditReserves.get(account.id)
-      if (reserve !== undefined && reserve > 0) {
+      if (!reserveExempt?.has(account.id) && reserve !== undefined && reserve > 0) {
         const balance = this.creditBalances.get(account.id)
         if (balance !== undefined && balance <= reserve) {
           return { total: inRegion.length, cooling, disabled, dead, reason: 'reserve' }
@@ -1391,9 +1391,11 @@ export class WorkBuddyAccountPool {
    * Scans on first use, and rescans when every known account is cooling down: a
    * fresh desktop login is the usual way out of an exhausted pool.
    *
+   * `reserveExempt` is host-only: account ids whose own credentials freshly
+   * confirmed a zero-credit model. It never bypasses disabled, dead credentials, cooldowns or region.
    * `conversationKey` is only consulted under `sticky`; other modes ignore it.
    */
-  async acquire(modelId?: string, region?: WorkBuddyRegion, conversationKey?: string): Promise<WorkBuddyAccount | undefined> {
+  async acquire(modelId?: string, region?: WorkBuddyRegion, conversationKey?: string, reserveExempt?: ReadonlySet<string>): Promise<WorkBuddyAccount | undefined> {
     if (this.accounts.length === 0) await this.scan()
     // One attempt per account: a token refresh can PROVE a credential revoked
     // (see ensureFresh), which marks that account dead and removes it from the
@@ -1401,10 +1403,10 @@ export class WorkBuddyAccountPool {
     // healthy account in that turn instead of failing over a dead one.
     const maxTries = this.accounts.length + 1
     for (let attempt = 0; attempt < maxTries; attempt += 1) {
-      let pool = this.available(Date.now(), modelId, region)
+      let pool = this.available(Date.now(), modelId, region, reserveExempt)
       if (pool.length === 0 && attempt === 0) {
         await this.scan()
-        pool = this.available(Date.now(), modelId, region)
+        pool = this.available(Date.now(), modelId, region, reserveExempt)
       }
       if (pool.length === 0) return undefined
 

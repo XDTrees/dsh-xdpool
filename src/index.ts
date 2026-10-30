@@ -5,6 +5,7 @@
  *
  * @module dsh-xdpool/index
  */
+import { creditReservesWith } from './credit-reserve.ts'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -1220,12 +1221,10 @@ function canonicalJson(value: unknown): string {
     },
       // Set one account's reserved-credit floor. Also a read-modify-write:
       // the card sends a single account, so two tabs editing different
-      // accounts cannot overwrite each other. A zero clears the entry rather
-      // than storing it, so the settings file only names real reserves.
+      // accounts retain their values. Store an explicit zero: settings.update
+      // recursively merges objects, so omitting a key cannot clear its value.
       setCreditReserve: async (accountId, reserve) => {
-        const next = { ...current().creditReserves ?? {} }
-        if (reserve > 0) next[accountId] = reserve
-        else delete next[accountId]
+        const next = creditReservesWith(current().creditReserves, accountId, reserve)
         await setSetting('creditReserves', next, next)
       },
     // Throw one account out of the pool for good, or take it back.

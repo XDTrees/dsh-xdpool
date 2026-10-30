@@ -415,6 +415,39 @@ export function createWorkBuddyShim(options: WorkBuddyShimOptions): WorkBuddyShi
   const server: Server = createServer((req, res) => {
     void handle(req, res)
   })
+  // Try ordinary eligible accounts first: a reserve on another account must
+  // never put a catalog request on the healthy account's critical path.
+  async function acquireForRequest(modelId: string | undefined, conversationKey: string | undefined, signal: AbortSignal) {
+    const ordinary = await pool.acquire(modelId, region, conversationKey)
+    const reserveExempt = new Set<string>()
+    if (ordinary !== undefined || modelId === undefined || signal.aborted) {
+      return { account: ordinary, reserveExempt }
+    }
+    // Pricing is credential-specific (including enterprise identity). Confirm
+    // each eligible held account separately, never granting a pool-wide bypass.
+    const now = Date.now()
+    const held = pool.list(region).filter(account => pool.isReserved(account.id)
+      && !pool.isDisabled(account.id) && (account.credentialDeadUntilMs ?? 0) <= now
+      && account.cooldownUntilMs <= now && (account.modelCooldowns[modelId] ?? 0) <= now)
+    const pricingSignal = AbortSignal.any([signal, AbortSignal.timeout(5000)])
+    await Promise.all(held.map(async account => {
+      try {
+        const models = await client.fetchModels(account.credential, pricingSignal)
+        // Only explicit zero on this requested model is sufficient; static
+        // fallbacks, stale catalogs, promotional badges and unknown prices are not.
+        const price = models.find(model => model.id === modelId)?.creditMultiplier
+        logger?.info?.(`dsh-xdpool: reserve pricing model=${modelId} region=${region ?? 'any'} price=${price ?? 'unknown'} exempt=${!pricingSignal.aborted && price === 0}`)
+        if (!pricingSignal.aborted && price === 0) {
+          reserveExempt.add(account.id)
+        }
+      } catch {
+        logger?.info?.(`dsh-xdpool: reserve pricing unavailable model=${modelId} region=${region ?? 'any'} aborted=${pricingSignal.aborted}`)
+        // Failed pricing retains THIS account's reserve. Others can still work.
+      }
+    }))
+    if (signal.aborted) return { account: undefined, reserveExempt }
+    return { account: await pool.acquire(modelId, region, conversationKey, reserveExempt), reserveExempt }
+  }
   /**
    * "The same model has a paid row" sentence for a 429 body, or undefined.
    *
@@ -1015,9 +1048,9 @@ function withBareModelId(raw: string, modelId: string): string {
         // Pool member: one account, one attempt. Account rotation inside a chain
         // member would double the attempts and could consume the whole budget on
         // one member, which defeats the chain's reason to exist.
-        const account = await pool.acquire(member.modelId, region)
+        const { account, reserveExempt } = await acquireForRequest(member.modelId, conversationKey, signal)
         if (account === undefined) {
-          const why = pool.unavailableReason(member.modelId, region)
+          const why = pool.unavailableReason(member.modelId, region, reserveExempt)
           last = {
             kind: why.reason,
             status: why.reason === 'cooling' ? 429 : 401,
@@ -1028,7 +1061,8 @@ function withBareModelId(raw: string, modelId: string): string {
         // Region-aware normalisation: a chain member belongs to this shim's
         // region, so the two region-only rules (leading system on global, the
         // `off` effort everywhere) can be applied here.
-        const prepared = client.prepareChatBodyFor(raw, region ?? 'cn')
+        const memberRaw = JSON.stringify({ ...(JSON.parse(raw) as Record<string, unknown>), model: member.modelId })
+        const prepared = client.prepareChatBodyFor(memberRaw, region ?? 'cn')
         const result = await client.chatStream(account.credential, prepared, signal, conversationKey)
         if (result.ok) {
           const turnId = randomBytes(8).toString('hex')
@@ -1264,7 +1298,7 @@ function withBareModelId(raw: string, modelId: string): string {
       : { recorder: usageRecorder, region: region ?? 'cn', model: modelId ?? '(none)', turnId }
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       if (controller.signal.aborted) return
-      const account = await pool.acquire(modelId, region, conversationKey)
+      const { account, reserveExempt } = await acquireForRequest(modelId, conversationKey, controller.signal)
       if (account === undefined) {
         // Ask the POOL why, instead of inferring it from this request alone.
         //
@@ -1274,7 +1308,7 @@ function withBareModelId(raw: string, modelId: string): string {
         // false, and the shim answered 401 "no credential found; sign in" — so
         // DSH showed an "API key invalid" panel for a model that was merely
         // cooling, sending the user to re-authenticate over a temporary limit.
-        const why = pool.unavailableReason(modelId, region)
+        const why = pool.unavailableReason(modelId, region, reserveExempt)
         if (why.reason === 'cooling') {
           // A rate limit is TEMPORARY: the caller should wait, not re-authenticate.
           const subject = modelId === undefined
@@ -1311,7 +1345,7 @@ function withBareModelId(raw: string, modelId: string): string {
             res,
             402,
             'reserve_floor',
-            `every WorkBuddy account is at or below its credit reserve (${why.total} account(s)); `
+            `no WorkBuddy account is available; at least one is at or below its credit reserve (${why.total} account(s) total); `
               + 'lower the reserve on the pool card or top up credits',
           )
           return
@@ -1435,7 +1469,7 @@ function withBareModelId(raw: string, modelId: string): string {
     // survives the case where a shim-side compaction still will not fit.
     if (isContextTooLong(last.message)) {
       const recovered = await recoverFromContextOverrun({
-        raw,
+        raw: poolRaw,
         modelId,
         controller,
         region,
@@ -1443,6 +1477,7 @@ function withBareModelId(raw: string, modelId: string): string {
         client,
         pool,
         maxAttempts,
+        acquireAccount: async () => (await acquireForRequest(modelId, conversationKey, controller.signal)).account,
         usage: usageContext,
         contextWindow: modelId === undefined
           ? undefined
@@ -1663,6 +1698,8 @@ export interface RecoverOptions {
   client: WorkBuddyUpstreamClient
   pool: WorkBuddyAccountPool
   maxAttempts: number
+  /** Re-check live pricing before each compaction call; absent keeps the reserve. */
+  acquireAccount?: () => Promise<WorkBuddyAccount | undefined>
   /** True context window for the model, so the budget fits the real limit. */
   contextWindow?: number
   /**
@@ -1729,7 +1766,7 @@ async function recoverFromContextOverrun(options: RecoverOptions): Promise<Recov
   let compacted: ChatMessage[] = messages
   let compactionDetail = ''
   try {
-    const summariser = await pool.acquire(modelId, region)
+    const summariser = await (options.acquireAccount?.() ?? pool.acquire(modelId, region))
     if (summariser === undefined) {
       compactionDetail = 'no account available to summarise with'
     } else {
@@ -1772,7 +1809,7 @@ async function recoverFromContextOverrun(options: RecoverOptions): Promise<Recov
   const tried: string[] = []
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (controller.signal.aborted) return { ok: false, detail: 'client disconnected' }
-    const account = await pool.acquire(modelId, region)
+    const account = await (options.acquireAccount?.() ?? pool.acquire(modelId, region))
     if (account === undefined) return { ok: false, detail: 'no account available after compaction' }
     tried.push(account.label)
     const result = await client.chatStream(

@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+import { creditReservesWith } from '../src/credit-reserve.ts'
 
 /**
  * Minimal stand-in for the host settings service used by the plugin.
@@ -90,11 +91,32 @@ describe('verified settings writes', () => {
     ).rejects.toThrow(/locked/)
   })
 
-  it('clearing a reserve is verified too (the key disappears from the document)', async () => {
-    const { service, currentSnapshot } = fakeSettings({ creditReserves: { acc1: 50 } })
-    // A zero reserve deletes the entry rather than storing it.
-    await writeVerified(service, currentSnapshot, 'creditReserves', {}, {})
-    expect(currentSnapshot().creditReserves).toEqual({})
+  it('clears a reserve with an explicit zero through recursive host-style merge', async () => {
+    const document: Record<string, unknown> = { creditReserves: { acc1: 1, acc2: 50 } }
+    // Unlike replacement, update recursively preserves omitted object keys.
+    const merge = (base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> => {
+      const next = { ...base }
+      for (const [key, value] of Object.entries(patch)) {
+        next[key] = value !== null && typeof value === 'object' && !Array.isArray(value)
+          ? merge((base[key] ?? {}) as Record<string, unknown>, value as Record<string, unknown>)
+          : value
+      }
+      return next
+    }
+    const service = { set: async (key: string, value: unknown) => {
+      Object.assign(document, merge(document, { [key]: value }))
+    } }
+    const current = () => document
+    // The old omission-based payload cannot clear acc1, and verification fails.
+    await expect(writeVerified(service, current, 'creditReserves', { acc2: 50 }, { acc2: 50 }))
+      .rejects.toThrow(/not persisted/)
+    // Exercise the actual payload builder used by the production handler.
+    const next = creditReservesWith(document['creditReserves'] as Record<string, number>, 'acc1', 0)
+    await writeVerified(service, current, 'creditReserves', next, next)
+    expect(document['creditReserves']).toEqual({ acc1: 0, acc2: 50 })
+    const restored = JSON.parse(JSON.stringify(document)) as typeof document
+    expect(restored['creditReserves']).toEqual(next)
+    expect(creditReservesWith(next, 'acc1', 2)).toEqual({ acc1: 2, acc2: 50 })
   })
 
   it('compares by VALUE so key order cannot fake a mismatch', async () => {

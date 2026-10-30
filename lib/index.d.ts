@@ -1205,7 +1205,7 @@ export declare class WorkBuddyAccountPool {
    * Counts are over the region's accounts, since a provider only ever sees its
    * own gateway.
    */
-  unavailableReason(modelId?: string, region?: WorkBuddyRegion): {
+  unavailableReason(modelId?: string, region?: WorkBuddyRegion, reserveExempt?: ReadonlySet<string>): {
     total: number;
     cooling: number;
     disabled: number;
@@ -1295,9 +1295,11 @@ export declare class WorkBuddyAccountPool {
    * Scans on first use, and rescans when every known account is cooling down: a
    * fresh desktop login is the usual way out of an exhausted pool.
    *
+   * `reserveExempt` is host-only: account ids whose own credentials freshly
+   * confirmed a zero-credit model. It never bypasses disabled, dead credentials, cooldowns or region.
    * `conversationKey` is only consulted under `sticky`; other modes ignore it.
    */
-  acquire(modelId?: string, region?: WorkBuddyRegion, conversationKey?: string): Promise<WorkBuddyAccount | undefined>;
+  acquire(modelId?: string, region?: WorkBuddyRegion, conversationKey?: string, reserveExempt?: ReadonlySet<string>): Promise<WorkBuddyAccount | undefined>;
   /** How the pool currently spreads requests. Shown on the card. */
   currentDistribution(): AccountDistribution;
   /**
