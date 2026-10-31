@@ -21,6 +21,9 @@ release-title.txt
 .cm.txt
 NPM-FIRST-PUBLISH.md
 *.tgz
+# Release bodies are generated per version from CHANGELOG.md and handed to
+# `gh release create` / tools/create-release.mjs; they are not source.
+_release-*.md
 
 # 待处理的截图暂存
 .shot-*.png
