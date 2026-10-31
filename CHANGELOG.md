@@ -1,7 +1,73 @@
 # Changelog
 本项目的所有重要变更都会记录在此文件。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
-## 未发布 — CodeArts 的输出上限是上限，不是默认值
+## 2.5.1 — 六张 issue、一个交流群入口，外加拿掉 billion-context
+
+> 2.5.0 之后收到的反馈集中在两类：**看得见却点不动的界面**（链不显示、单选互顶、卡片空白），和**说错话的报错**（额度已用尽、密钥无效、为预留让你调低预留）。这一版把这两类都按「根因 + 可复现断言」的方式收掉，同时按你的要求移除了 billion-context 那一页，并在「点Star」旁边加了「交流群」。
+
+### 修掉六张 issue
+
+**#99 路由页有链却不显示，保存还会把链删掉**
+
+`setDrafts(prev => seeded.current ? prev : …)` 把守卫放进了函数式更新回调，紧接着一行同步 `seeded.current = true`。React 的回调在提交阶段才跑，那时标志位已经是 `true`，于是恒走 `prev` 分支 —— 初始值 `[]` 原样返回。列表恒空，而保存提交的是整张表，**第一次保存就把服务端那条链覆盖成空**。
+
+改成同步判断再置位（与同项目 `GatewayPage.tsx` 同形）。回归用例现在连「形状」一起锁：不许再出现 `setDrafts(prev => seeded …)`。
+
+**#101 国内版/国际版的「1M」互相顶掉**
+
+两张区域卡同时挂载（折叠面板用 `hidden`，不是卸载），预算单选 `name` 只用了 `budget-${model.id}`，同名即同组，浏览器只保留最后一个 `checked`。后渲染的国际版把国内版的黑点顶掉，表现为「点了没保存」。用 `useId()` 给每一行实例加作用域 —— 只加 region 不够，设置页与侧栏可能同时挂载同一区域。
+
+**#102 切回账号池就重拉全部数据（2–4 秒空白）**
+
+页签正文是三选一表达式，切页即卸载，`useState` 随之清零；而且 `load()` 把 `account.list` / `model.list` / `credits.balances` / `credits.status` 四合一一 `await Promise.all`，让整张卡等唯一走网络的余额查询。
+
+- 快照提到模块作用域，且**写在 `mountedRef` 判据之前**：已经发出去的结果即便在卸载后才回来，仍然落进快照
+- 拆两波：wave1 只问内存里的三项，先把卡画全（余额格写 `…`）；wave2 每渠道各自回填
+- `balancePending` 原来被硬编成 `false`，让渲染层那条 `…` 分支成了死代码 —— 现在真正用上了
+- 每次加载带单调序号，旧答案盖不掉新答案
+
+**#95 扫码渠道卡整片空白，且不报错**
+
+`if (entries.length === 0 && error === undefined) return <></>`。而 RPC 桥解析失败时 `provider.status` 回 `ok: false`、映射出空 map、`entries` 为空、`error` 仍是 `undefined` —— **「桥断了」和「没有扫码账号」渲染成同一片空气**。
+
+改成三态：读取中一行字、失败写明原因、成功但确实没有账号才保持安静。
+
+**#98 自动化三处**
+
+- 「体验XX专家」任务族（`expert_use_maidehao` / `douyinyin` / `shangjia_xuanchuan` / `bowangwang`，加同族的 `WorkBuddy_Valorant`）不在 `EVENT_CHAIN_BUILDERS` 里，所以 accept 和 claim 都正常、进度永远 0/1。这批专家**不在市场列表里**，expertId 只存在于任务自己的 `jump_url` 里（percent-encoded deeplink），因此新增 `expertIdFromJumpUrl()`：先解 `deeplink` 参数、再读内层 `expertId`。use 事件保持默认 `craft` 模式 —— `LOCAL`/零成本是 lighthouse 的专属判据。
+- `unavailableReason()` 遇到第一个低于预留的账号就 `return reserve`，后面账号根本没检查。一张 5 账号池里只要有一个长期低于预留线，任何失败都会被归因成 402「调低预留」。改为计数式：`dead`/`cooling`/`disabled` 先报（这些改数字改不好），只有**无可用账号且全部被预留挡住**才报 `reserve`。
+- `automationEarnings` 写入是 fire-and-forget，领取完成到进程退出的窗口里丢账（实测领了 21 个任务，落盘仍是 `credit: 0`）。`persistEarnings()` 改为返回 promise，`runJob` 收尾 `await this.flushEarnings()`。
+
+**#96 免密 lane 全失败，却报「额度已用尽」**
+
+403 指纹拒绝被渲染成宿主自己的措辞，指向「等待」；真正该做的是「升级插件」。新增 `withFreeTierHint()`：先说指纹失配、明确「等待无用，请更新」，再保留 per-conversation 配额这一可能（两者从外部无法区分，不自作聪明）。429 仍走原有的会话配额提示。
+
+### 新增：「交流群」
+
+- 卡片右上角「点Star」旁边多一个「交流群」按钮，点开在原位弹层显示微信群码
+- 底部导航网格从 `1fr auto` 扩成 `1fr auto auto`，否则第二个按钮会掉到标签栏下面
+- 二维码以 data URI 内嵌进 `lib/client.js`：客户端是宿主加载的单个脚本，解析不了包内相对路径，而 `<img>` 加载失败是**静默**的
+- Esc 与点击遮罩都能关；`alt` 写的是操作指引（读屏用户扫不了码）
+- 同一张图放在 `README.md` 与 `README.en.md` 第 13 行（标题与徽章之后），过期了换 `assets/community-qr.png` 并重跑 `tools/make-community-qr.mjs`
+
+### 移除：billion-context
+
+那一页只读观测另一个插件的回环代理。连同 `src/billion.ts`、`src/billion-mount.ts`、`src/client/BillionPage.tsx`、`/plugins/dsh-xdpool/billion` 路由、`POOL_BILLION_PATH` 与两个文档类型、84 个 `billion.*`/`shell.tabBillion` 语言键、`BILLION_CARD_CSS`、`optionalDependencies.billion-context`，以及 `cordis.patch.yml` 里那行长期 `disabled: true` 的条目一起删掉。README 的页面表随之从七页改回六页。
+
+### 一并发布的两个既有改动
+
+- **CodeArts 的输出上限是上限，不是默认值** —— `listModels()` 报 `maxTokens`、`resolveModel()` 报 `defaultMaxTokens`、线上 `max_tokens` 做 `Math.min` clamp。原先 `?? 65536` 只兜底不设界，宿主把别的 provider 的 384000 原样递过来就触发 HTTP-200 的 SSE 错误帧。见 #83 / #69。
+- **第三条内容指纹** —— 「Relative paths resolve from the workspace root」改成过去分词形式，池车道与渠道车道同步。见 #77 / #79。
+
+### 验证
+
+- 全套 **83 文件 1057 用例全绿**；host 侧 `tsc --noEmit` 干净
+- 新增 6 个测试文件：`billion-removed` / `card-shell`（交流群）/ `channel-pool-loading` / `expert-task-family` / `free-lane-refusal` / `reserve-floor-scope`
+- 交互验证不只做源码断言：`tools/probe-card-render.mjs` 用最小 hook 调度器驱动真实 `PoolShell`，完成「点击 → 重渲染 → 弹层出现 → 二维码 8666 字符 data URI → 遮罩关闭」整条链路
+
+Refs #95 #96 #98 #99 #101 #102。
+
+## 附：CodeArts 的输出上限是上限，不是默认值（细节，已并入 2.5.1）
 
 > 华为这条链接 65536 能用、131072 就空流，代码里也一直写着这个数字。但它是 `options.maxTokens ?? 65536` —— 只兜底，不设界。
 
@@ -38,7 +104,7 @@ TRAE 与 Cline 早就这么做了（`clampTraeMaxTokens` / `clampClineMaxTokens`
 
 Refs #83, #69。
 
-## 未发布 — 第三条内容指纹：文件引用指引里的 “resolve from the workspace root”
+## 附：第三条内容指纹 —— 文件引用指引里的 “resolve from the workspace root”（细节，已并入 2.5.1）
 
 > 2.4.1/2.4.2 修好的两个指纹管了一周，10 月 28 日又整片 400/11128。这次被点名的不是产品名，而是一句普通说明。
 
