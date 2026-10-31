@@ -557,6 +557,14 @@ export function AggregatePage({ t }: AggregatePageProps) {
                       setFlash(prev => ({ ...prev, [provider.id]: t?.('agg.modelsSaved') ?? 'Model selection saved' }))
                     }
                   }}
+                  onSaveManualModels={async ids => {
+                    // A typed roster is a normal save: the ids go into the same
+                    // `models` field the chooser writes, so the lane and the
+                    // card agree on where a choice lives.
+                    const ok = await patch({ kind: 'provider', providerId: provider.id, models: [...ids] })
+                    if (ok) setFlash(prev => ({ ...prev, [provider.id]: t?.('agg.modelsSaved') ?? 'Model ids saved' }))
+                    return ok
+                  }}
                 />
               ))}
             </div>}
@@ -590,6 +598,7 @@ function ProviderRow({
   onEditModels,
   onSelectAllModels,
   onSaveModels,
+  onSaveManualModels,
   onDiscardModels,
 }: {
   provider: PoolWebAggregateProvider
@@ -635,11 +644,37 @@ function ProviderRow({
   /** Tick the whole roster, or clear the buffer entirely. */
   onSelectAllModels: (on: boolean) => void
   onSaveModels: () => Promise<void>
+  /**
+   * Replace this provider's model ids with a list the user typed.
+   *
+   * Separate from {@link onSaveModels} because the chooser can only ever
+   * toggle ids out of a roster; a record with no roster needs a way to put
+   * one in. The save path is the same `models` field, so the two cannot
+   * disagree about where the choice lives.
+   */
+  onSaveManualModels: (ids: readonly string[]) => Promise<boolean>
   /** Throw the buffer away and go back to what the server is serving. */
   onDiscardModels: () => void
 }) {
   const enabled = provider.enabled
   const effective = enabled && laneEnabled
+  /**
+   * The ids typed into a manual roster, or the saved ones.
+   *
+   * Deliberately not the `chosen` buffer: that one exists to narrow a roster the
+   * registry already defines, and a typed list IS the roster. Sharing the buffer
+   * would make "Discard" mean two different things on two kinds of row.
+   */
+  const [manualText, setManualText] = useState<string | undefined>(undefined)
+  const manualValue = manualText ?? provider.models.join(', ')
+  const saveManual = async (): Promise<void> => {
+    const ids = manualValue
+      .split(/[\s,，]+/u)
+      .map(id => id.trim())
+      .filter(id => id !== '')
+    const ok = await onSaveManualModels(ids)
+    if (ok) setManualText(undefined)
+  }
   const keyState = provider.authKind === 'none'
     ? (t?.('agg.noKeyNeeded') ?? 'No key needed')
     : provider.configured
@@ -892,6 +927,36 @@ function ProviderRow({
                   onChange={event => { onDraft({ apiKey: draft?.apiKey ?? '', baseUrl: event.target.value }) }}
                 />
               </label>
+            </div>
+          : null}
+        {/* A record that declares no models has no chooser to draw: the ids ARE
+            the user's input. It sits beside the key and endpoint because that is
+            the order the setup happens in — point at a gateway, authenticate,
+            then say what it serves. */}
+        {provider.manualModels
+          ? <div className="dsm-xdpool-agg-fields">
+              <label className="dsm-xdpool-agg-field">
+                <span>{t?.('agg.manualIds') ?? 'Model ids'}</span>
+                <input
+                  type="text"
+                  spellCheck={false}
+                  autoComplete="off"
+                  value={manualValue}
+                  placeholder={t?.('agg.manualPlaceholder') ?? 'gpt-4.1, my-model'}
+                  onChange={event => { setManualText(event.target.value) }}
+                />
+              </label>
+              <div className="dsm-xdpool-agg-actions">
+                <button
+                  type="button"
+                  className="dsm-btn dsm-btn-outline"
+                  disabled={busy}
+                  onClick={() => { void saveManual() }}
+                >
+                  {t?.('agg.manualSave') ?? 'Save model ids'}
+                </button>
+                <span className="dsm-xdpool-agg-hint">{t?.('agg.manualHint') ?? ''}</span>
+              </div>
             </div>
           : null}
         {/* The switch is separate from Save on purpose. Saving a key is what puts

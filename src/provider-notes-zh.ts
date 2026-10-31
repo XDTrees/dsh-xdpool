@@ -38,6 +38,7 @@ export const PROVIDER_NOTES_ZH: Readonly<Record<string, string>> = Object.freeze
   "cline_pass": "ClinePass 订阅密钥，模型见 /ai/cline/recommended-models",
   "cloudflare": "账号级 URL，需把 {account_id} 换成实际值，含免费额度",
   "cohere": "兼容层在 /compatibility/v1，请求体会剥掉部分字段",
+  "custom": "不在名录里的 OpenAI 兼容网关，端点、密钥与模型 id 都由用户填",
   "deepinfra": "按自有 /models/list 解析，取 model_name 与 reported_type",
   "deepseek": "该端点会回报缓存命中的用量",
   "experiential": "Experiential Labs 的网关",

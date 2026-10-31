@@ -678,6 +678,11 @@ export function aggregateStatusOf(
       ...provider.notes === undefined ? {} : { notes: PROVIDER_NOTES_ZH[provider.id] ?? provider.notes },
       ...trimmed(setting.baseUrl) === '' ? {} : { baseUrl: trimmed(setting.baseUrl) },
       hasListing: hasModelsListing(provider),
+      // A record that declares no models (`custom`, Azure, the local servers)
+      // cannot offer a chooser: the card draws one over `availableModels`, and
+      // that list is empty until the user names an id. This is the flag that
+      // says the ids are the user's.
+      manualModels: provider.models.length === 0,
       models: exposed,
       // The whole roster, so the card can offer a checkbox for every id the
       // provider offers rather than only the exposed ones. Without this the

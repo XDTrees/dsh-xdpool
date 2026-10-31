@@ -38,6 +38,8 @@ Then it grew into six pages. Beyond the account pool: sign in to thirteen vendor
 | **Routing** | Chain several models, in order or round-robin |
 | **Gateway** | Expose the pool as a local OpenAI-compatible endpoint, optionally to your LAN |
 
+**Bringing your own gateway**: the aggregate page has a **Custom endpoint** row for exactly that. Open it, paste the base URL (through `/v1`, or wherever your gateway roots its API) and the key, then type the model ids it actually serves — comma or space separated; if the gateway publishes `/models`, "Fetch models" fills them in instead. Once it is saved, nothing distinguishes it from a listed vendor: it reaches the model picker, the routing chains and the local gateway the same way.
+
 **It also throws in a full points-automation suite**: check-ins, task rewards, streak redemption, the buddy trip — all the chores you'd otherwise click through every day, done in the background.
 
 > **How this differs from the single-account connectors**: plugins like `dsh-workbuddy-connect` handle one account at a time. XD Pool treats **multiple accounts as the normal case** — it doesn't pick favourites or ask you to import anything. Every account you've switched through on the desktop app is remembered across restarts, exposed as a single `xdpool` provider group, with automatic failover inside.
