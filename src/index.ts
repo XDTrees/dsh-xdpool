@@ -31,7 +31,6 @@ import {
   type WorkBuddyAdapter,
 } from './adapter.ts'
 import { AggregateCatalog, probeAggregateProvider, type AggregateModelRow } from './aggregate.ts'
-import { mountBillionContext, type MountedBillionContext } from './billion-mount.ts'
 import { adoptChannelPackAccounts } from './pack-accounts.ts'
 import { FreeCatalog } from './free-catalog.ts'
 import { createFreeLaneSource } from './free-lane.ts'
@@ -72,7 +71,6 @@ import type {
   PoolWebRelayPatch,
   PoolWebRelayStatus,
 } from './status-paths.ts'
-import { readBillionStatus } from './billion.ts'
 import { describeError, recordStartupNote } from './diagnostics.ts'
 import { probeModelConnectivity } from './model-probe.ts'
 /**
@@ -1515,12 +1513,7 @@ function canonicalJson(value: unknown): string {
       await aggregateCatalog.refresh()
       return combosStatusOf(readAggregateSettingsSync(), aggregateCatalog, core.catalogs.cn.current())
     },
-    // A read-only relay to a separately installed billion-context proxy. It
-    // resolves "is one running, where, and what is it holding" and returns a
-    // `missing` state rather than an error when there is none — which is the
-    // normal case on a machine that has not installed it.
-    billionDocument: readBillionStatus,
-    /**
+      /**
      * Relay state plus the gateway's model picker.
      *
      * The candidates come from the shim's own roster rather than a parallel
@@ -1648,22 +1641,6 @@ function canonicalJson(value: unknown): string {
         if (stopped) return
         void adoptChannelPackAccounts(ctx, core.pool, ctx.logger)
       })
-  })
-  // The compressor behind the billion card. Mounted from its own fiber, off the
-  // critical path and outside every try block below: a proxy that will not start
-  // is a card that says so, and the account pool has no reason to care.
-  //
-  // The outcome is recorded rather than merely attempted, because the card's
-  // "missing" state has two very different causes — the package never got
-  // installed, or the host refused to mount it — and this line is where a user
-  // reporting a blank billion page sends us.
-  void mountBillionContext(ctx, ctx.logger).then((outcome: MountedBillionContext) => {
-    recordStartupNote(`billion-context ${outcome.state}`)
-    if (outcome.state === 'unavailable') {
-      ctx.logger.warn(`[xdpool] billion-context not mounted — ${outcome.reason}`)
-    }
-  }, (error: unknown) => {
-    recordStartupNote(`billion-context mount failed: ${describeError(error)}`)
   })
   // Register once BOTH loopback listeners hold a port: each adapter reads its
   // shim origin at construction time, so neither can be built any earlier.

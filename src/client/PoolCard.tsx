@@ -13,7 +13,7 @@
  *
  * @module dsh-xdpool/client/PoolCard
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { createElement as h } from 'react'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
@@ -49,7 +49,6 @@ import { PoolShell, PageHero, initialShellTab, rememberedShellTab } from './shel
 import { LedgerPage } from './LedgerPage.tsx'
 import { AggregatePage } from './AggregatePage.tsx'
 import { ChannelsPage } from './ChannelsPage.tsx'
-import { BillionPage } from './BillionPage.tsx'
 import { RoutingPage } from './RoutingPage.tsx'
 import { GatewayPage } from './GatewayPage.tsx'
 import { RegionCardPane, RegionCardTile, RegionCardTrigger, regionCardStyle } from './region-card.tsx'
@@ -513,7 +512,6 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
     { id: 'channels', label: t?.('shell.tabChannels') ?? 'Login channels' },
     { id: 'aggregate', label: t?.('shell.tabAggregate') ?? 'Providers' },
     { id: 'ledger', label: t?.('shell.tabLedger') ?? 'Dashboard' },
-    { id: 'billion', label: t?.('shell.tabBillion') ?? 'billion-context' },
     { id: 'routing', label: t?.('shell.tabRouting') ?? 'Routing' },
     { id: 'gateway', label: t?.('shell.tabGateway') ?? 'Gateway' },
   ] as const
@@ -1412,8 +1410,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
       {page === 'aggregate' ? <AggregatePage t={t} />
         : page === 'channels' ? <ChannelsPage t={t} />
           : page === 'ledger' ? <LedgerPage t={t} usage={usage} />
-            : page === 'billion' ? <BillionPage t={t} />
-              : page === 'routing' ? <RoutingPage t={t} />
+                  : page === 'routing' ? <RoutingPage t={t} />
                 : page === 'gateway' ? <GatewayPage t={t} />
                   : <>
               <style>{POOL_CARD_CSS}</style>
@@ -2568,6 +2565,20 @@ function ModelRow({
   /** True while this row's probe is in flight. */
   probing?: boolean
 }) {
+  /**
+   * A per-MOUNTED-ROW scope for the two budget radios.
+   *
+   * HTML groups radios by `name`, and React renders both region cards at once —
+   * the collapsible panes stay in the DOM with `hidden`, they are not unmounted.
+   * A `name` built from the model id alone is therefore the SAME name in the
+   * cn card and the global card, so the two rows joined one radio group: the
+   * browser keeps only the last checked member, and whichever card renders
+   * later (global) silently un-checks the cn row's "1M". Adding the region
+   * would not be enough either — the settings page and the sidebar pane can
+   * both mount the same region — so the scope has to name the row instance,
+   * which is what `useId` is for.
+   */
+  const radioScope = useId()
   const now = new Date()
   const tag = tagFor(model, now, region)
   const promo = promoStatusFor(model, now, region)
@@ -2656,7 +2667,7 @@ function ModelRow({
                 <label>
                   <input
                     type="radio"
-                    name={`budget-${model.id}`}
+                    name={`budget-${radioScope}`}
                     checked={currentBudget === DEFAULT_CONTEXT_BUDGET}
                     disabled={!editable}
                     onChange={() => { onBudget(model.id, DEFAULT_CONTEXT_BUDGET) }}
@@ -2666,7 +2677,7 @@ function ModelRow({
                 <label>
                   <input
                     type="radio"
-                    name={`budget-${model.id}`}
+                    name={`budget-${radioScope}`}
                     checked={currentBudget === native}
                     disabled={!editable}
                     onChange={() => { onBudget(model.id, native) }}

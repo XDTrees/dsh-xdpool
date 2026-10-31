@@ -313,6 +313,87 @@ export interface MarketExpert {
 }
 
 /**
+ * Pull the `expertId` out of a task's `jump_url`.
+ *
+ * The "体验XX专家" tasks (#98) name an expert that is NOT in the marketplace
+ * listing — the reporter翻遍了 marketExpertList in both `agent` and `team`
+ * types and got zero hits — so the only place the id appears is the deeplink
+ * embedded in the task itself:
+ *
+ *   https://www.workbuddy.cn/work/launch/?deeplink=workbuddy%3A%2F%2Fexperts%3FexpertId%3Dex_GDl31WahyIH0&buddy_type=workbuddy
+ *
+ * The deeplink is percent-encoded, and it has to be: the `?` and `&` inside it
+ * would otherwise end the outer query. So the parse is two steps — decode the
+ * `deeplink` parameter, then read `expertId` off the scheme it decodes to — and
+ * NOT a regex over the whole URL, which would also match the outer `expertId`
+ * spelling in a future URL shape and silently pick the wrong one.
+ *
+ * Returns undefined for the tasks whose deeplink carries no id at all
+ * (`WorkBuddy_Valorant` points at `workbuddy://expert` with no query), which is
+ * the honest answer: those need a different source and are not guessed here.
+ */
+export function expertIdFromJumpUrl(jumpUrl: string): string | undefined {
+  if (jumpUrl === '') return undefined
+  /** Read `expertId` off any URL-ish string, decoded or not. */
+  const readId = (value: string): string | undefined => {
+    // The inner value is itself a URL with a scheme (`workbuddy://experts?...`)
+    // — `new URL` reads a custom scheme's query fine even though it cannot
+    // resolve a host for it — but it is ALSO given here as a bare string when
+    // the outer parse failed, so the fallback has to work either way.
+    let query = value
+    try {
+      const parsed = new URL(value)
+      query = parsed.search === '' ? value : parsed.search
+    } catch {
+      query = value
+    }
+    const marker = query.indexOf('expertId=')
+    if (marker === -1) return undefined
+    const rest = query.slice(marker + 'expertId='.length)
+    const end = rest.search(/[&#]/u)
+    const id = (end === -1 ? rest : rest.slice(0, end)).trim()
+    return id === '' ? undefined : id
+  }
+  let source: string = jumpUrl
+  try {
+    // A URL object is used for the outer parse only: `new URL` also normalises
+    // the percent-encoding, which is what makes the inner query readable.
+    const outer = new URL(jumpUrl)
+    const raw = outer.searchParams.get('deeplink')
+    // A `deeplink` parameter WINS when present, because that is the shape the
+    // upstream sends and the id inside it is the one that was meant. Falling
+    // back to the outer URL is not a convenience: a bare deeplink parses fine
+    // on its own (`workbuddy://experts?expertId=…` is a valid URL with `host:
+    // experts`), so "the outer parse succeeded" says nothing about which query
+    // carries the id — asking which one HAS the id is the only reliable test.
+    if (raw !== null && raw !== '') source = raw
+  } catch {
+    // Not a parseable absolute URL; read it as the deeplink it looks like.
+    source = jumpUrl
+  }
+  return readId(source)
+}
+
+/**
+ * Build a summon record for an expert the marketplace does not list.
+ *
+ * Everything the chains need beyond the id is cosmetic — the scorer keys on
+ * `expertId` — so the title from the task is reused as the display name rather
+ * than inventing one. `version` is left empty, which every consumer already
+ * defaults to `1.0.0`.
+ */
+export function expertFromTask(expertId: string, title: string): MarketExpert {
+  return {
+    expertId,
+    expertType: 'agent',
+    displayName: title,
+    profession: title,
+    version: '',
+    categories: [],
+  }
+}
+
+/**
  * The three "summon an expert" events (`expert_summon_click` and friends).
  *
  * Paid before the conversation, in the order the app emits them.

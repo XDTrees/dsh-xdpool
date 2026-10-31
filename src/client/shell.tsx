@@ -23,7 +23,8 @@
  *    highlight on the correct button at the correct x, in the wrong row.
  *
  * 3. **Nothing here is a gate.** The star button opens the repository in a new
- *    tab and nothing else. A settings card that can refuse to render is a card
+ *    tab and nothing else, and the group button beside it opens a dialog with
+ *    the WeChat invite code. A settings card that can refuse to render is a card
  *    that, on a machine without outbound network, looks exactly like a broken
  *    plugin.
  *
@@ -33,6 +34,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ReactNode } from 'react'
 import type { XdPoolSettingsKey } from './locales.ts'
 import { SHARED_CARD_CSS, SHELL_CSS } from './styles.ts'
+import { COMMUNITY_QR_DATA_URI } from './community-qr.ts'
 /** The translator the settings section injects. */
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
 /** One page in the tab strip. `num` renders the OFM-style corner count. */
@@ -153,6 +155,24 @@ export function PoolShell({
 }: PoolShellProps) {
   /** Measured box of the active tab's button, in tab-strip coordinates. */
   const [glider, setGlider] = useState<{ left: number; top: number; width: number; height: number } | undefined>(undefined)
+  /** Whether the group-invite dialog is open. Local: nothing outside needs it. */
+  const [groupOpen, setGroupOpen] = useState(false)
+  /**
+   * Close the dialog on Escape.
+   *
+   * The overlay's own click handler covers the pointer, but a keyboard user who
+   * opened this with Enter has no other way out — and a modal with no key exit
+   * is a trap. Bound only while open, so the listener is not paid for on every
+   * page of a card that is mostly not showing a dialog.
+   */
+  useEffect(() => {
+    if (!groupOpen) return undefined
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setGroupOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [groupOpen])
   const tabRefs = useRef(new Map<string, HTMLButtonElement | null>())
   const tabsRef = useRef<HTMLDivElement | null>(null)
   const measure = useCallback((): void => {
@@ -226,6 +246,35 @@ export function PoolShell({
           </svg>
           <span>{t?.('shell.star') ?? 'Star on GitHub'}</span>
         </a>
+        {/*
+          The group invite, next to the star and in the same slot.
+          
+          A `<button>`, not an `<a>`: this opens a dialog in place. Sending the
+          user to an external page to look at a picture is worse than showing
+          the picture — a WeChat group code has to be scanned from the screen
+          it is displayed on, and a new tab steals focus from the very device
+          doing the scanning.
+        */}
+        <button
+          type="button"
+          className="dsm-xdpool-star dsm-xdpool-group"
+          title={t?.('shell.groupHint') ?? '扫码加入 XD 交流群'}
+          onClick={() => { setGroupOpen(true) }}
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            {/* Two overlapping speech bubbles: the WeChat-group read at 15px,
+                without copying the trademark's exact silhouette. */}
+            <path
+              fill="currentColor"
+              d="M9.1 3.4c-3.6 0-6.5 2.4-6.5 5.4 0 1.7 1 3.2 2.6 4.2l-.7 2.1 2.4-1.2c.7.2 1.4.3 2.2.3h.4a5.6 5.6 0 0 1-.2-1.5c0-3 2.9-5.4 6.5-5.4h.5C15.7 5.1 12.7 3.4 9.1 3.4zm-2.3 2.9a.9.9 0 1 1 0 1.8.9.9 0 0 1 0-1.8zm4.6 0a.9.9 0 1 1 0 1.8.9.9 0 0 1 0-1.8z"
+            />
+            <path
+              fill="currentColor"
+              d="M21.4 12.7c0-2.5-2.4-4.5-5.4-4.5s-5.4 2-5.4 4.5 2.4 4.5 5.4 4.5c.6 0 1.2-.1 1.8-.2l2 1-.6-1.7c1.4-.9 2.2-2.2 2.2-3.6zm-7.2-1.4a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6zm3.6 0a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6z"
+            />
+          </svg>
+          <span>{t?.('shell.group') ?? '交流群'}</span>
+        </button>
         <div className="dsm-xdpool-navtabs" role="tablist" ref={tabsRef}>
           {glider === undefined ? null
             : <span
@@ -254,6 +303,54 @@ export function PoolShell({
       </nav>
       {hero === undefined ? null : hero}
       <div className="dsm-xdpool-body">{children}</div>
+      {/*
+        The group invite, as a dialog over the card rather than a new tab.
+
+        Rendered last and inside the shell so it is positioned against the card
+        (`.dsm-xdpool-shell` is the containing block), which keeps it off the
+        host dialog's own chrome. The overlay swallows clicks on itself only —
+        the panel stops propagation — so clicking the dim area closes and
+        clicking the code does not.
+      */}
+      {!groupOpen ? null : (
+        <div
+          className="dsm-xdpool-groupmask"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t?.('shell.groupTitle') ?? 'XD 交流群'}
+          onClick={() => { setGroupOpen(false) }}
+        >
+          <div className="dsm-xdpool-groupcard" onClick={(event) => { event.stopPropagation() }}>
+            <div className="dsm-xdpool-groupcardhead">
+              <b>{t?.('shell.groupTitle') ?? 'XD 交流群'}</b>
+              <button
+                type="button"
+                className="dsm-xdpool-groupclose"
+                aria-label={t?.('shell.groupClose') ?? '关闭'}
+                onClick={() => { setGroupOpen(false) }}
+              >
+                ×
+              </button>
+            </div>
+            {/*
+              `alt` carries the instruction, not a description: someone using a
+              screen reader cannot scan a code, so the honest thing to say is
+              what the code is for and that it expires.
+            */}
+            <img
+              className="dsm-xdpool-groupqr"
+              src={COMMUNITY_QR_DATA_URI}
+              alt={t?.('shell.groupAlt') ?? '微信群二维码：用微信扫一扫加入 XD 交流群'}
+              width={260}
+              height={260}
+            />
+            <p className="dsm-xdpool-groupnote">
+              {t?.('shell.groupNote')
+                ?? '用微信「扫一扫」加入 XD 交流群。二维码 7 天内有效，过期了在 GitHub 提 issue 说一声，会更新。'}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

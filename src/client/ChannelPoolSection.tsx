@@ -60,6 +60,41 @@ import type { XdPoolSettingsKey } from './locales.ts'
 
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
 
+/**
+ * The last good answer, kept OUTSIDE the component.
+ *
+ * Switching tabs unmounts this section — the page body is a three-way ternary —
+ * so component state cannot survive a tab change and every return re-ran the
+ * whole chain, showing blank cards for the 2-4 seconds it took (#102). A
+ * module-level store is the only place a value can live across mounts, which is
+ * what lets the first frame after a remount render the previous cards and
+ * revalidate behind them.
+ *
+ * Written BEFORE the `mountedRef` checks, deliberately: a request that lands
+ * after this component unmounted still carries a correct answer, and it belongs
+ * in the store whether or not anybody is looking at it. Ordering it the other
+ * way is what made the previous code throw away results it had already paid
+ * for — "the answer arrived while the reader was away".
+ */
+interface ChannelPoolSnapshot {
+  entries: readonly ChannelEntry[]
+  /** The failure the last attempt reported, or undefined when it succeeded. */
+  error?: string | undefined
+}
+let poolSnapshot: ChannelPoolSnapshot | undefined
+
+/**
+ * Drop the snapshot after anything that changes the data behind it.
+ *
+ * Logins, deletions, toggles and manual balance refreshes all make the snapshot
+ * stale in a way a silent revalidation cannot hide: showing yesterday's account
+ * list for a card the user just added an account to is worse than showing the
+ * "reading" line for a moment.
+ */
+export function invalidatePoolSnapshot(): void {
+  poolSnapshot = undefined
+}
+
 /** Which of the two lists a card has open. At most one, like the reference. */
 type Fold = 'accounts' | 'models'
 
@@ -192,8 +227,21 @@ function amount(value: number): string {
 }
 
 export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }): ReactElement {
-  const [entries, setEntries] = useState<readonly ChannelEntry[]>([])
-  const [error, setError] = useState<string | undefined>(undefined)
+  // Seeded from the cross-mount snapshot: a remount paints the last good cards
+  // on its very first frame, then revalidates. Only a genuinely cold start
+  // begins empty — and that one says so, instead of rendering air.
+  const [entries, setEntries] = useState<readonly ChannelEntry[]>(() => poolSnapshot?.entries ?? [])
+  const [error, setError] = useState<string | undefined>(() => poolSnapshot?.error)
+  /**
+   * True until the first wave has answered once.
+   *
+   * The section used to render NOTHING while loading, so a cold start and a
+   * broken RPC bridge looked identical: blank (#95). The bridge failing is a
+   * real, common failure — `provider.status` answers `ok: false`, the map comes
+   * back empty, `scanProviders` is empty and the old code returned `<></>` with
+   * `error === undefined`. Silence was indistinguishable from "no accounts".
+   */
+  const [loading, setLoading] = useState<boolean>(() => poolSnapshot === undefined)
   const [notice, setNotice] = useState<string | undefined>(undefined)
   /** provider → the open list, or `undefined` for a card with both folded. */
   const [folds, setFolds] = useState<ReadonlyMap<string, Fold | undefined>>(new Map())
@@ -206,6 +254,15 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
   const entriesRef = useRef(entries)
   entriesRef.current = entries
   const mountedRef = useRef(true)
+  /**
+   * Which load is current.
+   *
+   * Two things make a stale answer arrive late: the retry ladder re-runs the
+   * whole chain, and a remount starts a new chain while the old request is
+   * still in flight. Stamping each run is what keeps an older wave-2 result
+   * from painting over a newer wave-1 one.
+   */
+  const loadSeq = useRef(0)
   useEffect(() => () => { mountedRef.current = false }, [])
 
   const markBusy = (provider: string, on: boolean): void => {
@@ -218,6 +275,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
   }
 
   const load = async (): Promise<void> => {
+    loadSeq.current += 1
     try {
       const channels = (await fetchChannels()).filter(channel => !REGION_OWNED_CHANNELS.has(channel.id))
       // `account.list` filters by provider on its very first line
@@ -240,24 +298,25 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
       // hint — see `PoolWebChannelModelsRequest.ids`.
       const perProvider = await Promise.all(scanProviders.map(async provider => {
         const wantBalances = channels.find(channel => channel.id === provider)?.credits !== undefined
+        // WAVE 1: only what the CARD itself needs, and all of it answered from
+        // memory by the pack. `account.list` and `model.list` cost milliseconds;
+        // `credits.balances` is the one call that goes to the network and it is
+        // deliberately NOT awaited here. Joining all four behind a single
+        // `Promise.all` — as the old code did — meant the channel name,
+        // "connected", "1/1 accounts", "5/11 models" and every button waited on
+        // the slowest余额 query, for facts that had been known for milliseconds
+        // (#102). Wave 2 below fills the credits in.
+        //
         // The calls are independent: a channel whose catalogue cannot be
         // listed still has accounts worth showing, so one failure must not
         // blank the other half of the card.
         const accountsPromise = callPack('account.list', { provider })
         const modelsPromise = callPack('model.list', { provider })
-        const balancesPromise = wantBalances
-          ? callPack('credits.balances', { provider })
-          : Promise.resolve(undefined)
-        const statusesPromise = wantBalances && channels.find(c => c.id === provider)?.credits?.status === true
-          ? callPack('credits.status', { provider })
-          : Promise.resolve(undefined)
         // `callPack` answers an `ok: false` envelope as a value rather than a
         // rejection, so the catch arms only cover the transport itself.
-        const [accounts, models, balances, creditStatuses] = await Promise.all([
+        const [accounts, models] = await Promise.all([
           accountsPromise.catch(() => refused('account.list failed')),
           modelsPromise.catch(() => refused('model.list failed')),
-          balancesPromise.catch(() => refused('credits.balances failed')),
-          statusesPromise.catch(() => refused('credits.status failed')),
         ])
         // `model.list` answers with a FLAT array for the one provider it was
         // asked about (`{models: [...]}`), not a provider→rows map, so it is
@@ -266,7 +325,6 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
         // published" line.
         const modelRows = modelsFrom(models.value)
         const modelEmptyBecauseRefused = modelRows.length === 0 && models.ok !== true
-        const balanceRows = balances === undefined ? [] : balancesFrom(balances)
         return [
           provider,
           {
@@ -276,12 +334,14 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
             // reader answers "which one do I pick?" in.
             models: sortChannelModels(modelRows),
             facts: new Map<string, PoolWebChannelModel>(),
-            balances: balanceRows,
-            statuses: creditStatuses === undefined ? [] : creditStatusesFrom(creditStatuses),
-            balancePending: false,
-            balanceError: balances !== undefined && !balances.ok && balanceRows.length === 0
-              ? (balances.error?.message ?? 'credits.balances refused')
-              : undefined,
+            // Filled by wave 2. `balancePending` is what makes the renderer
+            // print "…" instead of "—" while it waits — that branch already
+            // existed in the render, but the writer hard-coded `false`, so it
+            // was unreachable dead code and the wait was invisible.
+            balances: [] as readonly ChannelBalance[],
+            statuses: [] as readonly ChannelCreditStatus[],
+            balancePending: wantBalances,
+            balanceError: undefined,
             modelError: modelEmptyBecauseRefused
               ? (models.error?.message ?? 'model.list refused')
               : undefined,
@@ -297,17 +357,20 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
           facts: new Map<string, PoolWebChannelModel>(),
           status: statuses.get(channel.id),
         }))
+      // Wave 1 lands here. The store is written FIRST and unconditionally: this
+      // answer is correct whether or not the component is still mounted, and a
+      // result discarded because the reader happened to switch tabs mid-flight
+      // is a result that has to be fetched again (#102).
+      poolSnapshot = { entries: next, error: undefined }
       if (!mountedRef.current) return
+      const seq = loadSeq.current
 
-      // Two phases, because the two halves answer at very different speeds.
-      // `provider.status` and `account.list` come back in tens of milliseconds,
-      // while the fact sweep (`/channels/models`, which resolves every model
-      // against the host's adapters) measured 16.5 seconds on a cold host. Doing
-      // that before `setEntries` kept every card blank for the whole sweep, which
-      // reads as "the pool did not load at all". So the cards land first and the
-      // facts are merged in when they arrive.
+      // The fact sweep (`/channels/models`, which resolves every model against
+      // the host's adapters) measured 16.5 seconds on a cold host, so the cards
+      // land first and the facts merge in when they arrive.
       setEntries(next)
       setError(undefined)
+      setLoading(false)
 
       if (next.length === 0) {
         // Nothing to enrich, and the empty page would otherwise be silent. A
@@ -315,9 +378,20 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
         // real "no sign-ins"; an answer that came back refused is not, and must
         // say so or the reader cannot tell the two apart.
         if (!statusAnswer.ok) {
-          setError(statusAnswer.error?.message ?? 'provider.status refused')
+          const message = statusAnswer.error?.message ?? 'provider.status refused'
+          poolSnapshot = { entries: next, error: message }
+          setError(message)
         }
         return
+      }
+
+      // WAVE 2, unawaited on purpose: the credits cells show "…" until it lands.
+      // Each channel is filled in on its own, so a slow vendor cannot hold up a
+      // fast one, and a failure puts the token back to "—" AND writes the
+      // reason, instead of leaving the cell pending forever.
+      for (const entry of next) {
+        if (entry.channel.credits === undefined) continue
+        void refreshBalances(entry.channel.id, false, true, seq)
       }
 
       const idsByProvider: Record<string, readonly string[]> = {}
@@ -326,15 +400,21 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
       }
       const facts = await fetchChannelModels(next.map(entry => entry.channel.id), idsByProvider)
         .catch((): ReadonlyMap<string, readonly PoolWebChannelModel[]> => new Map())
-      if (!mountedRef.current) return
+      if (!mountedRef.current || loadSeq.current !== seq) return
       if (facts.size === 0) return
       setEntries(previous => previous.map(entry => ({
         ...entry,
         facts: new Map((facts.get(entry.channel.id) ?? []).map(model => [model.id, model])),
       })))
     } catch (cause) {
+      // A failure is a fact about the machine, so it belongs in the store too:
+      // a remount must show the error rather than silently retrying into a
+      // second blank page.
+      const message = cause instanceof Error ? cause.message : String(cause)
+      poolSnapshot = { entries: entriesRef.current, error: message }
       if (!mountedRef.current) return
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setError(message)
+      setLoading(false)
     }
   }
 
@@ -514,13 +594,38 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     }
   }
 
-  const refreshBalances = async (provider: string, force: boolean): Promise<void> => {
-    markBusy(provider, true)
+  /**
+   * Read one channel's balances and merge them into its card.
+   *
+   * Wave 2 of the load calls this with `quiet` true: the card is already on
+   * screen, so the provider must not be marked busy (that would disable the
+   * claim button for a network read the reader did not ask for) and a failure
+   * must land in `balanceError` rather than in the section-wide notice.
+   *
+   * `seq` is the load that asked for this read. A reply from an older load
+   * cannot overwrite a newer card, which is what the previous version got wrong
+   * when a remount overlapped an in-flight refresh.
+   */
+  const refreshBalances = async (provider: string, force: boolean, quiet = false, seq?: number): Promise<void> => {
+    if (!quiet) markBusy(provider, true)
     setEntries(previous => previous.map(entry =>
       entry.channel.id === provider ? { ...entry, balancePending: true } : entry))
     try {
       const envelope = await callPack('credits.balances', force ? { provider, force: true } : { provider })
-      if (!mountedRef.current) return
+      if (seq !== undefined && loadSeq.current !== seq) return
+      if (!mountedRef.current) {
+        // Still record the answer for the next mount: the read cost a network
+        // round trip and the numbers are true regardless of who is watching.
+        if (envelope.ok) {
+          const rows = balancesFrom(envelope)
+          poolSnapshot = {
+            entries: (poolSnapshot?.entries ?? []).map(entry =>
+              entry.channel.id === provider ? { ...entry, balancePending: false, balances: rows } : entry),
+            error: poolSnapshot?.error,
+          }
+        }
+        return
+      }
       if (!envelope.ok) {
         setEntries(previous => previous.map(entry =>
           entry.channel.id === provider
@@ -534,7 +639,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
           ? { ...entry, balancePending: false, balanceError: undefined, balances: rows }
           : entry))
     } finally {
-      if (mountedRef.current) markBusy(provider, false)
+      if (mountedRef.current && !quiet) markBusy(provider, false)
     }
   }
 
@@ -597,18 +702,39 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
         return
       }
       if (action === 'test') setNotice(t?.('channelpool.testOk') ?? 'Reachable.')
+      // The account list just changed on disk, so the cross-mount snapshot is
+      // stale in a way silence would hide: the user is looking at this exact
+      // card, and an unchanged one would read as "the action did nothing".
+      invalidatePoolSnapshot()
       await load()
     } finally {
       if (mountedRef.current) markBusy(provider, false)
     }
   }
 
-  // No channel accounts yet is not a state worth a block of its own: the page
-  // above already explains what this pool is, and an empty grid that says
-  // "add an account on the login page" only repeats the nav row the reader
-  // just clicked. Render nothing rather than a placeholder that reads like a
-  // failure. A load ERROR still speaks, because that one is a real problem.
-  if (entries.length === 0 && error === undefined) return <></>
+  // An empty result is NOT worth a block of its own once it is known: the page
+  // above already explains what this pool is, and an empty grid that says "add
+  // an account on the login page" only repeats the nav row the reader just
+  // clicked.
+  //
+  // But "nothing yet" and "not read yet" are different answers, and rendering
+  // both as air is what made the failed-bridge case unfalsifiable (#95): the
+  // RPC came back `ok: false`, `provider.status` produced an empty map, and the
+  // section returned `<></>` with `error === undefined`, so the user saw a blank
+  // half-page that looked exactly like "I have not signed in to these channels".
+  //
+  // So: while the first read is in flight, say so; when it failed, say why;
+  // only a successful read that found nothing stays silent.
+  if (entries.length === 0 && error === undefined) {
+    if (!loading) return <></>
+    return (
+      <section className="dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
+        <p className="dsm-xdpool-note" role="status">
+          {t?.('channelpool.loading') ?? 'Reading scan channels…'}
+        </p>
+      </section>
+    )
+  }
   return (
     <section className="dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
       {error === undefined ? null

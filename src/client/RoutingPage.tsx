@@ -115,8 +115,19 @@ export function RoutingPage({ t }: RoutingPageProps) {
         // the first save would then wipe all three — the panel silently deleting
         // work because it never showed it. `seeded` keeps a later re-read from
         // discarding edits in flight.
-        setDrafts(prev => seeded.current ? prev : (next.combos ?? []).map(draftOf))
-        seeded.current = true
+        //
+        // The guard is read and set BEFORE the state update is queued, and that
+        // ordering is the whole fix. The previous form put the guard INSIDE the
+        // updater callback and then flipped the flag on the following line —
+        // React runs that callback later, in the commit phase, by which point
+        // the flag was already true, so the callback always returned the
+        // unchanged value and the editor stayed empty for a profile whose server
+        // did have chains. The list then rendered "no chain yet" and the first
+        // save posted an empty table over the real chains.
+        if (!seeded.current) {
+          seeded.current = true
+          setDrafts((next.combos ?? []).map(draftOf))
+        }
       }
     } catch (cause: unknown) {
       // Same contract as the provider page: a dead panel says so in place. The
