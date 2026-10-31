@@ -145,9 +145,19 @@ function effectiveBaseUrl(provider: ProviderRecord, setting: ProviderSetting): s
  * one, and a guessed listing is worse than none.
  */
 function effectiveModelsUrl(provider: ProviderRecord, setting: ProviderSetting): string | null {
-  const declared = modelsEndpoint(provider)
-  if (declared === null) return null
   const override = text(setting.baseUrl).replace(/\/+$/, '')
+  const declared = modelsEndpoint(provider)
+  if (declared === null) {
+    // A record with no base of its own (`custom`) declares its listing as a
+    // path, so only the user's base can make it absolute. This is NOT the
+    // "relative path with no base" case `modelsEndpoint` reports as null: there
+    // the URL is unusable because nothing will ever supply a host, whereas here
+    // the host is precisely what the settings pane is asking for.
+    const raw = text(provider.modelsUrl)
+    if (raw === '' || override === '') return null
+    if (/^[a-z][a-z0-9+.-]*:/iu.test(raw)) return raw
+    return `${override}${raw.startsWith('/') ? '' : '/'}${raw}`
+  }
   const registryBase = text(provider.baseUrl).replace(/\/+$/, '')
   if (override === '' || registryBase === '' || !declared.startsWith(registryBase)) return declared
   return `${override}${declared.slice(registryBase.length)}`

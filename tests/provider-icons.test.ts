@@ -18,11 +18,13 @@ describe('the aggregate vendors carry their own artwork', () => {
   it('holds an icon for almost every vendor in the registry', () => {
     const without = vendorIds.filter((id) => !entries.has(id))
     expect(entries.size).toBe(vendorIds.length - without.length)
-    // Three vendors have nowhere to get a mark: LLaMA.cpp is a repository with
+    // Four entries have nowhere to get a mark: LLaMA.cpp is a repository with
     // no brand site (borrowing Meta's would be a lie), Morph's site serves a
-    // non-PNG icon a CSS background cannot draw, and bynara.id publishes no
-    // favicon at all. Initials are the honest answer for those three.
-    expect([...without].sort()).toEqual(['llamacpp', 'morph', 'nararoute'])
+    // non-PNG icon a CSS background cannot draw, bynara.id publishes no favicon
+    // at all, and `custom` is not a vendor — it stands for whatever gateway the
+    // user points at, so there is no mark that would be true. Initials are the
+    // honest answer for all four.
+    expect([...without].sort()).toEqual(['custom', 'llamacpp', 'morph', 'nararoute'])
   })
 
   it('invents no key the registry does not have', () => {

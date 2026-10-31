@@ -1585,6 +1585,19 @@ interface PoolWebAggregateProvider {
    * rows and never put one back.
    */
   availableModels: readonly string[];
+  /**
+   * True when the registry declares no models, so the ids are the user's to
+   * type.
+   *
+   * Four records are in that state today: `custom` (a gateway the registry
+   * cannot know about), Azure (ids are per-deployment) and the three local
+   * servers (the ids are whatever the user loaded). None of them can be served
+   * until someone names a model, and none can offer a chooser over a roster
+   * that does not exist — so this flag is what tells the card to draw a text
+   * field instead. The flag travels rather than the id, because the card must
+   * not keep a list of vendor names that mean "empty on purpose".
+   */
+  manualModels: boolean;
   /** True when the exposed set came from a live listing rather than the registry. */
   discovered: boolean;
   /** When the provider was first configured. */

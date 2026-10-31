@@ -499,6 +499,23 @@
     "modelsUrl": "https://api.cohere.ai/v1/models"
   },
   {
+    "id": "custom",
+    "name": "Custom endpoint",
+    "category": "apikey",
+    "auth": {
+      "kind": "apiKey",
+      "env": null,
+      "url": null
+    },
+    "baseUrl": "",
+    "format": "openai-chat",
+    "models": [],
+    "modelsUrl": "/models",
+    "notes": "An OpenAI-compatible gateway that is not on this list: give it a base URL and a key, then type the model ids it serves. A gateway that publishes /models can have them fetched instead.",
+    "local": false,
+    "source": "manual"
+  },
+  {
     "id": "deepinfra",
     "name": "DeepInfra",
     "category": "apikey",
