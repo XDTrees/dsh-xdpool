@@ -761,6 +761,43 @@ function withSessionQuotaHint(error: unknown, retryAfterMs: number | undefined):
 }
 
 /**
+ * Say what a 403 on this lane actually means (#96).
+ *
+ * The gateway answers a client it does not recognise with `403 FreeTierError`
+ * and no explanation of which of its four fingerprint facts was wrong. That
+ * reaches the caller as a bare `client` failure, and a bare 4xx is what the
+ * host then renders in its own words: the user in #96 saw "当前请求的额度已用尽"
+ * for a request that had never been billed. The wording pointed at waiting,
+ * while the actual cause was "this build's fingerprint no longer matches, update
+ * the plugin" — the two need opposite responses.
+ *
+ * The lane cannot tell them apart from the outside (both look like a refusal
+ * with a thin body), so this does not pretend to. It names the actionable
+ * reading FIRST — the fingerprint, which the user can fix by updating — and
+ * keeps the quota possibility second, because it is the one that fixes itself.
+ *
+ * A 429 keeps its own hint ({@link withSessionQuotaHint}): that one really is
+ * quota, and blurring the two would lose a distinction worth keeping.
+ */
+function withFreeTierHint(status: number, refusal: string, retryAfterMs: number | undefined): unknown {
+  const base = classifyUpstream(status, refusal, retryAfterMs, '')
+  if (status !== 403) return base
+  // The provider's own sentence is kept: it is the only evidence a maintainer
+  // has when the fingerprint moves again.
+  const separator = base.message.indexOf(': ')
+  const detail = separator === -1 ? '' : base.message.slice(separator + 2)
+  const kept = detail === '' ? '' : ` (provider said: ${detail})`
+  return new AggregateError(
+    base.kind,
+    'the free lane refused this client: its request fingerprint no longer matches what opencode.ai accepts, '
+      + 'so this is NOT an exhausted quota and waiting will not help — update dsh-xdpool and try again; '
+      + 'if it persists, report this message. The shared free quota is also metered per conversation, so one '
+      + `retry in a fresh conversation covers the case where only that budget is spent${kept}`,
+    status,
+  )
+}
+
+/**
  * POST one streaming turn and hand back chat-shaped deltas.
  *
  * The shape of the ANSWER decides how it is read, never its Content-Type: a front
@@ -824,7 +861,7 @@ export async function postFreeStreamed(
   const retryAfter = retryAfterMs(response)
   if (!response.ok) {
     const refusal = await response.text().catch(() => '')
-    throw withSessionQuotaHint(classifyUpstream(response.status, refusal, retryAfter, ''), retryAfter)
+    throw withSessionQuotaHint(withFreeTierHint(response.status, refusal, retryAfter), retryAfter)
   }
   if (response.body === null) throw new AggregateError('server', 'the free lane returned no body', response.status)
 
@@ -865,7 +902,10 @@ export async function postFreeStreamed(
       continue
     }
     if (isRecord(decoded) && (decoded.error !== undefined || decoded.type === 'error')) {
-      throw withSessionQuotaHint(classifyUpstream(response.status, event, retryAfter, ''), retryAfter)
+      // Same wording as the HTTP path: an error frame carries the SAME refusal
+      // in a 200 envelope, and the user sees the message, not the status line —
+      // so a frame-classified 403 must not read as "quota used up" either.
+      throw withSessionQuotaHint(withFreeTierHint(response.status, event, retryAfter), retryAfter)
     }
     const translated: FreeEvent = chatChunksFor(wire, decoded, tools)
     for (const delta of translated.frames) hooks.onDelta(delta)

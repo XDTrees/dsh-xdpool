@@ -896,6 +896,31 @@ export const SHELL_CSS = `
 .dsm-xdpool-star svg{fill:currentColor;transition:transform .5s cubic-bezier(.34,1.56,.64,1)}
 .dsm-xdpool-star:hover svg{transform:rotate(72deg) scale(1.12)}
 .dsm-xdpool-star:active svg{transform:rotate(72deg) scale(.94)}
+/* The group button, next to the star, sharing the brand row.
+   The nav is a grid of 1fr auto; a second control in the same cell would
+   STACK on top of the star rather than sit beside it (grid items in one cell
+   overlap). So the track list grows to three: brand | star | group, and both
+   buttons are pinned to row 1 on their own columns. Auto-placement alone puts
+   them under the tab strip, because the strip comes first in the DOM. */
+.dsm-xdpool-nav{grid-template-columns:1fr auto auto}
+.dsm-xdpool-star{grid-column:2;grid-row:1}
+.dsm-xdpool-group{grid-column:3;grid-row:1;margin-left:6px;cursor:pointer;font:inherit;font-size:12.5px;line-height:17px;font-weight:650;color:color-mix(in srgb, var(--dsw-alias-state-business-primary,#5686fe) 82%, var(--dsw-alias-label-secondary,#c6c9d0));border-color:color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 88%, transparent);background:linear-gradient(140deg, color-mix(in srgb, var(--dsw-alias-bg-layer-3,#23252b) 72%, transparent), transparent 70%)}
+.dsm-xdpool-group:hover{transform:translateY(-1px);color:var(--dsw-alias-state-business-primary,#5686fe);box-shadow:0 0 0 4px color-mix(in srgb, var(--dsw-alias-state-business-primary,#5686fe) 9%, transparent), 0 8px 22px rgb(0 0 0 / 22%)}
+/* The pulse is on the icon only, and slow: this button is a door, not a call to
+   action, and a card that nags is a card people mute. */
+.dsm-xdpool-group:hover svg{transform:scale(1.1)}
+.dsm-xdpool-group svg{fill:currentColor;transition:transform .28s cubic-bezier(.34,1.56,.64,1)}
+/* The invite dialog. Positioned against the shell (which is the containing
+   block) so it covers the card and nothing of the host dialog around it. */
+.dsm-xdpool-groupmask{position:absolute;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;border-radius:16px;background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 72%, transparent)}
+.dsm-xdpool-groupcard{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:340px;padding:16px 18px 18px;border-radius:16px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 86%, transparent);background:var(--dsw-alias-bg-layer-2,#1c1e22);box-shadow:0 18px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 7%)}
+.dsm-xdpool-groupcardhead{display:flex;align-items:center;gap:10px;width:100%;font-size:13px;line-height:18px;color:var(--dsw-alias-label-primary,#e8e8ea)}
+.dsm-xdpool-groupclose{margin-left:auto;appearance:none;border:none;background:transparent;padding:0 4px;font:inherit;font-size:18px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8a90a0);cursor:pointer;border-radius:8px}
+.dsm-xdpool-groupclose:hover{color:var(--dsw-alias-label-primary,#e8e8ea)}
+/* A white plate under the code, always: a QR inverted onto a dark panel scans
+   on some phones and not others, and there is no way to tell which from here. */
+.dsm-xdpool-groupqr{display:block;width:260px;height:260px;border-radius:12px;background:#fff;padding:6px;object-fit:contain}
+.dsm-xdpool-groupnote{width:100%;margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary,#8a90a0);text-align:center}
 .dsm-xdpool-navtabs{grid-column:1/-1;position:relative;display:flex;flex-wrap:wrap;gap:2px;padding:3px;border-radius:13px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l1,#ffffff14) 80%, transparent);background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 62%, transparent);box-shadow:inset 0 1px 2px rgb(0 0 0 / 4%)}
 /* A raised surface, not a tinted wash: the glider has to read as "this one is
    sitting on top of the strip" from across the panel, and a wash alone is
@@ -943,30 +968,6 @@ export const LEDGER_CARD_CSS = `
    point of a recent-calls table is being able to see the failures. */
 /* Long model ids and account emails get clipped rather than wrapped: a wrapped
    number column breaks the alignment that makes it scannable. */
-
-`.trim()
-
-export const BILLION_CARD_CSS = `
-
-.dsm-xdpool-steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary,#c6c9d0)}
-.dsm-xdpool-steps code{font-family:var(--dsw-alias-font-mono,ui-monospace,Menlo,Consolas,monospace);font-size:11px;background:color-mix(in srgb, var(--dsw-alias-bg-layer-3,#26282e) 80%, transparent);border-radius:6px;padding:2px 6px}
-/* A session with requests still in flight. The dot is the only motion on this
-   page; nothing animates while idle, so a still dot means still idle. */
-.dsm-xdpool-live{display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:6px;vertical-align:middle;background:var(--dsw-alias-state-success,#22c55e)}
-/* Section header that carries its own controls: title on the left, actions on
-   the right, both on one baseline. */
-.dsm-xdpool-sechead{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.dsm-xdpool-sechead .dsm-xdpool-sectitle{margin:0}
-.dsm-xdpool-secbtns{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-/* A control that reads as a link-shaped button: it only navigates or reveals,
-   it never commits state, so it stays quiet until hovered. */
-.dsm-xdpool-secghost{appearance:none;display:inline-flex;align-items:center;font:inherit;font-size:11.5px;font-weight:560;line-height:17px;padding:3px 10px;border-radius:8px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#36373b) 85%, transparent);background:color-mix(in srgb, var(--dsw-alias-bg-layer-3,#2a2c33) 70%, transparent);color:var(--dsw-alias-label-secondary,#c6c9d0);text-decoration:none;cursor:pointer;white-space:nowrap;transition:border-color .16s ease,color .16s ease,background .16s ease,transform .18s var(--ease-instrument)}
-.dsm-xdpool-secghost:hover{border-color:color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 66%, var(--dsw-alias-border-l2,#36373b));color:var(--dsw-alias-label-primary,#e8e8ea);transform:translateY(-1px)}
-.dsm-xdpool-secghost:focus-visible{outline:2px solid color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 78%, transparent);outline-offset:2px;box-shadow:0 0 0 4px color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 13%, transparent)}
-/* The session id itself. A deep link into another plugin's UI, so it has to
-   read as a link without pretending to be the pool's own navigation. */
-.dsm-xdpool-sesslink{color:color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 88%, var(--dsw-alias-label-primary,#e8e8ea));text-decoration:none;border-bottom:1px solid color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 30%, transparent);transition:color .16s ease,border-color .16s ease}
-.dsm-xdpool-sesslink:hover{color:var(--dsw-alias-brand-primary,#5686fe);border-bottom-color:color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 70%, transparent)}
 
 `.trim()
 
@@ -1159,9 +1160,8 @@ export const SHARED_CARD_CSS = `
 .dsm-btn-primary:hover:not(:disabled){opacity:.9}
 /* The borderless third of the button family: links out to a vendor's console
    and the destructive "forget this key" action. It had no rule at all, so the
-   aggregate row's three links and the billion page's "open its dashboard"
-   rendered as bare browser buttons — which is how a secondary action ends up
-   looking like the primary one. */
+   aggregate row's three links rendered as bare browser buttons — which is how a
+   secondary action ends up looking like the primary one. */
 .dsm-btn-ghost{border-color:transparent;background:transparent;color:var(--dsw-alias-label-tertiary,#8a90a0)}
 .dsm-btn-ghost:hover:not(:disabled){border-color:var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-primary,#e8e8ea);background:rgba(255,255,255,.04);text-decoration:none}
 .dsm-xdpool-panel-empty{color:var(--dsw-alias-label-tertiary,#999);font-size:14px;line-height:20px}

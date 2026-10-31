@@ -27,3 +27,15 @@ NPM-FIRST-PUBLISH.md
 
 # Local deployment backups of lib/ (never commit these)
 _backup-lib-*/
+
+# Hand-patched copies of the vendored pack, and one-off working notes that live
+# in the checkout but are not part of the product.
+#
+# Both slipped into a commit once, via a `git add -A` used to take a checkpoint.
+# The `.bak` is a full copy of `vendor/channel-pack/pack.js` with a local patch
+# applied — 2.9 MB, and it carries the upstream credential-shaped strings the
+# pack already has, so GitHub's secret scanning refused the push and the whole
+# branch had to be rewritten. `*patched-local*` catches the date-stamped names
+# future patches will use; the notes file is listed so nobody re-adds it either.
+pack.js.patched-local-*.bak
+FIX-*-NOTES.md

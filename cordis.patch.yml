@@ -4,45 +4,21 @@
 - insert:
     - id: llm-xdpool
       name: dsh-xdpool
-# billion-context is deliberately NOT mounted by this layer.
 #
-# 2.0.0 tried to. It inserted a row (`billion-context-xdpool`) so a profile that
-# had not installed the compressor would get one for free, and `src/billion-mount.ts`
-# held a runtime `create()` as a second path for the same job. Measured against a
-# profile that had ALREADY installed billion-context — which is the normal state
-# for anyone using that feature, since `bili-native` comes from billion-context's
-# own `dsh.bundle.patch.yml` — neither safeguard held:
+# billion-context is gone from this plugin, and so is the row that used to sit
+# here (`billion-context-xdpool`, kept disabled).
 #
-#   the host did not disable our duplicate row, and it did not resolve it to a
-#   no-op. It left `enabled: true` and ran the fiber to `failed`, because
-#   billion-context registers a cordis service under its own name and a second
-#   registration is refused outright (`service "…" has been registered at <…>`).
+# 2.0.0 inserted that row so a profile without the compressor would get one for
+# free. Measured against a profile that had ALREADY installed billion-context —
+# the normal state for anyone using it, since `bili-native` comes from that
+# plugin's own `dsh.bundle.patch.yml` — the host did not disable the duplicate
+# and did not resolve it to a no-op: it ran the fiber to `failed`, because the
+# plugin registers a cordis service under its own name and a second registration
+# is refused outright (`service "…" has been registered at <…>`). Every user who
+# had installed it got a permanently failed entry, unexplained, pointing at us.
 #
-# So every user who had installed billion-context got a permanently failed entry
-# in their plugin list — visible, unexplained, and pointing at us.
-#
-# The row below is kept, but DISABLED, for three reasons:
-#
-#   1. Addressability. `disabled: true` keeps the row's id resolvable, so a
-#      profile that wants to flip it on can do so with one edit instead of
-#      inventing a row.
-#   2. It states the decision where the old attempt lived, where the next person
-#      to wonder "why doesn't the pool bring up the compressor?" will look.
-#   3. It keeps `bili-native` (billion-context's own row) as the ONLY mount of
-#      that module, which is the arrangement that actually works.
-#
-# CONSEQUENCE, STATED PLAINLY
-#
-# A profile that has not installed billion-context sees the billion card report
-# "not installed". That is the honest reading of the facts, and it is already a
-# first-class state on that page — the page distinguishes not-installed from
-# no-answer from ready precisely so this case reads as information rather than
-# as a bug. Installing billion-context remains a decision the user makes; the
-# pool no longer makes it for them.
-#
-# `src/billion-mount.ts` no longer calls `create()` for the same reason: with
-# this row disabled, a runtime create would fight the very row it sits beside.
-# The function still runs — it is what lets the card distinguish
-# already-installed from not-installed — it just never mounts anything.
-- id: billion-context-xdpool
-  disabled: true
+# The follow-up kept the row, disabled, "for addressability". That was the wrong
+# trade: it left a name in this file for a feature the plugin no longer has, and
+# the page that read it (`billion-context`) is deleted too. Installing the
+# compressor is its own decision, made by installing it — which is the
+# arrangement that always worked.

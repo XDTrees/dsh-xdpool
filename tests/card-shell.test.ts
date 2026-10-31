@@ -96,6 +96,69 @@ describe('shell class names', () => {
 })
 
 /**
+ * The community-group button and its dialog.
+ *
+ * The button is the one control on the card whose whole job is to be FOUND: a
+ * user with a broken install is told "come to the group", and a code that only
+ * lives in the README is a code they have to leave the app to look at. So the
+ * assertions below are about discoverability and about the code actually being
+ * shipped in the bundle, not about styling taste.
+ */
+describe('the community-group button', () => {
+  const qr = readFileSync(new URL('../src/client/community-qr.ts', import.meta.url), 'utf8')
+
+  it('sits beside the star, as a button rather than a link', () => {
+    // Next to the star: the brand row is the only place on this card a reader
+    // looks for "about this plugin". An <a> would navigate away, which is the
+    // opposite of the job — the code has to be on screen to be scanned.
+    expect(shell).toContain('dsm-xdpool-group')
+    expect(shell).toMatch(/className="dsm-xdpool-star dsm-xdpool-group"/u)
+    const groupBlock = shell.slice(shell.indexOf('dsm-xdpool-star dsm-xdpool-group'))
+    expect(groupBlock.slice(0, 400)).not.toContain('href=')
+    // Both controls are pinned to row 1 of the nav grid, on their own columns.
+    // Auto-placement would drop the second one under the tab strip.
+    expect(styles).toMatch(/\.dsm-xdpool-nav\{grid-template-columns:1fr auto auto\}/u)
+    expect(styles).toMatch(/\.dsm-xdpool-group\{grid-column:3;grid-row:1/u)
+  })
+
+  it('opens an in-place dialog that Escape and the backdrop both close', () => {
+    expect(shell).toContain('role="dialog"')
+    expect(shell).toContain('aria-modal="true"')
+    // Escape: a modal opened from the keyboard must be closable from it too.
+    expect(shell).toMatch(/event\.key === 'Escape'/u)
+    // The backdrop closes; the panel does not. Without the stopPropagation a
+    // click anywhere on the card dismisses the dialog the reader is looking at.
+    expect(shell).toContain('event.stopPropagation()')
+  })
+
+  it('carries the code itself, not a path the bundle could not resolve', () => {
+    // The client half is one script the host loads; nothing in it can resolve a
+    // package-relative path, and a broken <img> here fails SILENTLY — the dialog
+    // opens and shows nothing, which reads as "the group does not exist".
+    expect(qr).toContain('data:image/png;base64,')
+    expect(shell).toContain('COMMUNITY_QR_DATA_URI')
+    // A square, in both the data and the <img>: a squashed QR is unscannable and
+    // looks merely slightly-off in a screenshot.
+    const width = qr.match(/COMMUNITY_QR_WIDTH = (\d+)/u)
+    const height = qr.match(/COMMUNITY_QR_HEIGHT = (\d+)/u)
+    expect(width?.[1]).toBeDefined()
+    expect(width?.[1]).toBe(height?.[1])
+    expect(shell).toMatch(/width=\{260\}\s+height=\{260\}/u)
+  })
+
+  it('says what the code is for and that it expires', () => {
+    // A group code that silently stopped working would otherwise be reported as
+    // "the button is broken". The caption carries the expiry so the failure has
+    // an explanation on screen before anyone asks.
+    expect(enHas(locales, 'shell.groupNote'), 'shell.groupNote missing from en').toBe(true)
+    expect(enHas(locales, 'shell.groupAlt'), 'shell.groupAlt missing from en').toBe(true)
+    expect(locales).toContain('7 天内有效')
+    // The alt text carries the instruction, because a screen reader cannot scan.
+    expect(locales).toMatch(/'shell\.groupAlt': '[^']*扫[^']*'/u)
+  })
+})
+
+/**
  * The account row's three controls.
  *
  * Structurally asserted rather than rendered: the point is that "prefer this",

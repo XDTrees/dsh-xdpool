@@ -398,6 +398,15 @@ interface WorkBuddyTask {
   claimed: boolean;
   /** Upstream marked the task locked (not yet reachable). */
   locked: boolean;
+  /**
+   * The task's own deeplink, verbatim, or '' when it has none.
+   *
+   * Kept because for the "体验XX专家" family it is the ONLY source of the
+   * expert id: those experts are not in the marketplace listing, and the id
+   * appears nowhere else (#98). Named after the upstream field so a future
+   * reader can find it in a captured JSON body.
+   */
+  jumpUrl: string;
 }
 /**
  * Flatten one upstream task entry.
@@ -1499,77 +1508,6 @@ interface PoolWebChannelModel {
   maxTokens?: number;
   inputModalities?: readonly string[];
   description?: string;
-}
-/**
- * One billion-context session, reduced to what a dashboard may show.
- *
- * Counts, sizes and timestamps only. The proxy's own rows carry titles and
- * first-block hints, which are the user's words; those stay on the machine that
- * produced them and are not relayed.
- */
-interface PoolWebBillionSession {
-  /** The proxy's session id. Safe to show: it is a generated handle. */
-  id: string;
-  /** Which wire the session speaks; `openai` is what DSH's shim uses. */
-  protocol: string;
-  /** Whether a request hit this session in the last few seconds. */
-  live: boolean;
-  requests: number;
-  /** The compacted context size the proxy is holding, 0 when unknown. */
-  contextTokens: number;
-  /** Which measurement the context size came from; `usage` is the honest one. */
-  contextTokensSource: string;
-  /** Net tokens the proxy says compression saved. */
-  tokensSaved: number;
-  inputTokens: number;
-  cachedTokens: number;
-  outputTokens: number;
-  /** Cache hit rate 0-100, or -1 when no input tokens were ever counted. */
-  cacheHitPct: number;
-  /** How many compressed blocks this session holds. */
-  blocks: number;
-  /** The window the proxy believes the model has, 0 when unknown. */
-  contextWindow: number;
-  /** ISO timestamp of the last request, or '' when the session never had one. */
-  lastSeen: string;
-  /** The last model the session saw, or '' before the first request. */
-  lastModel: string;
-}
-/** The document {@link POOL_BILLION_PATH} answers with. */
-interface PoolWebBillionStatus {
-  /**
-   * Whether a proxy was found and answered.
-   *
-   * `missing` is a normal, expected state, not an error: billion-context is a
-   * separate plugin, and a machine without it must get a page that explains
-   * that rather than a 503 or a blank panel.
-   */
-  state: 'ready' | 'missing' | 'unreachable';
-  /** Human text for a non-ready state; absent when ready. */
-  reason?: string;
-  /**
-   * The proxy's own loopback origin, absent only when none was recorded.
-   *
-   * The card needs this to hand the user a browser link: billion-context ships
-   * its own dashboard, including a per-session detail view, and duplicating
-   * those screens here would be a second and divergent copy of another
-   * plugin's interface. Linking out keeps one answer.
-   *
-   * This is a service address, not conversation material, and it is safe to
-   * publish for the same reason the route that carries it is loopback-only: a
-   * caller who can read this document can already reach that listener directly.
-   * It is present on `unreachable` too — a proxy that recorded its port and
-   * then went quiet is exactly the case where the URL is the only handle.
-   */
-  origin?: string;
-  /** The proxy's version, from its own manifest. */
-  version?: string;
-  /** When the proxy process started (epoch ms), 0 when unknown. */
-  startedAt?: number;
-  /** Sessions newest-first, capped by the route. */
-  sessions: readonly PoolWebBillionSession[];
-  /** How many sessions the proxy holds in total, including capped-out ones. */
-  totalSessions: number;
 }
 /**
  * Where a registry provider's key goes: `apiKey`, `baseUrl`, or `enabled`.
@@ -3407,6 +3345,16 @@ export declare class WorkBuddyScheduler {
   /** Host hooks that persist the ledger across restarts. */
   private readonly loadEarnings;
   private saveEarningsFn;
+  /**
+   * The most recent ledger write that may still be in flight.
+   *
+   * `persistEarnings` is synchronous from its callers' point of view, but the
+   * host's settings write is not: it is an async document update. Keeping the
+   * promise here is what lets {@link flushEarnings} wait for the write that
+   * matters — the last one before a restart — without making every counter
+   * update await disk.
+   */
+  private pendingEarningsWrite;
   constructor(pool: WorkBuddyAccountPool, client: WorkBuddyUpstreamClient, options?: AutomationOptions);
   /** Apply a new configuration; safe to call while running. */
   /**
@@ -3417,6 +3365,16 @@ export declare class WorkBuddyScheduler {
    * would have nowhere to go.
    */
   setEarningsPersistence(save: (ledger: AutomationLedger) => void | Promise<void>): void;
+  /**
+   * Wait for the ledger write that is (or was last) in flight.
+   *
+   * Called at the END of a task pass, right after the last claim, so the rewards
+   * that were just collected are on disk before a restart can lose them. It is
+   * deliberately NOT awaited on every counter bump: the settings document write
+   * is the slow part, and paying it per account would slow the pass for no
+   * benefit while the process is still alive.
+   */
+  flushEarnings(): Promise<void>;
   /**
    * Fold a previously persisted ledger back in, when it belongs to today.
    *
@@ -3530,6 +3488,14 @@ export declare class WorkBuddyScheduler {
    * Best effort on purpose: a failed save must never abort a run that has
    * already collected rewards, and the in-memory ledger keeps serving the card
    * for the rest of the session either way.
+   *
+   * The returned promise settles when the write has landed (or failed). Callers
+   * that are about to END a run await it: reported in #98, a task pass that
+   * claimed 21 tasks had its process restarted before the volatile settings
+   * write reached disk, so `automationEarnings` still read `credit: 0` while
+   * the upstream had really paid out. Fire-and-forget is fine for a counter the
+   * card will re-read in this process; it is not fine for the last write before
+   * exit.
    */
   private persistEarnings;
   /**
@@ -3586,6 +3552,19 @@ export declare class WorkBuddyScheduler {
    * this is async.
    */
   private chainsFor;
+  /**
+   * Summon-and-use one expert NAMED BY THE TASK.
+   *
+   * Structurally `expertChains` minus the marketplace: the expert id is read
+   * from the task's deeplink instead of by browsing `marketExpertList`, because
+   * this family's experts are not listed there at all (#98 measured 500 entries
+   * across both `agent` and `team`, zero hits).
+   *
+   * Returns `[]` — not a throw — when the task carries no usable id: the caller
+   * logs "could not be built" only for exceptions, and a task shape this code
+   * does not understand is information, not a fault.
+   */
+  private taskExpertChains;
   /**
    * The summon-and-use chains for the expert tasks.
    *
@@ -3987,15 +3966,6 @@ interface PoolStatusRouteOptions {
    * document. The catalog refresh is what makes a new chain pickable at once.
    */
   saveCombos?: (raw: unknown) => Promise<PoolWebCombosStatus>;
-  /**
-   * What the locally running billion-context proxy is doing, read-only.
-   *
-   * Absent when the module could not be wired: the route then answers 503
-   * rather than pretending a third-party proxy reported nothing. It never
-   * rejects — a missing proxy is a normal state with its own `reason`, because
-   * billion-context is a separate optional plugin.
-   */
-  billionDocument?: () => Promise<PoolWebBillionStatus>;
   /**
    * The relay's current state, or undefined when this build has no relay.
    *

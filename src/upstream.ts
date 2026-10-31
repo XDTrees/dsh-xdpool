@@ -1124,6 +1124,15 @@ export interface WorkBuddyTask {
   claimed: boolean
   /** Upstream marked the task locked (not yet reachable). */
   locked: boolean
+  /**
+   * The task's own deeplink, verbatim, or '' when it has none.
+   *
+   * Kept because for the "体验XX专家" family it is the ONLY source of the
+   * expert id: those experts are not in the marketplace listing, and the id
+   * appears nowhere else (#98). Named after the upstream field so a future
+   * reader can find it in a captured JSON body.
+   */
+  jumpUrl: string
 }
 
 /**
@@ -1313,6 +1322,9 @@ function parseTask(value: unknown): WorkBuddyTask | undefined {
     claimable: !claimed && target > 0 && current >= target,
     claimed,
     locked: raw['locked'] === true,
+    // The upstream spells it `jump_url`; an absent or non-string value becomes
+    // '', because every reader treats "no deeplink" and "empty deeplink" alike.
+    jumpUrl: typeof raw['jump_url'] === 'string' ? raw['jump_url'] : '',
   }
 }
 

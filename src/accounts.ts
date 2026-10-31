@@ -1190,6 +1190,29 @@ export class WorkBuddyAccountPool {
     let cooling = 0
     let disabled = 0
     let dead = 0
+    /**
+     * Accounts that survived every OTHER filter and are held back only by their
+     * credit floor.
+     *
+     * Counted rather than returned on the first hit. The old `return` fired the
+     * moment it met one reserved account, so a single account parked under its
+     * floor reported `reserve` for the whole gateway — even while four other
+     * accounts were healthy and had just been tried. The caller turns
+     * `reason === 'reserve'` into a 402 telling the user to lower the reserve,
+     * which pointed at a setting that was not the problem (#98: a five-account
+     * pool reported `reserve_floor` because of one account that had sat below
+     * its floor for weeks, while the actual state was "the rest are cooling").
+     */
+    let reserved = 0
+    /**
+     * Accounts that reached the end of the walk unblocked.
+     *
+     * Non-zero means the pool still has somewhere to send a request, so a
+     * reserve is NOT what this answer is about: editing a number cannot fix a
+     * request that some other account is already able to serve, and saying
+     * otherwise sends the reader to the wrong setting.
+     */
+    let usable = 0
     for (const account of inRegion) {
       if (this.disabledIds.has(account.id)) { disabled += 1; continue }
       // Sign-in rejected: counted separately from "cooling", because the remedy
@@ -1200,15 +1223,20 @@ export class WorkBuddyAccountPool {
       const reserve = this.creditReserves.get(account.id)
       if (!reserveExempt?.has(account.id) && reserve !== undefined && reserve > 0) {
         const balance = this.creditBalances.get(account.id)
-        if (balance !== undefined && balance <= reserve) {
-          return { total: inRegion.length, cooling, disabled, dead, reason: 'reserve' }
-        }
+        if (balance !== undefined && balance <= reserve) { reserved += 1; continue }
       }
+      usable += 1
     }
     // A rejected sign-in outranks a cooldown: waiting does not fix it.
     if (dead > 0) return { total: inRegion.length, cooling, disabled, dead, reason: 'session_dead' }
     if (cooling > 0) return { total: inRegion.length, cooling, disabled, dead, reason: 'cooling' }
     if (disabled > 0) return { total: inRegion.length, cooling, disabled, dead, reason: 'disabled' }
+    // Only with no other explanation AND nothing left usable does the reserve
+    // actually explain the failure: it then means EVERY remaining account is
+    // parked at or below its floor.
+    if (usable === 0 && reserved > 0) {
+      return { total: inRegion.length, cooling, disabled, dead, reason: 'reserve' }
+    }
     return { total: inRegion.length, cooling, disabled, dead, reason: 'none' }
   }
 

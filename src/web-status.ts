@@ -39,7 +39,6 @@ import {
   POOL_AGGREGATE_SAVE_PATH,
   POOL_AGGREGATE_TEST_PATH,
   POOL_AUTOMATION_RUN_PATH,
-  POOL_BILLION_PATH,
   POOL_CATALOG_REFRESH_PATH,
   POOL_CREDIT_RESERVE_PATH,
   POOL_CHANNELS_PATH,
@@ -77,7 +76,6 @@ import {
   type PoolWebCombo,
   type PoolWebComboCandidate,
   type PoolWebCombosStatus,
-  type PoolWebBillionStatus,
   type PoolWebModelProbe,
   type PoolWebModelProbeResult,
   type PoolWebRelayPatch,
@@ -268,15 +266,6 @@ export interface PoolStatusRouteOptions {
    * document. The catalog refresh is what makes a new chain pickable at once.
    */
   saveCombos?: (raw: unknown) => Promise<PoolWebCombosStatus>
-  /**
-   * What the locally running billion-context proxy is doing, read-only.
-   *
-   * Absent when the module could not be wired: the route then answers 503
-   * rather than pretending a third-party proxy reported nothing. It never
-   * rejects — a missing proxy is a normal state with its own `reason`, because
-   * billion-context is a separate optional plugin.
-   */
-  billionDocument?: () => Promise<PoolWebBillionStatus>
   /**
    * The relay's current state, or undefined when this build has no relay.
    *
@@ -1491,35 +1480,6 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
       },
     })
     /**
-     * The billion-context relay.
-     *
-     * GET only, loopback origin only. Its own route because it is the one
-     * document here that comes from ANOTHER plugin's loopback listener: the
-     * proxy publishes its own JSON and this only reads it, so folding it into
-     * the pool status document would put a third-party service on the critical
-     * path of every 30-second pool poll.
-     *
-     * Answered even when the proxy is absent — `state: 'missing'` with the
-     * install command is far more actionable than a 503, and it is the normal
-     * state on a machine that has not installed billion-context.
-     */
-    const disposeBillion = ctx.webServer.register({
-      kind: 'exact',
-      path: POOL_BILLION_PATH,
-      handler: async (req: IncomingMessage, res: ServerResponse) => {
-        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
-        if (deps.billionDocument === undefined) {
-          return json(res, 503, { error: 'the billion-context relay is not available in this build' })
-        }
-        try {
-          json(res, 200, await deps.billionDocument())
-        } catch (error: unknown) {
-          json(res, 500, { error: safeMessage(error) })
-        }
-      },
-    })
-    /**
      * The chain list plus the roster its members are drawn from.
      *
      * GET only. Deliberately not part of the pool status document: chains change
@@ -1604,7 +1564,6 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
       disposeRelay()
       disposeCombosSave()
       disposeCombos()
-      disposeBillion()
       disposeChannels()
       disposeAggregate()
       disposeAggregateDiscover()

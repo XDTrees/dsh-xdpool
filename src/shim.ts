@@ -1341,11 +1341,17 @@ function withBareModelId(raw: string, modelId: string): string {
           return
         }
         if (why.reason === 'reserve') {
+          // Reached only when EVERY account that survived the other filters is
+          // parked under its reserve — `unavailableReason` reports dead /
+          // cooling / disabled first, because those are not fixed by editing a
+          // number. So the advice here is true: lowering a reserve really is
+          // the next move.
           writeOpenAIError(
             res,
             402,
             'reserve_floor',
-            `no WorkBuddy account is available; at least one is at or below its credit reserve (${why.total} account(s) total); `
+            `no WorkBuddy account is available; every account not excluded by a cooldown or a revoked sign-in `
+              + `is at or below its credit reserve (${why.total} account(s) total); `
               + 'lower the reserve on the pool card or top up credits',
           )
           return

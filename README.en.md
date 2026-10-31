@@ -7,6 +7,16 @@
   <a href="https://github.com/XDTrees/dsh-xdpool/stargazers"><img src="https://img.shields.io/github/stars/XDTrees/dsh-xdpool?style=flat-square" alt="GitHub stars"></a>
 </p>
 
+## Join the group
+
+<p align="center">
+  <img src="assets/community-qr.png" width="300" alt="WeChat group code: XD community group">
+  <br>
+  <sub>Scan with WeChat to join the <b>XD community group</b>. The code is valid for 7 days; if it has expired, say so in <a href="https://github.com/XDTrees/dsh-xdpool/issues">issues</a> and it will be refreshed.</sub>
+  <br>
+  <sub>The 交流群 button next to “Star” in the card's top-right corner opens this same code — no need to come back to the README.</sub>
+</p>
+
 <p align="center">
   <sub>Download stats still come from the previous package name <code>dsh-workbuddy-xdpool</code> (8,976/month as of 2026-10-12 — every download before the rename; the live shields badge kept getting rate-limited by the npm upstream, hence the snapshot figure). The new <code>dsh-xdpool</code> package accumulates its own stats, and the badge switches back to live data later.</sub>
 </p>
@@ -17,7 +27,7 @@ English | [中文](./README.md)
 
 It started as one thing: every account you've signed into the WorkBuddy desktop app, merged into one auto-failing-over pool. An account gets rate-limited or runs out of credits, and the request moves to the next one that works. No picking favourites, no manual import.
 
-Then it grew into seven pages. Beyond the account pool: sign in to thirteen vendors' free models by web or QR, aggregate **76 vendors'** free quotas into one lane, read a usage ledger, chain models together, and expose the pool as a local OpenAI-compatible gateway.
+Then it grew into six pages. Beyond the account pool: sign in to thirteen vendors' free models by web or QR, aggregate **76 vendors'** free quotas into one lane, read a usage ledger, chain models together, and expose the pool as a local OpenAI-compatible gateway.
 
 | Page | What it does |
 | --- | --- |
@@ -25,7 +35,6 @@ Then it grew into seven pages. Beyond the account pool: sign in to thirteen vend
 | **Login channels** | Thirteen vendors that sign in by web or QR — once, and their free models join the picker |
 | **Aggregate** | 76 vendors' free quotas into one pool (none on by default; a vendor lights up when it has a key) |
 | **Dashboard** | Today's turns, calls, failures, failover rescues, tokens, cache hits, speed |
-| **billion-context** | Read-only view of the local billion-context compressor |
 | **Routing** | Chain several models, in order or round-robin |
 | **Gateway** | Expose the pool as a local OpenAI-compatible endpoint, optionally to your LAN |
 

@@ -7,6 +7,16 @@
   <a href="https://github.com/XDTrees/dsh-xdpool/stargazers"><img src="https://img.shields.io/github/stars/XDTrees/dsh-xdpool?style=flat-square" alt="GitHub stars"></a>
 </p>
 
+## 先加群
+
+<p align="center">
+  <img src="assets/community-qr.png" width="300" alt="微信群二维码：XD 交流群">
+  <br>
+  <sub>微信扫一扫加入 <b>XD 交流群</b>。二维码 7 天内有效；过期了在 <a href="https://github.com/XDTrees/dsh-xdpool/issues">issues</a> 说一声会换新。</sub>
+  <br>
+  <sub>卡片右上角「点Star」旁边的「交流群」按钮打开的也是这个码 —— 不用回头找 README。</sub>
+</p>
+
 <p align="center">
   <sub>下载量统计沿用旧包名 <code>dsh-workbuddy-xdpool</code>（截至 2026-10-12 为 8,976 次/月，改名前的全部下载；shields 的实时徽章常被 npm 上游限流，所以这里用了快照数字）。新包 <code>dsh-xdpool</code> 的统计会随时间累积，之后徽章会换回实时数据。</sub>
 </p>
@@ -17,7 +27,7 @@
 
 它从一件事开始——把本机 WorkBuddy 桌面 App 里登录过的**所有账号**合成一个自动容错的池子，哪个号被限流了、积分用光了，请求自动换到下一个能用的号上去。你不用挑号，不用手动导入。
 
-然后它长成了七页：账号池之外，还能扫码登录十三家厂商的免费模型、把 **76 家**厂商的免费额度聚合成一条通道、看用量账本、把几个模型串成链、把池子开成一个本地 OpenAI 兼容网关。
+然后它长成了六页：账号池之外，还能扫码登录十三家厂商的免费模型、把 **76 家**厂商的免费额度聚合成一条通道、看用量账本、把几个模型串成链、把池子开成一个本地 OpenAI 兼容网关。
 
 | 页面 | 干什么 |
 | --- | --- |
@@ -25,7 +35,6 @@
 | **扫码登录** | 十三家支持网页 / 扫码登录的厂商，登一次，它们的免费模型就进选择器 |
 | **聚合渠道** | 76 家厂商的免费额度接进同一个池（默认一家都不开，填了 key 才亮） |
 | **数据看板** | 今天的轮次、调用、失败、换号救回、token、缓存命中、速度 |
-| **billion-context** | 只读观测本机 billion-context 压缩器的运行状态 |
 | **路由** | 把多个模型串成一条链，按顺序或轮换使用 |
 | **网关** | 把池子开成本地 OpenAI 兼容接口，可转发给局域网其它设备 |
 
@@ -38,7 +47,7 @@
 
 ## 先看几张图
 
-**账号池（卡片首页：品牌栏 + 七个页面标签，顶部就是用量）**
+**账号池（卡片首页：品牌栏 + 六个页面标签，顶部就是用量）**
 
 ![账号池：顶栏显示 XD Pool 与版本号、七个页面标签、用量面板在页面最上方、下方是 WorkBuddy 国内版账号卡与「已接入」状态](assets/account-pool.png)
 

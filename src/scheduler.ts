@@ -28,8 +28,8 @@ import { isAlreadyCheckin, isNoCompensation, regionOf } from './upstream'
 import type { WorkBuddyTask, WorkBuddyUpstreamClient } from './upstream'
 import {
   APPEARANCE_THEME_KEY, LIGHTHOUSE_EXPERT_ID, automationChain, appearanceChain, buddyAppChain,
-  canvasChain, chatChain, expertActualUseEvent, expertChatEvents, expertSummonEvents,
-  libraryReadChain, playbookChain, skillChain, templateChains,
+  canvasChain, chatChain, expertActualUseEvent, expertChatEvents, expertFromTask, expertIdFromJumpUrl,
+  expertSummonEvents, libraryReadChain, playbookChain, skillChain, templateChains,
 } from './task-events.ts'
 import type { MarketExpert, TaskEventChain } from './task-events.ts'
 import { DEFAULT_AUTOMATION_HOURS } from './status-paths.ts'
@@ -97,6 +97,19 @@ const EVENT_CHAIN_BUILDERS: Readonly<Record<string, true>> = {
   expert_5: true,
   Expert_team_use_3: true,
   Expert_lighthouse: true,
+  // The "体验XX专家" family (#98): +50 credits each, accept and claim already
+  // worked, but progress stayed at 0/1 forever because the codes were not in
+  // this map — `sendEventChains` skipped them, so no chain was ever sent and
+  // there was nothing to score. The expert ids come from each task's own
+  // `jump_url` (see `expertIdFromJumpUrl`): these experts are not listed in the
+  // marketplace, so `expertChains` cannot find them by browsing.
+  expert_use_maidehao: true,
+  expert_use_douyinyin: true,
+  expert_use_shangjia_xuanchuan: true,
+  expert_use_bowangwang: true,
+  // Same family, same shape, twice the reward. Kept out of the marketplace path
+  // for the same reason; its deeplink carries the id like the others.
+  WorkBuddy_Valorant: true,
 }
 
 export const AUTOMATION_TICK_MS = 60_000
@@ -564,6 +577,17 @@ export class WorkBuddyScheduler {
   private readonly loadEarnings: (() => AutomationLedger | undefined) | undefined
   private saveEarningsFn: ((ledger: AutomationLedger) => void | Promise<void>) | undefined
 
+  /**
+   * The most recent ledger write that may still be in flight.
+   *
+   * `persistEarnings` is synchronous from its callers' point of view, but the
+   * host's settings write is not: it is an async document update. Keeping the
+   * promise here is what lets {@link flushEarnings} wait for the write that
+   * matters — the last one before a restart — without making every counter
+   * update await disk.
+   */
+  private pendingEarningsWrite: Promise<void> = Promise.resolve()
+
   constructor(pool: WorkBuddyAccountPool, client: WorkBuddyUpstreamClient, options: AutomationOptions = {}) {
     this.pool = pool
     this.client = client
@@ -609,6 +633,19 @@ export class WorkBuddyScheduler {
    */
   setEarningsPersistence(save: (ledger: AutomationLedger) => void | Promise<void>): void {
     this.saveEarningsFn = save
+  }
+
+  /**
+   * Wait for the ledger write that is (or was last) in flight.
+   *
+   * Called at the END of a task pass, right after the last claim, so the rewards
+   * that were just collected are on disk before a restart can lose them. It is
+   * deliberately NOT awaited on every counter bump: the settings document write
+   * is the slow part, and paying it per account would slow the pass for no
+   * benefit while the process is still alive.
+   */
+  async flushEarnings(): Promise<void> {
+    await this.pendingEarningsWrite
   }
 
   /**
@@ -960,7 +997,13 @@ export class WorkBuddyScheduler {
     })
     // Persisted on every write: a restart mid-day must not wipe what was
     // already earned, or the card would show nothing for real rewards.
-    this.persistEarnings()
+    //
+    // The promise is also kept, so a run that is about to END can await the
+    // LAST write: reported in #98, a task pass claimed 21 tasks and the process
+    // restarted before the settings write reached disk, leaving the ledger at
+    // `credit: 0` while the upstream had really paid out. Ordinary callers keep
+    // ignoring it — that is what makes this synchronous from their side.
+    this.pendingEarningsWrite = this.persistEarnings()
   }
 
   /** Clear the per-account counters when the local day changes. */
@@ -978,29 +1021,38 @@ export class WorkBuddyScheduler {
    * Best effort on purpose: a failed save must never abort a run that has
    * already collected rewards, and the in-memory ledger keeps serving the card
    * for the rest of the session either way.
+   *
+   * The returned promise settles when the write has landed (or failed). Callers
+   * that are about to END a run await it: reported in #98, a task pass that
+   * claimed 21 tasks had its process restarted before the volatile settings
+   * write reached disk, so `automationEarnings` still read `credit: 0` while
+   * the upstream had really paid out. Fire-and-forget is fine for a counter the
+   * card will re-read in this process; it is not fine for the last write before
+   * exit.
    */
-  private persistEarnings(): void {
-    if (this.saveEarningsFn === undefined) return
+  private persistEarnings(): Promise<void> {
+    const save = this.saveEarningsFn
+    if (save === undefined) return Promise.resolve()
     const accounts: Record<string, AutomationAccountEarnings> = {}
     for (const [id, entry] of this.earnings) accounts[id] = entry
     const ledger = { date: this.earningsDate, accounts }
     try {
-      // The hook may be async (the host-side settings write is). A `try` around a
-      // call that is not awaited catches only SYNCHRONOUS throws — an async
-      // rejection escapes as an unhandled rejection, and the host installs
-      // `installFailLoud`, which turns any unhandled rejection into exit(1). So a
-      // failed save would take the whole process down instead of being logged.
-      // Attaching the handler here (rather than awaiting) keeps this call site
-      // synchronous, which is what the callers — `rollEarnings`,
-      // `recordEarnings`, `status` — all assume.
-      const saved = this.saveEarningsFn(ledger)
+      const saved = save(ledger)
+      // Attach the rejection handler to whatever the hook returns. `try` alone
+      // catches only SYNCHRONOUS throws — an async rejection escapes, and the
+      // host installs `installFailLoud`, which turns an unhandled rejection into
+      // exit(1), so a failed save would take the process down instead of being
+      // logged. The promise is RETURNED as well, so the caller about to end a
+      // run can wait for the write to land.
       if (saved !== undefined && typeof saved.then === 'function') {
-        void saved.then(undefined, (error: unknown) => {
+        return Promise.resolve(saved).then(undefined, (error: unknown) => {
           this.logger.warn?.('dsh-xdpool: could not persist automation earnings:', error)
         })
       }
+      return Promise.resolve()
     } catch (error: unknown) {
       this.logger.warn?.('dsh-xdpool: could not persist automation earnings:', error)
+      return Promise.resolve()
     }
   }
 
@@ -1148,6 +1200,13 @@ export class WorkBuddyScheduler {
     state.detail = detail
     state.progress = progressNote
     this.logger.info?.(`automation ${accountWord}: ${state.message}`)
+    // The rewards above are already recorded; make sure they are ACROSS the
+    // process boundary before this run reports itself done. #98 hit the exact
+    // window this closes: 21 tasks claimed, upstream paid, process restarted,
+    // ledger still read `credit: 0`. Only the jobs that write earnings flush.
+    if (kind === 'tasks' || kind === 'checkin' || kind === 'streak' || kind === 'travel' || kind === 'compensation') {
+      await this.flushEarnings()
+    }
   }
 
   /** Compose the one-line summary shown on the card. */
@@ -1314,9 +1373,57 @@ export class WorkBuddyScheduler {
         return this.expertChains(credential, 'team', task)
       case 'Expert_lighthouse':
         return this.lighthouseChains(credential)
+      // The "体验XX专家" family, all of which behave like `Expert_lighthouse`
+      // in every respect that matters: one named expert, summon then use, and
+      // the id taken from the task rather than from a listing. They differ only
+      // in that the use event keeps the DEFAULT `craft` mode — the LOCAL /
+      // zero-cost shape is the lighthouse task's own criterion and was measured
+      // to be wrong for these (#98 reports all four scoring with craft).
+      case 'expert_use_maidehao':
+      case 'expert_use_douyinyin':
+      case 'expert_use_shangjia_xuanchuan':
+      case 'expert_use_bowangwang':
+      case 'WorkBuddy_Valorant':
+        return this.taskExpertChains(credential, task)
       default:
         return []
     }
+  }
+
+  /**
+   * Summon-and-use one expert NAMED BY THE TASK.
+   *
+   * Structurally `expertChains` minus the marketplace: the expert id is read
+   * from the task's deeplink instead of by browsing `marketExpertList`, because
+   * this family's experts are not listed there at all (#98 measured 500 entries
+   * across both `agent` and `team`, zero hits).
+   *
+   * Returns `[]` — not a throw — when the task carries no usable id: the caller
+   * logs "could not be built" only for exceptions, and a task shape this code
+   * does not understand is information, not a fault.
+   */
+  private async taskExpertChains(
+    credential: WorkBuddyCredential,
+    task: WorkBuddyTask,
+  ): Promise<readonly TaskEventChain[]> {
+    const expertId = expertIdFromJumpUrl(task.jumpUrl)
+    if (expertId === undefined) {
+      this.logger.warn?.(`automation events ${task.taskCode}: no expertId in jump_url, skipping`)
+      return []
+    }
+    const expert = expertFromTask(expertId, task.title)
+    await this.client.reportDesktopEvents(credential, expertSummonEvents(expert))
+    if (this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
+    const chat = await this.client.openConversation(credential, expert.expertId)
+    if (chat === undefined) throw new Error(`${task.taskCode}: no server conversation`)
+    return [{
+      transport: 'desktop',
+      events: [
+        ...expertChatEvents(expert, chat.conversationId, chat.requestId),
+        // Default `craft` mode on purpose; see the note in `chainsFor`.
+        expertActualUseEvent(expert, chat.conversationId, chat.requestId),
+      ],
+    }]
   }
 
   /**

@@ -100,8 +100,20 @@ describe('the page keeps the chain the user typed', () => {
   it('seeds the drafts from the server before rendering the list', () => {
     // Without seeding, the panel would show "no chain yet" for a profile that
     // has three, and the first save would then delete all three.
-    expect(page).toContain('seeded.current')
-    expect(page).toMatch(/setDrafts\(prev => seeded\.current \? prev : \(next\.combos \?\? \[\]\)\.map\(draftOf\)\)/u)
+    //
+    // The guard must be read-and-set synchronously, BEFORE the state update is
+    // queued. The earlier form — `setDrafts(prev => seeded.current ? prev : …)`
+    // followed by `seeded.current = true` — runs the updater in the commit
+    // phase, by which point the flag is already true, so the updater always
+    // returned `prev` (initially `[]`) and the list rendered empty no matter
+    // what the server said. Locking the shape, not just the flag, is the whole
+    // point: the bug was a guard that looked right in a diff.
+    expect(page).toContain('if (!seeded.current) {')
+    expect(page).toMatch(/if \(!seeded\.current\) \{\s*seeded\.current = true\s*setDrafts\(\(next\.combos \?\? \[\]\)\.map\(draftOf\)\)/u)
+    // No functional updater may gate on `seeded` — that is the failing shape.
+    // Anchored to a line start so the explanatory comment above the guard (which
+    // quotes the old form on purpose) does not trip this.
+    expect(page).not.toMatch(/^\s*setDrafts\(prev => seeded/mu)
   })
   it('re-reads the drafts from the save response so ids are the server ids', () => {
     expect(page).toMatch(/setDrafts\(\(next\.combos \?\? \[\]\)\.map\(draftOf\)\)/u)
