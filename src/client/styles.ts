@@ -358,6 +358,29 @@ export const POOL_CARD_CSS = `
 .dsm-xdpool-auto-job-when{flex:1 1 auto;color:var(--dsw-alias-label-secondary,#c6c9d0);font-variant-numeric:tabular-nums}
 .dsm-xdpool-auto-job-last{flex:0 0 auto;text-align:right;color:var(--dsw-alias-label-secondary,#c6c9d0);font-variant-numeric:tabular-nums;white-space:nowrap}
 .dsm-xdpool-auto-job-note{flex:0 0 auto;color:var(--dsw-alias-label-secondary,#c6c9d0)}
+/* Growth task board: which rewards are collected, which are still outstanding.
+   The state is carried by both the glyph and the row colour, so it survives a
+   colour-blind reading and a monochrome screenshot. */
+.dsm-xdpool-tasks{margin-top:8px;padding-top:8px;border-top:1px dashed var(--dsw-alias-border-l2,#36373b);font-size:11px;display:flex;flex-direction:column;gap:4px}
+.dsm-xdpool-tasks-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.dsm-xdpool-tasks-label{color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:12px}
+.dsm-xdpool-tasks-tally{color:var(--dsw-alias-label-dimmed,#8a97b5);font-variant-numeric:tabular-nums}
+.dsm-xdpool-tasks-list{display:flex;flex-direction:column;gap:1px}
+.dsm-xdpool-task{display:flex;align-items:baseline;gap:6px;line-height:1.45}
+.dsm-xdpool-task-mark{flex:0 0 12px;text-align:center;font-variant-numeric:tabular-nums}
+.dsm-xdpool-task-title{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsm-xdpool-task-credit{flex:0 0 auto;font-variant-numeric:tabular-nums;opacity:.75}
+.dsm-xdpool-task-note{flex:0 0 auto;font-size:10px;padding:0 5px;border-radius:999px;opacity:.8}
+/* Collected: dimmed, never the loudest thing on the card. */
+.dsm-xdpool-task-claimed{color:var(--dsw-alias-label-dimmed,#8a97b5)}
+.dsm-xdpool-task-claimed .dsm-xdpool-task-mark{color:#22a06b}
+/* Outstanding but collectable: the only state with work left for the pass. */
+.dsm-xdpool-task-claimable{color:#f0a83c}
+.dsm-xdpool-task-claimable .dsm-xdpool-task-mark{font-weight:700}
+/* Short of target. The automatable flag decides whether the note reads auto or manual. */
+.dsm-xdpool-task-todo{color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-xdpool-task-todo .dsm-xdpool-task-note{background:rgba(138,151,181,.16);color:var(--dsw-alias-label-dimmed,#8a97b5)}
+.dsm-xdpool-task-locked{color:var(--dsw-alias-label-dimmed,#8a97b5);opacity:.6}
 /* Reserved credits: one inline number field per account. */
 .dsm-xdpool-reserve{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px dashed var(--dsw-alias-border-l2,#36373b);font-size:11px;color:var(--dsw-alias-label-dimmed,#8a97b5)}
 .dsm-xdpool-reserve-label{flex:0 0 auto}

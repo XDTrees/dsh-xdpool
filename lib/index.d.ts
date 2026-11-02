@@ -1885,6 +1885,83 @@ interface PoolWebAccount {
    */
   checkin?: PoolWebCheckin;
   checkinError?: string;
+  /**
+   * Per-task claim state for this account, read-only.
+   *
+   * Exists because `automationToday` answers "how much did it earn" but not the
+   * question a person actually asks: WHICH rewards are still sitting there. The
+   * two are different in a way that matters — a pass can report
+   * `claimed: 0 / credit: 0` (nothing left to take) while the board still shows
+   * unclaimed rows, and it can report a healthy `claimed: 5` while six tasks
+   * have never progressed. Neither number says which.
+   *
+   * Absent when the board could not be read, so the card stays quiet rather than
+   * drawing an empty list that reads like "you have nothing".
+   */
+  tasks?: PoolWebTaskBoard;
+  tasksError?: string;
+}
+/**
+ * One task on the growth board, as the card shows it.
+ *
+ * The states are the upstream's own vocabulary, collapsed to the three a person
+ * can act on:
+ *
+ * - `claimed`   — reward collected; nothing to do.
+ * - `claimable` — progress met, reward NOT yet collected. This is the only
+ *                 state where the automation has work left, so it is the one
+ *                 worth surfacing loudest.
+ * - `locked`    — upstream marked it unreachable right now.
+ * - `todo`      — accepted and still short of its target. Some of these the
+ *                 automation can finish (it drives the expert/chat tasks);
+ *                 some it cannot (`wb_wechat_oa_subscribe_task` needs a human
+ *                 to follow an official account), which is why `automatable`
+ *                 is carried separately rather than folded into the state.
+ */
+interface PoolWebTask {
+  /** Upstream task code; the card's stable key. */
+  code: string;
+  /** Human title from the board, already localised upstream. */
+  title: string;
+  /** Credits this task pays when collected. */
+  credit: number;
+  /** `current`/`target` progress, for the "0/1" the board itself prints. */
+  current: number;
+  target: number;
+  /** One of `claimed` / `claimable` / `todo` / `locked`. */
+  state: PoolWebTaskState;
+  /**
+   * Whether the automation has a chain that can score this task.
+   *
+   * A `todo` task with `automatable: false` will never move on its own — that is
+   * the honest distinction between "it hasn't run yet" and "it will never".
+   */
+  automatable: boolean;
+}
+type PoolWebTaskState = 'claimed' | 'claimable' | 'todo' | 'locked';
+/**
+ * Per-account totals derived from the task board.
+ *
+ * Counts rather than just a credit sum, because "3 of 19 still unclaimed" is
+ * the actionable fact and "1600 credits" is not.
+ */
+interface PoolWebTaskBoard {
+  /** Tasks whose reward is already collected. */
+  claimed: number;
+  /** Tasks with progress met but reward outstanding — the automation's queue. */
+  claimable: number;
+  /** Tasks accepted and still short of target. */
+  todo: number;
+  /** Tasks the upstream reports as unreachable. */
+  locked: number;
+  /** Total rows on the board. */
+  total: number;
+  /** Credits still collectable (`claimable` rows only). */
+  claimableCredit: number;
+  /** Credits already collected on the board. */
+  claimedCredit: number;
+  /** The rows themselves, in board order. */
+  rows: readonly PoolWebTask[];
 }
 /** One credit package (as surfaced by the pool's upstream client), node-free. */
 interface PoolWebCreditPackage {

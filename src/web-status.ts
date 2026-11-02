@@ -25,6 +25,7 @@ import { isGatewayRejectionError, regionOf, type WorkBuddyUpstreamClient } from 
 import type { WorkBuddyShim } from './shim.ts'
 import type { UsageSummary } from './stats.ts'
 import { isAutomationJobKind, type AutomationRunSummary, type AutomationStatus } from './scheduler.ts'
+import { EVENT_CHAIN_BUILDERS } from './scheduler.ts'
 import { hasModelsListing, isProviderId } from './providers.ts'
 import { PROVIDER_NOTES_ZH } from './provider-notes-zh.ts'
 import { listProviderStates, providerEnabled, type AggregateStore } from './store.ts'
@@ -61,6 +62,9 @@ import {
   type PoolWebCreditReserve,
   type PoolWebAutomationRun,
   type PoolWebCheckin,
+  type PoolWebTask,
+  type PoolWebTaskBoard,
+  type PoolWebTaskState,
   type PoolWebModel,
   type PoolWebModelSelection,
   type PoolWebStatus,
@@ -293,6 +297,82 @@ function safeMessage(error: unknown): string {
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu, '[redacted token]')
     .replace(/(\b(?:code|token|refresh_token|access_token)=)[^&\s]+/giu, '$1[redacted]')
     .slice(0, 500)
+}
+
+/**
+ * Read one account's growth task board and reduce it to card-shaped rows.
+ *
+ * Read-only, and deliberately per-account: the board is the only surface that
+ * says WHICH rewards are outstanding, and it is keyed by the account's own
+ * token. Nothing here mutates, so a card refresh is free of side effects.
+ *
+ * The state mapping is the whole point of the function:
+ *
+ * - `claimed`   upstream says `accept_status: 'claimed'` — collected, done.
+ * - `claimable` progress met, reward outstanding. THIS is what the task pass
+ *               exists to collect, so the card surfaces it loudest.
+ * - `locked`    upstream `locked: true` — not reachable right now.
+ * - `todo`      accepted, short of target. Carries `automatable` so the card can
+ *               separate "the automation will finish this" from "this needs a
+ *               human" (following an official WeChat account, for instance).
+ */
+async function taskBoardOf(
+  deps: PoolStatusRouteOptions,
+  account: WorkBuddyAccount,
+): Promise<PoolWebTaskBoard> {
+  const tasks = await deps.client.listTasks(account.credential)
+  const rows: PoolWebTask[] = []
+  let claimed = 0
+  let claimable = 0
+  let todo = 0
+  let locked = 0
+  let claimableCredit = 0
+  let claimedCredit = 0
+  for (const task of tasks) {
+    const isClaimed = task.claimed || task.acceptStatus === 'claimed'
+    const isLocked = task.locked
+    const isClaimable = !isClaimed && !isLocked && task.claimable
+    const state: PoolWebTaskState = isClaimed
+      ? 'claimed'
+      : isLocked
+        ? 'locked'
+        : isClaimable
+          ? 'claimable'
+          : 'todo'
+    if (state === 'claimed') {
+      claimed += 1
+      claimedCredit += task.credit
+    } else if (state === 'claimable') {
+      claimable += 1
+      claimableCredit += task.credit
+    } else if (state === 'locked') {
+      locked += 1
+    } else {
+      todo += 1
+    }
+    rows.push({
+      code: task.taskCode,
+      title: task.title,
+      credit: task.credit,
+      current: task.current,
+      target: task.target,
+      state,
+      // Membership in the automation's builder map is the honest answer to
+      // "will this ever move on its own". A code absent from it costs the pass
+      // zero upstream calls, so it stays at `todo` forever.
+      automatable: task.taskCode in EVENT_CHAIN_BUILDERS,
+    })
+  }
+  return {
+    claimed,
+    claimable,
+    todo,
+    locked,
+    total: rows.length,
+    claimableCredit,
+    claimedCredit,
+    rows,
+  }
 }
 function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body)
@@ -862,6 +942,14 @@ export async function poolWebStatus(
           Object.assign(row, { checkin: web })
         } catch (error: unknown) {
           Object.assign(row, { checkinError: safeMessage(error) })
+        }
+        // The task board, for the same reason as the check-in probe: it answers
+        // "which rewards are still unclaimed" for THIS account, which neither
+        // the credit total nor the automation ledger can. Read-only.
+        try {
+          Object.assign(row, { tasks: await taskBoardOf(deps, account) })
+        } catch (error: unknown) {
+          Object.assign(row, { tasksError: safeMessage(error) })
         }
       }
     }
