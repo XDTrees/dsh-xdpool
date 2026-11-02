@@ -716,11 +716,22 @@ describe('scheduler account gating', () => {
     await (scheduler as unknown as { tick(): Promise<void> }).tick()
   }
 
-  it('never calls upstream for a global account', async () => {
+  it('never runs the task-centre pass for a global account', async () => {
     const { pool, upstream } = await harness(1, { domain: 'workbuddy.ai' })
     const when = beijing(2026, 8, 7, 11, 0, 0)
     const scheduler = new WorkBuddyScheduler(pool, upstream.client, {
       enabled: true,
+      // Every OTHER job is pinned to an hour that has not arrived yet. An empty
+      // array is NOT "off" — `hoursOrDefault` treats it as "use the default" —
+      // and leaving the others to their defaults made this assertion depend on
+      // which default hours happened to be due at 11:00, which is how it used to
+      // pass while global accounts were skipped everywhere. Global accounts now
+      // DO run `report`/`streak` (see the case below).
+      checkinHours: [23],
+      reportHours: [23],
+      streakHours: [23],
+      travelHours: [23],
+      compensationHours: [23],
       taskHours: [11],
       accountDelayMs: 0,
       eventScoreWaitMs: 0,
@@ -729,8 +740,69 @@ describe('scheduler account gating', () => {
       logger: { info() {}, warn() {} },
     })
     await tickAt(scheduler, when)
+    // A global account's .ai task centre is a level-up board whose entries carry
+    // no `task_code` and no reward, so `parseTask` drops all of them: the pass
+    // would be a guaranteed no-op that still cost a request per account.
     expect(upstream.calls).toEqual([])
     expect(scheduler.status().jobs.tasks.ok).toBe(0)
+  })
+
+  it('runs the activity report and streak for a global account', async () => {
+    // The other direction of the same rule, and the half the old blanket skip
+    // got wrong: on `www.workbuddy.ai` the growth centre is live. One
+    // `POST /v2/report` flips `heatmap.today.is_active` false → true, and the
+    // streak tiers pay real credits (14d = 50, 28d = 150). Skipping the region
+    // outright threw those away.
+    const { pool, upstream } = await harness(1, { domain: 'workbuddy.ai' })
+    const when = beijing(2026, 8, 7, 12, 0, 0)
+    const scheduler = new WorkBuddyScheduler(pool, upstream.client, {
+      enabled: true,
+      checkinHours: [23],
+      taskHours: [23],
+      travelHours: [23],
+      compensationHours: [23],
+      reportHours: [10],
+      streakHours: [12],
+      accountDelayMs: 0,
+      eventScoreWaitMs: 0,
+      expertGapMs: 0,
+      now: () => when,
+      logger: { info() {}, warn() {} },
+    })
+    await tickAt(scheduler, when)
+    // `report` is the guard label for reportActivity, and `streak` is both the
+    // read-back oracle of that job and the streak job itself.
+    expect(upstream.calls).toContain('report')
+    expect(upstream.calls).toContain('streak')
+    expect(scheduler.status().jobs.report.ok).toBe(1)
+    expect(scheduler.status().jobs.streak.ok).toBe(1)
+  })
+
+  it('still never runs checkin or travel for a global account', async () => {
+    // The four jobs the .ai gateway cannot serve. `checkin` answers 400
+    // 「签到活动未开启或已过期」, which the CN "already checked in" markers do not
+    // classify, so running it would log a failure per account per day.
+    const { pool, upstream } = await harness(1, { domain: 'workbuddy.ai' })
+    const when = beijing(2026, 8, 7, 13, 0, 0)
+    const scheduler = new WorkBuddyScheduler(pool, upstream.client, {
+      enabled: true,
+      reportHours: [23],
+      streakHours: [23],
+      taskHours: [23],
+      checkinHours: [9],
+      travelHours: [9, 21],
+      compensationHours: [13],
+      accountDelayMs: 0,
+      eventScoreWaitMs: 0,
+      expertGapMs: 0,
+      now: () => when,
+      logger: { info() {}, warn() {} },
+    })
+    await tickAt(scheduler, when)
+    expect(upstream.calls).toEqual([])
+    expect(scheduler.status().jobs.checkin.failed).toBe(0)
+    expect(scheduler.status().jobs.travel.failed).toBe(0)
+    expect(scheduler.status().jobs.compensation.failed).toBe(0)
   })
 
   it('skips an account the user switched off', async () => {

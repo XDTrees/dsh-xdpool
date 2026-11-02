@@ -142,6 +142,60 @@ interface MarketExpert {
   categories: readonly string[];
 }
 /**
+ * Pull the `expertId` out of a task's `jump_url`.
+ *
+ * The "体验XX专家" tasks (#98) name an expert that is NOT in the marketplace
+ * listing — the reporter翻遍了 marketExpertList in both `agent` and `team`
+ * types and got zero hits — so the only place the id appears is the deeplink
+ * embedded in the task itself:
+ *
+ *   https://www.workbuddy.cn/work/launch/?deeplink=workbuddy%3A%2F%2Fexperts%3FexpertId%3Dex_GDl31WahyIH0&buddy_type=workbuddy
+ *
+ * The deeplink is percent-encoded, and it has to be: the `?` and `&` inside it
+ * would otherwise end the outer query. So the parse is two steps — decode the
+ * `deeplink` parameter, then read `expertId` off the scheme it decodes to — and
+ * NOT a regex over the whole URL, which would also match the outer `expertId`
+ * spelling in a future URL shape and silently pick the wrong one.
+ *
+ * Returns undefined for the tasks whose deeplink carries no id at all
+ * (`WorkBuddy_Valorant` points at `workbuddy://expert` with no query), which is
+ * the honest answer: those need a different source and are not guessed here.
+ */
+export declare function expertIdFromJumpUrl(jumpUrl: string): string | undefined;
+/**
+ * Build a summon record for an expert the marketplace does not list.
+ *
+ * Everything the chains need beyond the id is cosmetic — the scorer keys on
+ * `expertId` — so the title from the task is reused as the display name rather
+ * than inventing one. `version` is left empty, which every consumer already
+ * defaults to `1.0.0`.
+ */
+export declare function expertFromTask(expertId: string, title: string): MarketExpert;
+/**
+ * The task title with the decoration the growth centre wraps it in removed.
+ *
+ * Measured shape: `体验「无畏契约拼豆专家」`. The marketplace lists that expert as
+ * `无畏契约拼豆专家`, so the name is the title minus the verb and the brackets.
+ * Split out because both the summon record and the name lookup compare on it.
+ */
+export declare function taskTitleToExpertName(title: string): string;
+/**
+ * Pick the marketplace expert a task is about, by name.
+ *
+ * The fallback for tasks whose deeplink carries no id. `WorkBuddy_Valorant` is
+ * the one that needs it: its `jump_url` is a bare `workbuddy://expert`, so
+ * `expertIdFromJumpUrl` returns undefined and upstream's fix logs "skipping" —
+ * yet the marketplace keyword search DOES list the expert it wants (measured:
+ * `keyword=无畏契约` returns `ex_xQHHD1u5Jkua` / 无畏契约拼豆专家). The id is
+ * reachable, just not from the deeplink, and the task pays 100 credits.
+ *
+ * An exact name match wins; otherwise a containment match is accepted, because
+ * the task title sometimes carries a suffix the listing does not. Returns
+ * undefined rather than guessing: summoning the wrong expert scores nothing AND
+ * spends a real summon, so a wrong answer is worse than no answer.
+ */
+export declare function expertForTaskTitle(title: string, candidates: readonly MarketExpert[]): MarketExpert | undefined;
+/**
  * The three "summon an expert" events (`expert_summon_click` and friends).
  *
  * Paid before the conversation, in the order the app emits them.
@@ -663,7 +717,7 @@ export declare class WorkBuddyUpstreamClient {
    * expert id exists on the platform, so a made-up id scores nothing. The
    * response carries the display fields the summon events replay.
    */
-  marketExpertList(credential: WorkBuddyCredential, expertType?: 'agent' | 'team' | ''): Promise<readonly MarketExpert[]>;
+  marketExpertList(credential: WorkBuddyCredential, expertType?: 'agent' | 'team' | '', keyword?: string): Promise<readonly MarketExpert[]>;
   /**
    * Open a REAL desktop conversation and return the ids the server assigned.
    *
@@ -3518,10 +3572,13 @@ export declare class WorkBuddyScheduler {
   /** Compose the one-line summary shown on the card. */
   private summarise;
   /**
-   * Accounts to run against, in pool order.
+   * Accounts to run against for ONE job, in pool order.
    *
    * Disabled accounts are excluded here rather than filtered by the caller so a
-   * card switch takes effect on the next pass without any event plumbing.
+   * card switch takes effect on the next pass without any event plumbing. The
+   * job is a parameter because eligibility is job-dependent: a global account
+   * can light its heatmap and redeem streak tiers, but has no CN reward
+   * machinery for the other four jobs (see {@link eligible}).
    */
   private accountsInOrder;
   /**

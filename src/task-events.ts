@@ -386,11 +386,52 @@ export function expertFromTask(expertId: string, title: string): MarketExpert {
   return {
     expertId,
     expertType: 'agent',
-    displayName: title,
-    profession: title,
+    displayName: taskTitleToExpertName(title) || title,
+    profession: taskTitleToExpertName(title) || title,
     version: '',
     categories: [],
   }
+}
+
+/**
+ * The task title with the decoration the growth centre wraps it in removed.
+ *
+ * Measured shape: `体验「无畏契约拼豆专家」`. The marketplace lists that expert as
+ * `无畏契约拼豆专家`, so the name is the title minus the verb and the brackets.
+ * Split out because both the summon record and the name lookup compare on it.
+ */
+export function taskTitleToExpertName(title: string): string {
+  return title
+    .replace(/^\s*体验/u, '')
+    .replace(/[「」『』“”"]/gu, '')
+    .trim()
+}
+
+/**
+ * Pick the marketplace expert a task is about, by name.
+ *
+ * The fallback for tasks whose deeplink carries no id. `WorkBuddy_Valorant` is
+ * the one that needs it: its `jump_url` is a bare `workbuddy://expert`, so
+ * `expertIdFromJumpUrl` returns undefined and upstream's fix logs "skipping" —
+ * yet the marketplace keyword search DOES list the expert it wants (measured:
+ * `keyword=无畏契约` returns `ex_xQHHD1u5Jkua` / 无畏契约拼豆专家). The id is
+ * reachable, just not from the deeplink, and the task pays 100 credits.
+ *
+ * An exact name match wins; otherwise a containment match is accepted, because
+ * the task title sometimes carries a suffix the listing does not. Returns
+ * undefined rather than guessing: summoning the wrong expert scores nothing AND
+ * spends a real summon, so a wrong answer is worse than no answer.
+ */
+export function expertForTaskTitle(
+  title: string,
+  candidates: readonly MarketExpert[],
+): MarketExpert | undefined {
+  const wanted = taskTitleToExpertName(title)
+  if (wanted === '') return undefined
+  const exact = candidates.find(item => item.displayName === wanted)
+  if (exact !== undefined) return exact
+  return candidates.find(item =>
+    item.displayName !== '' && (wanted.includes(item.displayName) || item.displayName.includes(wanted)))
 }
 
 /**

@@ -28,8 +28,9 @@ import { isAlreadyCheckin, isNoCompensation, regionOf } from './upstream'
 import type { WorkBuddyTask, WorkBuddyUpstreamClient } from './upstream'
 import {
   APPEARANCE_THEME_KEY, LIGHTHOUSE_EXPERT_ID, automationChain, appearanceChain, buddyAppChain,
-  canvasChain, chatChain, expertActualUseEvent, expertChatEvents, expertFromTask, expertIdFromJumpUrl,
-  expertSummonEvents, libraryReadChain, playbookChain, skillChain, templateChains,
+  canvasChain, chatChain, expertActualUseEvent, expertChatEvents, expertForTaskTitle, expertFromTask,
+  expertIdFromJumpUrl, expertSummonEvents, libraryReadChain, playbookChain, skillChain,
+  taskTitleToExpertName, templateChains,
 } from './task-events.ts'
 import type { MarketExpert, TaskEventChain } from './task-events.ts'
 import { DEFAULT_AUTOMATION_HOURS } from './status-paths.ts'
@@ -484,12 +485,40 @@ export function isFireHour(now: Date, hours: readonly number[]): boolean {
   return hours.includes(Number(hour))
 }
 
-/** Whether this account may be used: not switched off, not cooling. */
-function eligible(account: WorkBuddyAccount, now: number): boolean {
+/**
+ * The jobs a `global` (`workbuddy.ai`) account can actually complete.
+ *
+ * `report` lights the activity heatmap — verified live, one `POST /v2/report`
+ * flips `heatmap.today.is_active` false → true and the score 0 → 2 — and
+ * `streak` redeems the tiers that heatmap builds, which pay real credits
+ * (measured on the live .ai account: 7d = 0, 14d = 50, 28d = 150).
+ */
+const GLOBAL_JOB_KINDS: ReadonlySet<JobKind> = new Set<JobKind>(['report', 'streak'])
+
+/**
+ * Whether this account may run this JOB: not switched off, not cooling, and —
+ * for a `global` account — on a surface its own gateway actually serves.
+ *
+ * The old rule skipped global accounts for every job, on the grounds that "the
+ * growth system is CN-only". Measured against the live .ai gateway with a real
+ * global token, both halves of that sentence are wrong:
+ *
+ * - the growth centre IS there: `/activity/growth/heatmap`,
+ *   `/activity/growth/streak` and `/v2/activity/growth/tasks` all answer 200;
+ * - but the CN reward machinery is not, so four jobs would be pure noise:
+ *   `checkin` → 400 「签到活动未开启或已过期」 (which the CN "already checked in"
+ *   markers do not classify, so it would log a failure per account per day),
+ *   `tasks` → a level-up board whose entries carry `code`/`status` and no
+ *   reward fields, so `parseTask` drops every one of them,
+ *   `travel` → `buddy/info` returns `{buddy:null}`, `compensation` →
+ *   `active:false` all year.
+ *
+ * So the split is by evidence, not by region.
+ */
+function eligible(account: WorkBuddyAccount, now: number, kind: JobKind): boolean {
   if (account.cooldownUntilMs > now) return false
-  // The growth system is CN-only; a global account has no task centre at all.
-  if (regionOf(account.credential.domain) === 'global') return false
-  return true
+  if (regionOf(account.credential.domain) !== 'global') return true
+  return GLOBAL_JOB_KINDS.has(kind)
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => { setTimeout(resolve, ms) })
@@ -1083,7 +1112,7 @@ export class WorkBuddyScheduler {
     const detail: string[] = []
     let progressNote: string | undefined
     
-    const accounts = this.accountsInOrder()
+    const accounts = this.accountsInOrder(kind)
 
     // Pass 1 (tasks only): light up the client-scored tasks for EVERY account
     // before claiming any of them. Claiming inside this loop would find each
@@ -1227,16 +1256,19 @@ export class WorkBuddyScheduler {
   }
 
   /**
-   * Accounts to run against, in pool order.
+   * Accounts to run against for ONE job, in pool order.
    *
    * Disabled accounts are excluded here rather than filtered by the caller so a
-   * card switch takes effect on the next pass without any event plumbing.
+   * card switch takes effect on the next pass without any event plumbing. The
+   * job is a parameter because eligibility is job-dependent: a global account
+   * can light its heatmap and redeem streak tiers, but has no CN reward
+   * machinery for the other four jobs (see {@link eligible}).
    */
-  private accountsInOrder(): WorkBuddyAccount[] {
+  private accountsInOrder(kind: JobKind): WorkBuddyAccount[] {
     const now = Date.now()
     return this.pool.list().filter(account => {
       if (this.pool.isDisabled(account.id)) return false
-      return eligible(account, now)
+      return eligible(account, now, kind)
     })
   }
 
@@ -1407,11 +1439,35 @@ export class WorkBuddyScheduler {
     task: WorkBuddyTask,
   ): Promise<readonly TaskEventChain[]> {
     const expertId = expertIdFromJumpUrl(task.jumpUrl)
-    if (expertId === undefined) {
-      this.logger.warn?.(`automation events ${task.taskCode}: no expertId in jump_url, skipping`)
-      return []
+    let expert: MarketExpert
+    if (expertId !== undefined) {
+      expert = expertFromTask(expertId, task.title)
+    } else {
+      // No id in the deeplink. `WorkBuddy_Valorant` is exactly this shape — a
+      // bare `workbuddy://expert` — and the upstream fix logs "skipping" for it,
+      // which is why that task never scored. The id IS reachable: the
+      // marketplace's `keyword` filter returns the expert the task names
+      // (measured: `keyword=无畏契约` → `ex_xQHHD1u5Jkua` / 无畏契约拼豆专家).
+      const name = taskTitleToExpertName(task.title)
+      if (name === '') {
+        this.logger.warn?.(`automation events ${task.taskCode}: no expertId and no usable title, skipping`)
+        return []
+      }
+      let resolved: MarketExpert | undefined
+      try {
+        const candidates = await this.client.marketExpertList(credential, '', name)
+        resolved = expertForTaskTitle(task.title, candidates)
+      } catch (error: unknown) {
+        this.logger.warn?.(`automation events ${task.taskCode}: expert lookup failed:`, error)
+      }
+      if (resolved === undefined) {
+        // Not a guess: summoning the wrong expert scores nothing AND spends a
+        // real summon, so "no answer" is strictly better than a wrong one.
+        this.logger.warn?.(`automation events ${task.taskCode}: no expert named "${name}" in the marketplace, skipping`)
+        return []
+      }
+      expert = resolved
     }
-    const expert = expertFromTask(expertId, task.title)
     await this.client.reportDesktopEvents(credential, expertSummonEvents(expert))
     if (this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
     const chat = await this.client.openConversation(credential, expert.expertId)

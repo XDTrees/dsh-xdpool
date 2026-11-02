@@ -111,8 +111,14 @@ describe('the chains are wired for the whole family', () => {
     expect(body.indexOf('expertSummonEvents(expert)')).toBeLessThan(body.indexOf('openConversation('))
     // A task shape this build does not understand is information, not a fault:
     // throwing would mark the account failed for the whole job.
-    expect(body).toContain('if (expertId === undefined) {')
+    //
+    // The `if (expertId === undefined) { … return [] }` shape this used to
+    // assert was REPLACED on purpose: an undefined id now falls through to the
+    // marketplace name lookup (`expert-name-fallback.test.ts`), and only a
+    // lookup that also fails gives up. The property worth locking is therefore
+    // "gives up by returning []", not the particular branch that gives up.
     expect(body).toContain('return []')
+    expect(body).not.toContain('throw new Error(`${task.taskCode}: no expert')
   })
 })
 
@@ -122,7 +128,12 @@ describe('a task-named expert is a plausible marketplace record', () => {
     // the title is reused rather than invented.
     const expert = expertFromTask('ex_ABC', '体验「中国电商运营专家」')
     expect(expert.expertId).toBe('ex_ABC')
-    expect(expert.displayName).toBe('体验「中国电商运营专家」')
+    // The DECORATION is stripped, not the name: the same string now doubles as
+    // the lookup key in `expertForTaskTitle`, and the marketplace spells the
+    // expert `中国电商运营专家` — with the `体验` verb and the corner brackets
+    // left on, a containment match against the listing would never fire.
+    // Asserted here rather than only in the lookup test so the two stay coupled.
+    expect(expert.displayName).toBe('中国电商运营专家')
     // An empty version is what every consumer defaults to 1.0.0; writing a
     // made-up one would be a fabricated fact in the payload.
     expect(expert.version).toBe('')
