@@ -116,6 +116,36 @@ describe('a todo row says whether the automation can ever finish it', () => {
       expect(EVENT_CHAIN_BUILDERS[code], `${code} missing from the builder map`).toBe(true)
     }
   })
+
+  it('credits tasks that another job drives, without a builder of their own', () => {
+    // Measured on the live board: `first_buddy` and `chat_5` both arrive as
+    // `claimed` on a pool the automation alone had touched, yet neither is in
+    // EVENT_CHAIN_BUILDERS (`first_buddy` is unlocked by the report job and then
+    // collected by the task pass; `chat_5` is counted by the same desktop chat
+    // chain that lights `RichMeow_Chat`). Calling them `manual` would be wrong
+    // in a way a user notices — the card would print "manual" beside a task the
+    // automation demonstrably finished.
+    expect(EVENT_CHAIN_BUILDERS['first_buddy']).toBeUndefined()
+    expect(EVENT_CHAIN_BUILDERS['chat_5']).toBeUndefined()
+    expect(webStatus).toContain('AUTOMATABLE_BY_OTHER_JOB')
+  })
+
+  it('consults that allow-list before the builder map', () => {
+    // Order matters: without the allow-list these two codes fall through to
+    // `false` and their rows read `manual`.
+    expect(boardFn).toContain('AUTOMATABLE_BY_OTHER_JOB.has(task.taskCode)')
+  })
+})
+
+describe('the auto/manual badge is only shown where it means something', () => {
+  it('is rendered for todo rows only', () => {
+    // A collected row has no verdict to give: `first_buddy` is claimed AND
+    // automatable, and printing anything beside it invites the reader to think
+    // something is still pending.
+    const docIdx = poolCard.indexOf("t?.('row.taskAuto')")
+    const guard = poolCard.slice(Math.max(0, docIdx - 700), docIdx)
+    expect(guard).toContain("row.state === 'todo'")
+  })
 })
 
 describe('the card renders the board', () => {

@@ -316,6 +316,23 @@ function safeMessage(error: unknown): string {
  *               separate "the automation will finish this" from "this needs a
  *               human" (following an official WeChat account, for instance).
  */
+/**
+ * Tasks the automation finishes WITHOUT owning a chain builder.
+ *
+ * Kept next to {@link taskBoardOf} because it exists only to keep the card's
+ * auto/manual verdict truthful — see the note at the use site for why each entry
+ * is here. Anything absent from both this set and `EVENT_CHAIN_BUILDERS` needs a
+ * human, and the card says so.
+ */
+const AUTOMATABLE_BY_OTHER_JOB: ReadonlySet<string> = new Set<string>([
+  // Unlocked by the report job (one activity report per day), then collected by
+  // the task pass. Observed live as `claimed` on a pool where only the
+  // automation had touched it.
+  'first_buddy',
+  // Scored by the same desktop chat chain that lights `RichMeow_Chat`.
+  'chat_5',
+])
+
 async function taskBoardOf(
   deps: PoolStatusRouteOptions,
   account: WorkBuddyAccount,
@@ -357,10 +374,24 @@ async function taskBoardOf(
       current: task.current,
       target: task.target,
       state,
-      // Membership in the automation's builder map is the honest answer to
-      // "will this ever move on its own". A code absent from it costs the pass
-      // zero upstream calls, so it stays at `todo` forever.
-      automatable: task.taskCode in EVENT_CHAIN_BUILDERS,
+      // Whether the automation can move this task ALONG, which is not the same
+      // as "it has its own chain builder".
+      //
+      // Two tasks are scored without ever appearing in `EVENT_CHAIN_BUILDERS`,
+      // and calling them manual would be wrong in a way a user would notice:
+      //
+      // - `first_buddy` is unlocked by the REPORT job (one activity report per
+      //   day), then collected by the task pass. Measured live: it sits in the
+      //   board as `claimed` precisely because report did its job.
+      // - `chat_5` is counted by the same desktop chat chain that lights
+      //   `RichMeow_Chat`, so a pass that scores one scores both.
+      //
+      // So the verdict comes from a small allow-list of "reachable by some other
+      // job" first, and the builder map second. Everything outside both really
+      // does need a human — `wb_wechat_oa_subscribe_task` asks the account owner
+      // to follow an official WeChat account, which no token can do.
+      automatable: AUTOMATABLE_BY_OTHER_JOB.has(task.taskCode)
+        || task.taskCode in EVENT_CHAIN_BUILDERS,
     })
   }
   return {

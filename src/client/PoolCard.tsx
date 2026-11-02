@@ -2259,10 +2259,13 @@ function AccountBlock({
                     </span>
                     <span className="dsm-xdpool-task-title">{row.title}</span>
                     <span className="dsm-xdpool-task-credit">+{row.credit}</span>
-                    {/* The distinction that matters for a `todo` row: will the
-                        automation ever finish it, or does it need the user?
-                        Said in words rather than another symbol, because this is
-                        the one thing the numbers above cannot tell them. */}
+                    {/* Only an OUTSTANDING row needs the auto/manual verdict:
+                        for a collected row "can the automation do it" is moot,
+                        and printing `manual` next to `first_buddy` — which the
+                        report job lights up and which is already collected —
+                        would read like a defect.
+                        Still said in words, not just colour, because this is the
+                        one fact the counts above cannot convey. */}
                     {row.state === 'todo'
                       ? <span className="dsm-xdpool-task-note">
                           {row.automatable
