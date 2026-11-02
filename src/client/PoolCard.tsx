@@ -2229,6 +2229,54 @@ function AccountBlock({
                   : null}
               </span>
             </div>}
+        {account.tasks === undefined
+          ? null
+          : <div className="dsm-xdpool-tasks">
+              <span className="dsm-xdpool-tasks-head">
+                <span className="dsm-xdpool-tasks-label">
+                  {t?.('row.taskBoard') ?? 'Growth tasks'}
+                </span>
+                <span className="dsm-xdpool-tasks-tally">
+                  {t?.('row.taskTally', {
+                    claimed: account.tasks.claimed,
+                    total: account.tasks.total,
+                    pending: account.tasks.claimable,
+                  }) ?? `${account.tasks.claimed}/${account.tasks.total} claimed · ${account.tasks.claimable} to collect`}
+                </span>
+              </span>
+              <span className="dsm-xdpool-tasks-list">
+                {account.tasks.rows.map(row => (
+                  <span
+                    key={row.code}
+                    className={`dsm-xdpool-task dsm-xdpool-task-${row.state}`}
+                    title={`${row.code} · ${row.credit} credit`}
+                  >
+                    <span className="dsm-xdpool-task-mark">
+                      {row.state === 'claimed' ? '✓'
+                        : row.state === 'claimable' ? '!'
+                          : row.state === 'locked' ? '−'
+                            : '·'}
+                    </span>
+                    <span className="dsm-xdpool-task-title">{row.title}</span>
+                    <span className="dsm-xdpool-task-credit">+{row.credit}</span>
+                    {/* Only an OUTSTANDING row needs the auto/manual verdict:
+                        for a collected row "can the automation do it" is moot,
+                        and printing `manual` next to `first_buddy` — which the
+                        report job lights up and which is already collected —
+                        would read like a defect.
+                        Still said in words, not just colour, because this is the
+                        one fact the counts above cannot convey. */}
+                    {row.state === 'todo'
+                      ? <span className="dsm-xdpool-task-note">
+                          {row.automatable
+                            ? (t?.('row.taskAuto') ?? 'auto')
+                            : (t?.('row.taskManual') ?? 'manual')}
+                        </span>
+                      : null}
+                  </span>
+                ))}
+              </span>
+            </div>}
       </div>
     </div>
   )

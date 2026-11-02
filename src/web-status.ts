@@ -25,6 +25,7 @@ import { isGatewayRejectionError, regionOf, type WorkBuddyUpstreamClient } from 
 import type { WorkBuddyShim } from './shim.ts'
 import type { UsageSummary } from './stats.ts'
 import { isAutomationJobKind, type AutomationRunSummary, type AutomationStatus } from './scheduler.ts'
+import { EVENT_CHAIN_BUILDERS } from './scheduler.ts'
 import { hasModelsListing, isProviderId } from './providers.ts'
 import { PROVIDER_NOTES_ZH } from './provider-notes-zh.ts'
 import { listProviderStates, providerEnabled, type AggregateStore } from './store.ts'
@@ -61,6 +62,9 @@ import {
   type PoolWebCreditReserve,
   type PoolWebAutomationRun,
   type PoolWebCheckin,
+  type PoolWebTask,
+  type PoolWebTaskBoard,
+  type PoolWebTaskState,
   type PoolWebModel,
   type PoolWebModelSelection,
   type PoolWebStatus,
@@ -293,6 +297,113 @@ function safeMessage(error: unknown): string {
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu, '[redacted token]')
     .replace(/(\b(?:code|token|refresh_token|access_token)=)[^&\s]+/giu, '$1[redacted]')
     .slice(0, 500)
+}
+
+/**
+ * Read one account's growth task board and reduce it to card-shaped rows.
+ *
+ * Read-only, and deliberately per-account: the board is the only surface that
+ * says WHICH rewards are outstanding, and it is keyed by the account's own
+ * token. Nothing here mutates, so a card refresh is free of side effects.
+ *
+ * The state mapping is the whole point of the function:
+ *
+ * - `claimed`   upstream says `accept_status: 'claimed'` — collected, done.
+ * - `claimable` progress met, reward outstanding. THIS is what the task pass
+ *               exists to collect, so the card surfaces it loudest.
+ * - `locked`    upstream `locked: true` — not reachable right now.
+ * - `todo`      accepted, short of target. Carries `automatable` so the card can
+ *               separate "the automation will finish this" from "this needs a
+ *               human" (following an official WeChat account, for instance).
+ */
+/**
+ * Tasks the automation finishes WITHOUT owning a chain builder.
+ *
+ * Kept next to {@link taskBoardOf} because it exists only to keep the card's
+ * auto/manual verdict truthful — see the note at the use site for why each entry
+ * is here. Anything absent from both this set and `EVENT_CHAIN_BUILDERS` needs a
+ * human, and the card says so.
+ */
+const AUTOMATABLE_BY_OTHER_JOB: ReadonlySet<string> = new Set<string>([
+  // Unlocked by the report job (one activity report per day), then collected by
+  // the task pass. Observed live as `claimed` on a pool where only the
+  // automation had touched it.
+  'first_buddy',
+  // Scored by the same desktop chat chain that lights `RichMeow_Chat`.
+  'chat_5',
+])
+
+async function taskBoardOf(
+  deps: PoolStatusRouteOptions,
+  account: WorkBuddyAccount,
+): Promise<PoolWebTaskBoard> {
+  const tasks = await deps.client.listTasks(account.credential)
+  const rows: PoolWebTask[] = []
+  let claimed = 0
+  let claimable = 0
+  let todo = 0
+  let locked = 0
+  let claimableCredit = 0
+  let claimedCredit = 0
+  for (const task of tasks) {
+    const isClaimed = task.claimed || task.acceptStatus === 'claimed'
+    const isLocked = task.locked
+    const isClaimable = !isClaimed && !isLocked && task.claimable
+    const state: PoolWebTaskState = isClaimed
+      ? 'claimed'
+      : isLocked
+        ? 'locked'
+        : isClaimable
+          ? 'claimable'
+          : 'todo'
+    if (state === 'claimed') {
+      claimed += 1
+      claimedCredit += task.credit
+    } else if (state === 'claimable') {
+      claimable += 1
+      claimableCredit += task.credit
+    } else if (state === 'locked') {
+      locked += 1
+    } else {
+      todo += 1
+    }
+    rows.push({
+      code: task.taskCode,
+      title: task.title,
+      credit: task.credit,
+      current: task.current,
+      target: task.target,
+      state,
+      // Whether the automation can move this task ALONG, which is not the same
+      // as "it has its own chain builder".
+      //
+      // Two tasks are scored without ever appearing in `EVENT_CHAIN_BUILDERS`,
+      // and calling them manual would be wrong in a way a user would notice:
+      //
+      // - `first_buddy` is unlocked by the REPORT job (one activity report per
+      //   day), then collected by the task pass. Measured live: it sits in the
+      //   board as `claimed` precisely because report did its job.
+      // - `chat_5` is counted by the same desktop chat chain that lights
+      //   `RichMeow_Chat`, so a pass that scores one scores both.
+      //
+      // So the verdict comes from a small allow-list of "reachable by some other
+      // job" first, and the builder map second. Everything outside both really
+      // does need a human — `wb_wechat_oa_subscribe_task` asks the account owner
+      // to follow an official WeChat account, which no token can do.
+      automatable: AUTOMATABLE_BY_OTHER_JOB.has(task.taskCode)
+        || task.taskCode in EVENT_CHAIN_BUILDERS,
+    })
+  }
+  return {
+    claimed,
+    claimable,
+    todo,
+    locked,
+    total: rows.length,
+    claimableCredit,
+    claimedCredit,
+    rows,
+  }
 }
 function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body)
@@ -862,6 +973,14 @@ export async function poolWebStatus(
           Object.assign(row, { checkin: web })
         } catch (error: unknown) {
           Object.assign(row, { checkinError: safeMessage(error) })
+        }
+        // The task board, for the same reason as the check-in probe: it answers
+        // "which rewards are still unclaimed" for THIS account, which neither
+        // the credit total nor the automation ledger can. Read-only.
+        try {
+          Object.assign(row, { tasks: await taskBoardOf(deps, account) })
+        } catch (error: unknown) {
+          Object.assign(row, { tasksError: safeMessage(error) })
         }
       }
     }

@@ -209,6 +209,12 @@ export const en = {
   'row.autoFromBonus': 'Streak bonus +{credit} credits',
   'row.autoFromTravel': 'Buddy travel +{credit} credits',
   'row.autoFromCompensation': 'Compensation +{credit} credits',
+  // Growth task board: the per-task claim state the automation ledger cannot
+  // express. `tally` is the one-line answer to "is anything left".
+  'row.taskBoard': 'Growth tasks',
+  'row.taskTally': '{claimed}/{total} collected · {pending} to collect',
+  'row.taskAuto': 'auto',
+  'row.taskManual': 'manual',
   // Aggregate lane (the 76-provider roster).
   'agg.tab': 'Providers',
   'agg.title': 'Providers',
@@ -695,6 +701,11 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   'row.autoFromBonus': '连登奖励 +{credit} 积分',
   'row.autoFromTravel': '猫猫旅行 +{credit} 积分',
   'row.autoFromCompensation': '补偿 +{credit} 积分',
+  // 成长任务板：逐条任务的领取状态，自动化账本表达不了这一层
+  'row.taskBoard': '成长任务',
+  'row.taskTally': '已领 {claimed}/{total} · 待领 {pending}',
+  'row.taskAuto': '自动',
+  'row.taskManual': '需人工',
   // 聚合页（76 家 provider 白嫖）
   'agg.tab': '聚合渠道',
   'agg.title': '聚合渠道',
