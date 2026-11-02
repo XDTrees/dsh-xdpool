@@ -2067,9 +2067,18 @@ export class WorkBuddyUpstreamClient {
    * expert id exists on the platform, so a made-up id scores nothing. The
    * response carries the display fields the summon events replay.
    */
-  async marketExpertList(credential: WorkBuddyCredential, expertType: 'agent' | 'team' | '' = ''): Promise<readonly MarketExpert[]> {
+  async marketExpertList(
+    credential: WorkBuddyCredential,
+    expertType: 'agent' | 'team' | '' = '',
+    keyword = '',
+  ): Promise<readonly MarketExpert[]> {
     const request: Record<string, unknown> = { page: 1, page_size: 20, sort_by: 'reco_rank', sort_order: 'desc' }
     if (expertType !== '') request['expert_type'] = expertType
+    // `keyword` is a real server-side filter, not a client convenience: measured,
+    // `keyword=无畏契约` returns 3 experts while the unfiltered `reco_rank` page
+    // carries none of them. That is what makes the name-based fallback in
+    // `scheduler.taskExpertChains` possible at all.
+    if (keyword !== '') request['keyword'] = keyword
     const response = await this.fetchImpl(`${chatBase(credential)}${MARKET_EXPERT_LIST_PATH}`, {
       method: 'POST',
       headers: {

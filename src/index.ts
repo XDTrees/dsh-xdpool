@@ -236,7 +236,8 @@ export {
   APPEARANCE_THEME_KEY, BUDDY_APP_ID, BUDDY_APP_NAME, LIBRARY_DOC_URL, LIGHTHOUSE_EXPERT_ID,
   PLAYBOOK_CASE_ID, PLAYBOOK_CASE_NAME, SKILL_ID, SKILL_NAME, TEMPLATE_PRESETS,
   appearanceChain, automationChain, buddyAppChain, canvasChain, chatChain, expertActualUseEvent,
-  expertChatEvents, expertSummonEvents, libraryReadChain, playbookChain, skillChain, templateChain,
+  expertChatEvents, expertForTaskTitle, expertFromTask, expertIdFromJumpUrl, expertSummonEvents,
+  libraryReadChain, playbookChain, skillChain, taskTitleToExpertName, templateChain,
   templateChains,
   type ExpertUseMode, type MarketExpert, type TaskEventChain, type TaskEventTransport,
 } from './task-events.ts'
