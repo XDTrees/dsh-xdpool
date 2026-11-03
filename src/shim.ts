@@ -258,6 +258,26 @@ const KIND_STATUS: Readonly<Record<UpstreamErrorKind, number>> = {
   server: 502,
   client: 400,
 }
+/**
+ * HTTP status for each `unavailableReason` verdict.
+ *
+ * `unavailableReason` answers WHY no account could serve a request, and the
+ * answers need DIFFERENT advice: a cooldown means wait, a revoked sign-in means
+ * sign in again, a reserve floor or a switched-off account means edit the card,
+ * and an empty pool means add an account. Collapsing them onto 401 told every
+ * user to re-authenticate, which only ever helps the `session_dead` case.
+ *
+ * Kept in sync with the `why.reason` branches on the single-model path below;
+ * `combo_empty` / `none` never reach here but fall back to 503 rather than 401.
+ */
+const REASON_STATUS: Readonly<Record<string, number>> = {
+  cooling: 429,
+  session_dead: 401,
+  reserve: 402,
+  disabled: 403,
+  empty: 503,
+  none: 503,
+}
 function hostnameOfHost(host: string): string {
   let hostname = host.trim().toLowerCase()
   if (hostname.startsWith('[')) {
@@ -1053,7 +1073,7 @@ function withBareModelId(raw: string, modelId: string): string {
           const why = pool.unavailableReason(member.modelId, region, reserveExempt)
           last = {
             kind: why.reason,
-            status: why.reason === 'cooling' ? 429 : 401,
+            status: REASON_STATUS[why.reason] ?? 503,
             message: `member ${member.modelId} has no usable WorkBuddy account (${why.reason})`,
           }
           continue
