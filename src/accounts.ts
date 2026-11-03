@@ -599,6 +599,14 @@ export interface AccountPoolOptions {
    * time. The caller passes the plugin's own state path; tests pass a temp file.
    */
   affinityPath?: string
+  /**
+   * Where to mirror the last known credit balance per account.
+   *
+   * Without it the balances live only in memory, so a restart resets them to
+   * "unknown" and `available()` lets reserved accounts through until the first
+   * reading arrives (see the field comment on `creditBalancePath`).
+   */
+  creditBalancePath?: string
   /** Logger for discovery and rotation events. */
   logger?: { info?(...args: unknown[]): void; warn(...args: unknown[]): void; error?(...args: unknown[]): void }
   /** Override the directories scanned (tests). */
@@ -802,6 +810,27 @@ export class WorkBuddyAccountPool {
    */
   private creditBalances = new Map<string, number>()
   /**
+   * Where the last known balances are mirrored, when the host supplies a path.
+   *
+   * The reserve floor is the last line of defence against an account being
+   * drained, and it silently does nothing during the cold-start window when
+   * `creditBalances` is still empty: `available()` keeps an account with no
+   * reading in play, deliberately, so an unprobed pool is not stranded. That
+   * default is right for a pool that has never been measured and wrong for one
+   * measured ten seconds before the process restarted — the pool is then
+   * scheduled straight past the floor the user set.
+   *
+   * Observed 2026-10-30: an account with a 20,000 floor and a real 2,869
+   * balance was picked and drained, because the first request after a restart
+   * arrived before any balance reading existed.
+   *
+   * Mirroring the readings closes that window without changing `available()`'s
+   * semantics: it still sees "known" balances, just ones from the previous run.
+   * The alternative — treating unknown as unusable — would turn a transient
+   * credits-endpoint failure into a full outage.
+   */
+  private creditBalancePath: string | undefined
+  /**
    * Nearest expiry among each account's one-off credit packs, epoch ms.
    *
    * Credit packs are use-it-or-lose-it, so "which account should serve next"
@@ -862,6 +891,8 @@ export class WorkBuddyAccountPool {
     this.storePath = accountStorePath()
     this.affinityPath = options.affinityPath
     if (this.affinityPath !== undefined) this.loadAffinity()
+    this.creditBalancePath = options.creditBalancePath
+    if (this.creditBalancePath !== undefined) this.loadCreditBalances()
   }
 
   /**
@@ -1158,6 +1189,24 @@ export class WorkBuddyAccountPool {
       if (region !== undefined && regionOf(account.credential.domain) !== region) return false
       return true
     })
+  }
+
+  /**
+   * Whether ANY account can serve this model right now.
+   *
+   * Exposed because the retry loop needs this answer *between* attempts, not
+   * only when it starts one: after penalising the account that just returned
+   * 429, the loop must know whether the next attempt has any chance. Without
+   * it, a per-account rate limit walks the whole pool — each attempt is a
+   * guaranteed 429 that also burns that account's quota for the model, so a
+   * single request can leave every account cooling until the next day.
+   *
+   * `available()` already computes exactly this; it stays private because the
+   * account objects it returns are mutable state the pool owns. This reports
+   * the count only, which is all a caller should act on.
+   */
+  anyAvailable(modelId?: string, region?: WorkBuddyRegion, reserveExempt?: ReadonlySet<string>): boolean {
+    return this.available(Date.now(), modelId, region, reserveExempt).length > 0
   }
 
   /**
@@ -1555,12 +1604,53 @@ export class WorkBuddyAccountPool {
   noteCredits(accountId: string, balance: number, nearestExpiryMs?: number): void {
     if (!Number.isFinite(balance)) return
     if (!this.accounts.some(account => account.id === accountId)) return
+    const changed = this.creditBalances.get(accountId) !== balance
     this.creditBalances.set(accountId, balance)
+    // Persist only on an actual change: the card polls every couple of minutes
+    // and re-reads the same number, so writing unconditionally would be pure
+    // I/O amplification for a file that never differs.
+    if (changed) this.saveCreditBalances()
     if (nearestExpiryMs === undefined || !Number.isFinite(nearestExpiryMs)) {
       this.creditExpiry.delete(accountId)
       return
     }
     this.creditExpiry.set(accountId, nearestExpiryMs)
+  }
+
+  /**
+   * Restore the balances mirrored by the previous run.
+   *
+   * Best effort by construction: an unreadable or missing file means "first
+   * run", which is exactly the cold start the mirror exists to narrow rather
+   * than to replace — the pool keeps working either way.
+   */
+  private loadCreditBalances(): void {
+    if (this.creditBalancePath === undefined) return
+    try {
+      const raw = JSON.parse(readFileSync(this.creditBalancePath, 'utf8')) as { balances?: unknown }
+      const balances = raw.balances
+      if (typeof balances !== 'object' || balances === null || Array.isArray(balances)) return
+      for (const [id, value] of Object.entries(balances as Record<string, unknown>)) {
+        if (id === '' || typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue
+        this.creditBalances.set(id, value)
+      }
+    } catch { /* first run, or an unreadable file: start empty */ }
+  }
+
+  /** Mirror every known balance, atomically. Never throws. */
+  private saveCreditBalances(): void {
+    const path = this.creditBalancePath
+    if (path === undefined) return
+    try {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(
+        `${path}.tmp`,
+        `${JSON.stringify({ version: 1, at: Date.now(), balances: Object.fromEntries(this.creditBalances) }, null, 2)}
+`,
+        'utf8',
+      )
+      renameSync(`${path}.tmp`, path)
+    } catch { /* a stale mirror costs one cold start, never a request */ }
   }
 
   /** Nearest one-off pack expiry for one account, or undefined when none known. */

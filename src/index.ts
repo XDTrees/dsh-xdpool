@@ -604,6 +604,12 @@ export function createCore(logger?: { warn(...args: unknown[]): void; info?(...a
     client,
     persistent: true,
     affinityPath: join(pluginDataDir(), 'sticky-affinity.json'),
+    // Mirror the last known balances so the credit-reserve floor survives a
+    // restart. Without it every start begins with an empty `creditBalances`,
+    // and `available()` deliberately lets an account with no reading through —
+    // so the first request after a restart can spend past a floor the user set
+    // (observed 2026-10-30: a 20,000 floor account with 2,869 left was drained).
+    creditBalancePath: join(pluginDataDir(), 'credit-balances.json'),
   })
   const catalogs = {
     cn: new WorkBuddyCatalog('cn'),
