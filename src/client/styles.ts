@@ -443,6 +443,7 @@ export const POOL_CARD_CSS = `
 .dsm-xdpool-cpool-acct[data-off=true]{opacity:.6}
 .dsm-xdpool-cpool-acctname{font-size:13px;font-weight:500;color:var(--dsw-alias-label-primary,#f2f3f5)}
 .dsm-xdpool-cpool-acctmeta{font-size:11px;color:var(--dsw-alias-label-tertiary,#9aa0a8)}
+.dsm-xdpool-cpool-acctmeta[data-tone=err]{color:#ff8a8f}
 .dsm-xdpool-cpool-creditbadge{font-size:11px;padding:1px 7px;border-radius:9px;border:1px solid color-mix(in srgb, #2fbf7f 45%, transparent);color:#2fbf7f;background:color-mix(in srgb, #2fbf7f 10%, transparent)}
 .dsm-xdpool-cpool-acctbalance{font-size:12px;color:var(--dsw-alias-label-secondary,#c9ccd1);font-variant-numeric:tabular-nums}
 .dsm-xdpool-cpool-acctbalance[data-tone=err]{color:#ff8a8f}

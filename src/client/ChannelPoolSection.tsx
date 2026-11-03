@@ -194,11 +194,35 @@ function refused(message: string): ChannelRpcEnvelope {
 }
 
 /**
- * "3 days left" / "expired" / "no expiry", from a millisecond stamp.
+ * True when the credential carries a real, already-passed expiry.
+ *
+ * Kept beside {@link expiryText} rather than folded into it because the row
+ * needs two answers from one stamp: the label, and its tone. Reading the tone
+ * back off the label would mean comparing a translated string, which breaks on
+ * every locale.
+ */
+function expiryIsPast(expiresAt: number | undefined): boolean {
+  if (expiresAt === undefined || !Number.isFinite(expiresAt) || expiresAt <= 0) return false
+  return expiresAt <= Date.now()
+}
+
+/**
+ * "3d" / "5h" / "12m" / "expired" / "no expiry", from a millisecond stamp.
  *
  * `never` is the honest answer for the channels whose credentials carry no
  * expiry at all (ZCode among them), and printing "expired" or a date for those
  * would be a number the user cannot check.
+ *
+ * **`expired` must never collapse into `never`.** Both branches used to return
+ * `channelpool.expiryNever`, so an account whose credential had already run out
+ * rendered "启用 · 长期有效" — the one row that should have screamed "expired"
+ * claimed to never expire. Reported 2026-11-03 against a CodeArts account that
+ * was simultaneously failing with `APIG.0602 ... the security token has expired`.
+ *
+ * Sub-day resolution matters for the same reason: CodeArts mints ~2 h STS
+ * credentials, and `Math.ceil(days)` printed "1d" for anything under 24 h then
+ * flipped straight to "never". Hours and minutes are the range that actually
+ * describes those rows.
  */
 function expiryText(
   expiresAt: number | undefined,
@@ -207,8 +231,13 @@ function expiryText(
   if (expiresAt === undefined || !Number.isFinite(expiresAt) || expiresAt <= 0) {
     return t?.('channelpool.expiryNever') ?? 'no expiry'
   }
-  const days = Math.ceil((expiresAt - Date.now()) / 86_400_000)
-  if (days <= 0) return t?.('channelpool.expiryNever') ?? 'no expiry'
+  const remaining = expiresAt - Date.now()
+  if (remaining <= 0) return t?.('channelpool.expiryExpired') ?? 'expired'
+  const minutes = Math.ceil(remaining / 60_000)
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.ceil(remaining / 3_600_000)
+  if (hours < 24) return `${hours}h`
+  const days = Math.ceil(remaining / 86_400_000)
   return days === 1 ? '1d' : `${days}d`
 }
 
@@ -882,7 +911,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     return (
                       <li key={account.id} className="dsm-xdpool-cpool-acct" data-off={disabled}>
                         <span className="dsm-xdpool-cpool-acctname">{account.nickname ?? account.id}</span>
-                        <span className="dsm-xdpool-cpool-acctmeta">
+                        <span className="dsm-xdpool-cpool-acctmeta" data-tone={expiryIsPast(account.expiresAt) ? 'err' : undefined}>
                           {disabled
                             ? (t?.('channelpool.disableAccount') ?? 'disabled')
                             : (t?.('channelpool.enableAccount') ?? 'enabled')}
