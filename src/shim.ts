@@ -258,6 +258,26 @@ const KIND_STATUS: Readonly<Record<UpstreamErrorKind, number>> = {
   server: 502,
   client: 400,
 }
+/**
+ * HTTP status for each `unavailableReason` verdict.
+ *
+ * `unavailableReason` answers WHY no account could serve a request, and the
+ * answers need DIFFERENT advice: a cooldown means wait, a revoked sign-in means
+ * sign in again, a reserve floor or a switched-off account means edit the card,
+ * and an empty pool means add an account. Collapsing them onto 401 told every
+ * user to re-authenticate, which only ever helps the `session_dead` case.
+ *
+ * Kept in sync with the `why.reason` branches on the single-model path below;
+ * `combo_empty` / `none` never reach here but fall back to 503 rather than 401.
+ */
+const REASON_STATUS: Readonly<Record<string, number>> = {
+  cooling: 429,
+  session_dead: 401,
+  reserve: 402,
+  disabled: 403,
+  empty: 503,
+  none: 503,
+}
 function hostnameOfHost(host: string): string {
   let hostname = host.trim().toLowerCase()
   if (hostname.startsWith('[')) {
@@ -1053,7 +1073,16 @@ function withBareModelId(raw: string, modelId: string): string {
           const why = pool.unavailableReason(member.modelId, region, reserveExempt)
           last = {
             kind: why.reason,
-            status: why.reason === 'cooling' ? 429 : 401,
+            /**
+             * Map every reason to its own status, exactly as the single-model
+             * path does. A blanket `cooling ? 429 : 401` reported `reserve`
+             * (below the user's credit floor), `disabled` (switched off on the
+             * card) and `empty` (no accounts at all) as 401 — and 401 reads as
+             * "the API key is invalid, sign in again". Users followed that
+             * advice and were still stuck, because the fault was a credit
+             * floor or a toggle, not a credential.
+             */
+            status: REASON_STATUS[why.reason] ?? 503,
             message: `member ${member.modelId} has no usable WorkBuddy account (${why.reason})`,
           }
           continue
@@ -1456,6 +1485,40 @@ function withBareModelId(raw: string, modelId: string): string {
         `dsh-xdpool: ${account.label} rate-limited on ${modelId ?? '(no model)'} ` +
           `(attempt ${attempt + 1}/${maxAttempts}); rotating`,
       )
+      /**
+       * Stop as soon as this MODEL has no account left, not when this REQUEST
+       * runs out of attempts.
+       *
+       * The upstream meters each product row per account, so rotating really
+       * does buy one more attempt on the same model — but only while some
+       * account still has quota for it. Once every account is cooling on this
+       * model, the remaining attempts are guaranteed 429s: they cannot succeed,
+       * and each one burns that account's quota for the model, pushing its reset
+       * to the upstream's window and leaving the user with a pool that is
+       * "rate-limited everywhere" for a model they only tried once.
+       *
+       * Observed 2026-11-04: one glm-5.3 request walked three accounts in a row
+       * and cooled all three until the next day, then reported failure. The
+       * upstream's own wording is "您也可以切换其他模型继续使用" — switch models,
+       * not accounts.
+       *
+       * The existing `unavailableReason` check at the top of the loop does reach
+       * the same verdict, but only after the last account has been penalised. By
+       * then the damage is done; this returns one attempt earlier.
+       */
+      if (modelId !== undefined && !pool.anyAvailable(modelId, region, reserveExempt)) {
+        const subject = `every account is rate-limited for model ${modelId}`
+        const upstream = last === undefined ? '' : ` — ${last.message.slice(0, 200)}`
+        const twin = paidTwinHint(modelId)
+        writeOpenAIError(
+          res,
+          429,
+          'soft_rate',
+          `${subject} (tried ${tried.length}: ${tried.join(' → ')})${upstream}`
+            + (twin === undefined ? '' : ` — ${twin}`),
+        )
+        return
+      }
     }
     if (last === undefined) {
       writeOpenAIError(res, 500, 'internal', 'chat request exhausted without a result')
