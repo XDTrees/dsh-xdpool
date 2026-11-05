@@ -35020,10 +35020,19 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
    *
    * 展示名同样来自产品配置：CodeBuddy 为 'CodeBuddy (腾讯)'，
    * WorkBuddy 为 'WorkBuddy'。
+   *
+   * 例外：`buddy` 这条 lane 在本插件里已按「WorkBuddy 国内版」运营（见
+   * src/channels.ts 的 REGISTERED_CHANNELS、src/client/region-card.tsx），
+   * 而 vendor 产品常量仍沿用上游旧名 'CodeBuddy (腾讯)'，导致模型选择器
+   * 的分组名与账号池页的卡片标题对不上（issue #119）。这里在呈现层覆盖，
+   * 不改 vendor 常量 —— 后者还被限流/可用账号的报错文案引用
+   * （`throwIfAllAccountsRateLimited` 用 `product.displayName`），改常量
+   * 会连带改变那些提示语。
    */
   providerInfo(provider) {
     const id = typeof provider === "string" && provider.length > 0 ? provider : this.product.id;
-    return { id, name: this.product.displayName };
+    const name = id === "buddy" ? "WorkBuddy 国内版" : this.product.displayName;
+    return { id, name };
   }
   /**
    * 模型列表：优先使用 /v3/config 动态拉取的远端列表，否则回退静态默认。
