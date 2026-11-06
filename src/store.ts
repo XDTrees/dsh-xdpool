@@ -20,13 +20,15 @@
  *
  * @module dsh-xdpool/store
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile, rename } from 'node:fs/promises'
 // The sync reader below needs `readFileSync`, and `node:fs/promises` does not
 // export one. A second import from `node:fs` is the honest way to get it.
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { env } from 'node:process'
+import { ensureSecretDir, writeSecretFile } from './file-perms.ts'
+import { isDistributionStrategy } from './status-paths.ts'
 import type { AggregateSettings, ProviderRecord, ProviderSetting } from './providers.ts'
 import { getProvider, listProviderIds, PROVIDERS } from './providers.ts'
 import { normalizeCombos, type ComboSetting } from './combos.ts'
@@ -104,6 +106,22 @@ function normalizeSetting(raw: unknown): ProviderSetting {
   if (typeof value.enabled === 'boolean') setting.enabled = value.enabled
   const key = text(value.apiKey)
   if (key !== '') setting.apiKey = key
+  // The multi-key list. Read through the same cleaner as every other string list,
+  // so a hand-edited file with a blank or duplicated entry cannot produce a
+  // request guaranteed to 401. A one-entry list is dropped to keep the plain
+  // shape, matching what `updateProviderSetting` writes.
+  if (Array.isArray(value.apiKeys)) {
+    const keys = stringList(value.apiKeys)
+    const [only] = keys
+    if (keys.length > 1) setting.apiKeys = keys
+    else if (only !== undefined && setting.apiKey === undefined) setting.apiKey = only
+  }
+  // Which strategy spreads over those keys. Validated against the same vocabulary
+  // the route enforces, so a stray value in the file is ignored rather than
+  // carried into a decision nothing can act on.
+  if (typeof value.distribution === 'string' && isDistributionStrategy(value.distribution.trim())) {
+    setting.distribution = value.distribution.trim()
+  }
   const baseUrl = text(value.baseUrl)
   if (baseUrl !== '') setting.baseUrl = baseUrl.replace(/\/+$/, '')
   if (Array.isArray(value.models)) {
@@ -239,9 +257,12 @@ function normalizeRelayModels(raw: readonly unknown[]): string[] {
 export async function writeAggregateSettings(settings: AggregateStore): Promise<void> {
   const path = aggregateSettingsPath()
   if (path === undefined) throw new Error('no home directory to store the aggregate settings in')
-  await mkdir(dirname(path), { recursive: true })
+  // Owner-only: this document holds every third-party `apiKey` the user pasted.
+  // The mode goes on the TEMP file so the rename carries it across, which is the
+  // whole reason the write is staged.
+  await ensureSecretDir(dirname(path))
   const file: AggregateFile = { version: STORE_VERSION, ...settings }
-  await writeFile(`${path}.tmp`, `${JSON.stringify(file, null, 2)}\n`, 'utf8')
+  await writeSecretFile(`${path}.tmp`, `${JSON.stringify(file, null, 2)}\n`)
   await rename(`${path}.tmp`, path)
 }
 /**
@@ -254,7 +275,16 @@ export async function writeAggregateSettings(settings: AggregateStore): Promise<
  */
 export async function updateProviderSetting(
   providerId: string,
-  patch: Partial<ProviderSetting>,
+  /**
+   * The fields to change, plus one INSTRUCTION that is not a stored field.
+   *
+   * `appendApiKey` is deliberately outside `ProviderSetting`: it is an operation
+   * on the key list ("add this one after the ones already stored"), not a value
+   * to persist. Modelling it as a stored field would put a stray key in the
+   * document and, worse, would let a whole list be overwritten by a caller that
+   * only ever saw a COUNT.
+   */
+  patch: Partial<ProviderSetting> & { appendApiKey?: string },
 ): Promise<AggregateStore> {
   const provider = getProvider(providerId)
   if (provider === null) throw new Error(`unknown provider: ${providerId}`)
@@ -268,15 +298,59 @@ export async function updateProviderSetting(
     if (baseUrl === '') delete after.baseUrl
     else after.baseUrl = baseUrl
   }
-  if (patch.apiKey !== undefined) {
-    const key = text(patch.apiKey)
-    if (key === '') delete after.apiKey
-    else after.apiKey = key
+  if (patch.appendApiKey !== undefined) {
+    // APPEND, not replace. The card cannot send the stored list (keys never leave
+    // the host), so the only instruction it can give is "add this one". A
+    // duplicate is dropped rather than stored twice: the same key listed twice
+    // would make the retry loop spend two attempts on one credential and report
+    // a rotation that never happened.
+    const added = text(patch.appendApiKey)
+    if (added !== '') {
+      const existing = [...new Set([...providerApiKeys(after)])]
+      if (!existing.includes(added)) existing.push(added)
+      const first = existing[0]
+      if (first !== undefined) {
+        after.apiKey = first
+        if (existing.length > 1) after.apiKeys = existing
+        else delete after.apiKeys
+      }
+    }
+  }
+  // KEYS: two spellings, one stored truth.
+  //
+  // `apiKeys` wins when both are supplied, because it is the newer field and the
+  // only one that can express alternates. Whichever arrives, the pair is kept
+  // consistent afterwards: `apiKey` mirrors entry 0 (so an older reader, and the
+  // redaction helper, still see a key) and `apiKeys` is dropped when it would be
+  // a single entry, so a one-key provider keeps the plain shape on disk.
+  //
+  // An empty value CLEARS, in both spellings: a stored `''` would look like a
+  // configured key to anything that only tests for presence.
+  if (patch.apiKeys !== undefined || patch.apiKey !== undefined) {
+    const incoming = patch.apiKeys !== undefined ? patch.apiKeys : [patch.apiKey ?? '']
+    const keys = [...new Set(incoming.map(entry => text(entry)).filter(key => key !== ''))]
+    const first = keys[0]
+    if (first === undefined) {
+      delete after.apiKey
+      delete after.apiKeys
+    } else {
+      after.apiKey = first
+      if (keys.length > 1) after.apiKeys = keys
+      else delete after.apiKeys
+    }
   }
   if (patch.models !== undefined) {
     const models = stringList(patch.models)
     if (models.length === 0) delete after.models
     else after.models = models
+  }
+  if (patch.distribution !== undefined) {
+    // Validated at the route, so anything arriving here either names a strategy or
+    // is being cleared. An empty string clears it back to the documented default
+    // rather than storing a value nothing reads.
+    const strategy = text(patch.distribution)
+    if (strategy === '') delete after.distribution
+    else after.distribution = strategy
   }
   if (patch.discovered !== undefined) {
     const discovered = stringList(patch.discovered)
@@ -396,6 +470,82 @@ export function providerSettingOf(store: AggregateStore, providerId: string): Pr
   return setting ?? {}
 }
 /**
+ * Every usable key a provider holds, preferred first.
+ *
+ * One reader for two spellings. A config written before multi-key support has
+ * only `apiKey`; one written by the multi-key card has `apiKeys` with a mirrored
+ * `apiKey`. Both must answer the same list, deduplicated, with blanks dropped — a
+ * blank entry is a request guaranteed to 401 and, worse, would make the card
+ * believe the provider is configured.
+ *
+ * Order is meaningful: entry 0 is the preferred key, the rest are alternates.
+ */
+export function providerApiKeys(setting: ProviderSetting): readonly string[] {
+  const list = Array.isArray(setting.apiKeys) ? setting.apiKeys : []
+  const out: string[] = []
+  const seen = new Set<string>()
+  // `apiKeys` first, then the legacy single field, so a store written by the
+  // older card still answers one key and a store holding both cannot duplicate.
+  for (const raw of [...list, setting.apiKey]) {
+    const key = text(raw)
+    if (key === '' || seen.has(key)) continue
+    seen.add(key)
+    out.push(key)
+  }
+  return out
+}
+
+/**
+ * The order to TRY this provider's keys in, per the chosen strategy.
+ *
+ * `priority` (the default) is the stored order, which is also what the retry loop
+ * walks: the preferred key first, then the alternates. The other four strategies
+ * reorder the FIRST attempt only — the alternates behind it still follow in
+ * stored order, because the point of a fallback is to reach a working key quickly,
+ * not to shuffle the whole list on every attempt.
+ *
+ * Deliberately a pure function of `(keys, strategy, picker)`: the pool lane's
+ * strategies depend on live account state, which keys do not have. `picker`
+ * returns a float in [0,1) so a test can drive the random branches.
+ */
+export function orderApiKeys(
+  keys: readonly string[],
+  strategy: string | undefined,
+  picker: () => number = Math.random,
+): readonly string[] {
+  if (keys.length <= 1) return keys
+  const [first, ...rest] = keys
+  if (first === undefined) return keys
+  switch (strategy) {
+    case 'round-robin': {
+      // Rotate: the least-recently-first key leads this time. Without shared
+      // state the honest approximation is a random start, which spreads the load
+      // evenly over a session instead of always hammering entry 0.
+      const at = Math.floor(picker() * keys.length)
+      const index = at < 0 || at >= keys.length ? 0 : at
+      return [...keys.slice(index), ...keys.slice(0, index)]
+    }
+    case 'balanced': {
+      // Same idea, chosen for even spread rather than strict rotation.
+      const at = Math.floor(picker() * keys.length)
+      const index = at < 0 || at >= keys.length ? 0 : at
+      return [...keys.slice(index), ...keys.slice(0, index)]
+    }
+    case 'expiry':
+      // Keys carry no expiry this lane can read, so "use the one with the most
+      // life left" has no input. Answering the stored order is the honest
+      // fallback rather than inventing an ordering.
+      return keys
+    case 'sticky':
+      // Pinning belongs to a conversation, not to a key list; one request is one
+      // stick. The stored order is the correct answer here.
+      return keys
+    case 'priority':
+    default:
+      return keys
+  }
+}
+/**
  * Whether a provider could serve a model right now.
  *
  * Keyless and local providers are usable with nothing configured; `oauth` and
@@ -405,7 +555,7 @@ export function providerSettingOf(store: AggregateStore, providerId: string): Pr
  */
 export function providerAuthUsable(provider: ProviderRecord, setting: ProviderSetting): boolean {
   if (provider.auth.kind === 'oauth' || provider.auth.kind === 'adc') return false
-  if (provider.auth.kind === 'apiKey') return text(setting.apiKey) !== ''
+  if (provider.auth.kind === 'apiKey') return providerApiKeys(setting).length > 0
   return true
 }
 /**

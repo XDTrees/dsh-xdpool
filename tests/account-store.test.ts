@@ -25,7 +25,7 @@
  * now a scan source, and the plugin's own state files in it are excluded.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -131,6 +131,89 @@ describe('the durable account store', () => {
     const accounts = await new WorkBuddyAccountPool({ authDirs: [authDir], persistent: true }).scan()
     expect(accounts).toHaveLength(1)
     expect(accounts[0]?.credential.accessToken).toBe('fresh-token')
+  })
+
+  it('keeps stored accounts when this scan only finds SOME of them (#117)', async () => {
+    // The defect: the store was only read when the in-memory list was EMPTY, so
+    // the normal case — the desktop app keeps a single `.info`, the store holds
+    // six accounts — skipped the read and then wrote the one-account list back
+    // over all six. Reported loss: a 6-account pool silently dropped its
+    // highest-balance account, and its credential was unrecoverable without a
+    // fresh sign-in.
+    const home = tempHome()
+    cleanups.push(() => rmSync(home, { recursive: true, force: true }))
+    mkdirSync(join(home, '.xdpool'), { recursive: true })
+    const stored = ['keep1', 'keep2', 'keep3'].map(name => ({
+      id: workbuddyAccountId(parsedCredential(name)),
+      label: name,
+      credential: parsedCredential(name),
+      savedAtMs: Date.now() - 1000,
+    }))
+    writeFileSync(join(home, '.xdpool', ACCOUNTS_FILE_NAME), JSON.stringify({ version: 1, accounts: stored }))
+
+    // ONE auth file, so the scan finds one account and the store holds four.
+    const authDir = mkdtempSync(join(tmpdir(), 'xdpool-auth-'))
+    cleanups.push(() => rmSync(authDir, { recursive: true, force: true }))
+    writeFileSync(join(authDir, 'workbuddy-desktop.info'), plainCredential('live'))
+
+    const pool = new WorkBuddyAccountPool({ authDirs: [authDir], persistent: true })
+    const first = await pool.scan()
+    expect(first).toHaveLength(4)
+    expect(first.map(a => a.label)).toEqual(expect.arrayContaining(['keep1', 'keep2', 'keep3']))
+
+    // And the second scan must not drop them either: `this.accounts` is now
+    // non-empty, which is exactly the state the old gate treated as "no need to
+    // read the store".
+    const second = await pool.scan()
+    expect(second).toHaveLength(4)
+    const storedAfter = JSON.parse(readFileSync(join(home, '.xdpool', ACCOUNTS_FILE_NAME), 'utf8')) as {
+      accounts: { label: string }[]
+    }
+    expect(storedAfter.accounts).toHaveLength(4)
+    // The live account's label carries a uid suffix, so match on the prefix.
+    const storedLabels = storedAfter.accounts.map(a => a.label)
+    for (const name of ['keep1', 'keep2', 'keep3']) {
+      expect(storedLabels.some(label => label.startsWith(name))).toBe(true)
+    }
+    expect(storedLabels.some(label => label.startsWith('live'))).toBe(true)
+  })
+
+  it('reports which accounts a rescan dropped instead of deleting them silently', async () => {
+    // The store holds complete credentials, so a shrink is unrecoverable. It is
+    // still allowed (the user may have deleted an account), but it has to be
+    // SAID — a card list that quietly loses an account is the report in #117.
+    const home = tempHome()
+    cleanups.push(() => rmSync(home, { recursive: true, force: true }))
+    mkdirSync(join(home, '.xdpool'), { recursive: true })
+    const gone = {
+      id: workbuddyAccountId(parsedCredential('gone')),
+      label: 'gone',
+      credential: parsedCredential('gone'),
+      savedAtMs: Date.now() - 1000,
+    }
+    writeFileSync(join(home, '.xdpool', ACCOUNTS_FILE_NAME), JSON.stringify({ version: 1, accounts: [gone] }))
+
+    const authDir = mkdtempSync(join(tmpdir(), 'xdpool-auth-'))
+    cleanups.push(() => rmSync(authDir, { recursive: true, force: true }))
+    writeFileSync(join(authDir, 'workbuddy-desktop.info'), plainCredential('live'))
+
+    const warnings: string[] = []
+    const pool = new WorkBuddyAccountPool({
+      authDirs: [authDir],
+      persistent: true,
+      logger: { warn: (...args: unknown[]) => { warnings.push(args.map(String).join(' ')) } },
+    })
+    await pool.scan()
+    // Both are present on the first scan, so nothing has left yet.
+    expect(warnings.filter(line => line.includes('no longer in the pool'))).toHaveLength(0)
+
+    // Mark the stored account ignored, which is how an account legitimately
+    // leaves the pool, and rescan.
+    pool.applyIgnored([gone.id])
+    await pool.scan()
+    const reported = warnings.filter(line => line.includes('no longer in the pool'))
+    expect(reported).toHaveLength(1)
+    expect(reported[0]).toContain(gone.id)
   })
 
   it('writes the merged list back atomically after every scan', async () => {

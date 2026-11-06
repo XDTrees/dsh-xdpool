@@ -17,10 +17,11 @@
  * @module dsh-xdpool/ignored
  */
 
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile, rename } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { ensureSecretDir, writeSecretFile } from './file-perms.ts'
 import type { PoolWebIgnoredAccount } from './status-paths.ts'
 
 /** Directory holding this plugin's own state (imported snapshots, ignore list). */
@@ -132,9 +133,13 @@ export async function writeIgnoredAccounts(
   // Create the directory the TARGET lives in, not the default one: tests (and
   // any future caller) pass an explicit path, and creating the wrong directory
   // would leave the write to fail with ENOENT.
-  await mkdir(dirname(path), { recursive: true })
+  //
+  // Owner-only, same as the account store: this list records which accounts the
+  // user removed, i.e. it is a map of their identities. Nothing here is a token,
+  // but it is still not something another local user should read.
+  await ensureSecretDir(dirname(path))
   const temp = `${path}.tmp`
-  await writeFile(temp, `${payload}\n`, 'utf8')
+  await writeSecretFile(temp, `${payload}\n`)
   await rename(temp, path)
 }
 

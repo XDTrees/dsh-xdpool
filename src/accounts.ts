@@ -283,6 +283,15 @@ export function parseWorkBuddyAuth(
   const lastRefreshAtMs = typeof auth['lastRefreshTime'] === 'number'
     ? expiryToMs(auth['lastRefreshTime'])
     : undefined
+  // Resolved ONCE each, then used twice: the identity fields were written as
+  // `optionalString(…) === undefined ? {} : { uin: optionalString(…) }`, which
+  // ran the parse twice AND defeated the type narrowing — TypeScript narrows the
+  // first call but not the second, so the object literal carried `string | undefined`
+  // into a field declared `?: string`. One const fixes both.
+  const nickname = optionalString(decryptableString(identity['nickname'], decrypt).value)
+  const uin = optionalString(identity['uin'])
+  const uid = optionalString(identity['uid'])
+  const enterpriseId = optionalString(identity['enterpriseId'])
 
   return {
     accessToken,
@@ -290,14 +299,10 @@ export function parseWorkBuddyAuth(
     expiresAtMs: typeof auth['expiresAt'] === 'number' ? expiryToMs(auth['expiresAt']) : 0,
     ...refreshExpiresAtMs === undefined ? {} : { refreshExpiresAtMs },
     ...lastRefreshAtMs === undefined ? {} : { lastRefreshAtMs },
-    ...optionalString(decryptableString(identity['nickname'], decrypt).value) === undefined
-      ? {}
-      : { nickname: optionalString(decryptableString(identity['nickname'], decrypt).value) },
-    ...optionalString(identity['uin']) === undefined ? {} : { uin: optionalString(identity['uin']) },
-    ...optionalString(identity['uid']) === undefined ? {} : { uid: optionalString(identity['uid']) },
-    ...optionalString(identity['enterpriseId']) === undefined
-      ? {}
-      : { enterpriseId: optionalString(identity['enterpriseId']) },
+    ...nickname === undefined ? {} : { nickname },
+    ...uin === undefined ? {} : { uin },
+    ...uid === undefined ? {} : { uid },
+    ...enterpriseId === undefined ? {} : { enterpriseId },
     domain: typeof auth['domain'] === 'string' ? auth['domain'] : '',
     sourcePath,
   }
@@ -767,6 +772,17 @@ export class WorkBuddyAccountPool {
    * lives on the pool and is re-applied from settings after each scan.
    */
   private disabledIds = new Set<string>()
+
+  /**
+   * The account ids the store held after the last successful write.
+   *
+   * Read back on the next scan to say WHICH accounts left, not just how many.
+   * The list is written wholesale, so a scan that does not find an account
+   * deletes it — and that account's credential is then unrecoverable without a
+   * fresh sign-in (#117). `undefined` until the first write, so the first scan
+   * never reports every account as "leave".
+   */
+  private lastPersistedIds: Set<string> | undefined
   /**
    * Account ids the user threw out of the pool for good.
    *
@@ -844,8 +860,13 @@ export class WorkBuddyAccountPool {
    * A function rather than a list because that pool is mounted asynchronously
    * and can be re-read on demand; `undefined` means "no such source", which is
    * the state every test and every pre-mount startup is in.
+   *
+   * The `| undefined` is explicit because `applyExternalSource` CLEARS the field by
+   * assigning `undefined` — under `exactOptionalPropertyTypes` a bare `?:` means
+   * "may be absent, never undefined", which made that documented clearing action
+   * a type error.
    */
-  private externalSource?: () => Promise<readonly WorkBuddyCredential[]>
+  private externalSource?: (() => Promise<readonly WorkBuddyCredential[]>) | undefined
 
   constructor(options: AccountPoolOptions = {}) {
     this.logger = options.logger
@@ -1018,9 +1039,24 @@ export class WorkBuddyAccountPool {
     // accounts are inserted FIRST so a credential freshly read from disk wins
     // the freshness comparison below — the store is memory, the auth dir is
     // the truth.
-    if (this.persistent && this.accounts.length === 0) {
+    //
+    // NOT gated on `this.accounts.length === 0` any more. That condition made
+    // this the ONE case the store could not serve: the desktop app keeps only
+    // the most-recently-signed-in account's `.info`, so "some accounts have an
+    // .info and some do not" is the NORMAL state — and in it the store was
+    // skipped, `this.accounts` (holding only what this scan found) was written
+    // back over it, and every account without an `.info` was deleted from disk
+    // with no warning (#117). Reported damage: a 6-account pool lost its
+    // highest-balance account (2,299 credits) and the user only noticed a card
+    // was missing.
+    //
+    // The loop is already safe without the gate: `byId` holds this scan's
+    // accounts first, and the `has` check below means a stored entry can only
+    // ADD an account, never overwrite a fresher in-memory credential.
+    if (this.persistent) {
       const stored = await loadStoredAccounts(this.storePath)
       for (const entry of stored) {
+        if (this.ignoredIds.size > 0 && this.ignoredIds.has(entry.id)) continue
         if (byId.has(entry.id)) continue
         byId.set(entry.id, {
           id: entry.id,
@@ -1111,7 +1147,26 @@ export class WorkBuddyAccountPool {
     // already pays.
     if (this.persistent) {
       try {
+        // Say it when a scan SHRINKS the store. The list is written wholesale, so
+        // anything this scan did not find and the store did not hold is gone for
+        // good — and the store holds the only copy of those credentials. A user
+        // whose card list quietly lost an account had no way to know it happened
+        // (#117), so the disappearance is reported with the ids that left. This
+        // is a log line rather than a block: a legitimate removal (the user
+        // deleted the account) goes through the same path, and refusing to write
+        // would resurrect it on every scan.
+        const leaving = this.lastPersistedIds === undefined
+          ? []
+          : [...this.lastPersistedIds].filter(id => !this.accounts.some(account => account.id === id))
+        if (leaving.length > 0) {
+          this.logger?.warn?.(
+            `dsh-xdpool: ${String(leaving.length)} account(s) are no longer in the pool after a rescan `
+              + `and were removed from the store: ${leaving.join(', ')}. `
+              + 'Their credentials are gone unless they are signed in again.',
+          )
+        }
         await saveStoredAccounts(this.storePath, this.accounts)
+        this.lastPersistedIds = new Set(this.accounts.map(account => account.id))
       } catch (error: unknown) {
         this.logger?.warn?.('dsh-xdpool: could not persist the account store', error)
       }
@@ -1671,6 +1726,51 @@ export class WorkBuddyAccountPool {
   deadCredentials(): readonly WorkBuddyAccount[] {
     const now = Date.now()
     return this.accounts.filter(account => (account.credentialDeadUntilMs ?? 0) > now)
+  }
+
+  /**
+   * Try to bring benched accounts back WITHOUT waiting out the cooldown.
+   *
+   * The cooldown is a guess about how long a problem lasts, and the guess is
+   * usually wrong in one direction or the other: a token revoked by a password
+   * change stays dead for the full window even after the user signs in again in
+   * some other client, and a transient upstream hiccup benches a perfectly good
+   * account for half an hour.
+   *
+   * So instead of only waiting, ask. For each benched account, one cheap
+   * authenticated read: if it answers, the credential works and the account goes
+   * back into rotation immediately. Nothing about the failure is trusted — only a
+   * successful call clears it — and a probe that fails keeps the original
+   * cooldown untouched (probing must never EXTEND a bench, or a broken endpoint
+   * would keep every account locked out for as long as it stayed broken).
+   *
+   * `probe` is injected rather than imported so this class stays free of the
+   * upstream client: the pool knows about accounts, not about HTTP.
+   *
+   * Returns the accounts it revived, for logging and for the run summary.
+   */
+  async reviveBenched(
+    probe: (credential: WorkBuddyCredential) => Promise<unknown>,
+  ): Promise<readonly WorkBuddyAccount[]> {
+    const benched = this.deadCredentials()
+    if (benched.length === 0) return []
+    const revived: WorkBuddyAccount[] = []
+    for (const account of benched) {
+      try {
+        await probe(account.credential)
+      } catch {
+        // Still bad. Leave `credentialDeadUntilMs` exactly as it was: a failed
+        // probe is not evidence of anything new, and shortening or extending the
+        // bench on it would make the cooldown depend on how often we probe.
+        continue
+      }
+      this.clearCredentialDead(account.id)
+      revived.push(account)
+      this.logger?.info?.(
+        `dsh-xdpool: ${account.label} answered a probe; back in rotation without waiting out the cooldown`,
+      )
+    }
+    return revived
   }
 
   /**

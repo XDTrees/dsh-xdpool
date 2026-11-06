@@ -82,13 +82,39 @@ function regionLabel(region: string, t?: Translate): string {
   return region === 'global' ? (t?.('ledger.global') ?? 'Global') : (t?.('ledger.cn') ?? 'CN')
 }
 /**
+ * The channel a call went through, as the table's first column.
+ *
+ * A provider id (`opencode`, `raccoon`, `codearts`) is printed as-is, because that
+ * is the same spelling the aggregate page and the model picker use — inventing a
+ * second name here would make one vendor look like two. `workbuddy` and `free` get
+ * a translated label since they are lanes of this plugin rather than vendors.
+ *
+ * Falls back to the region for a sample filed before this field existed, so an old
+ * in-memory window still renders something true instead of a blank cell.
+ */
+function channelLabel(call: { channel?: string; region: string }, t?: Translate): string {
+  const channel = call.channel ?? ''
+  if (channel === 'workbuddy' || channel === '') return regionLabel(call.region, t)
+  if (channel === 'free') return t?.('ledger.channelFree') ?? 'Free lane'
+  return channel
+}
+/**
  * In / out / cached for one call, or `—` when that call reported no usage.
  *
  * `—` rather than `0`: a call that never received a usage block is a missing
  * measurement, and the model table's share column would then divide a total by
  * rows that contributed nothing and quietly shrink it.
  */
-function tokenCells(call: UsageCall): string[] {
+/**
+ * The three numeric cells for one call: input, output, cached.
+ *
+ * A fixed-length TUPLE, not `string[]`, so the header can never drift out of step
+ * with the body. The table renders these through `.map`, which means a fourth
+ * header added without a fourth value here — or a third value dropped — would
+ * silently shift every numeric column against its title. That is precisely the
+ * misalignment this was rebuilt to fix, and a `string[]` type cannot see it.
+ */
+function tokenCells(call: UsageCall): readonly [string, string, string] {
   if (call.usage === undefined) return ['—', '—', '—']
   return [fmtInt(call.usage.inputTokens), fmtInt(call.usage.outputTokens), fmtInt(call.usage.cachedTokens)]
 }
@@ -265,7 +291,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
                         <thead>
                           <tr>
                             <th>{t?.('ledger.colTime') ?? 'Time'}</th>
-                            <th>{t?.('ledger.colRegion') ?? 'Region'}</th>
+                            <th>{t?.('ledger.colChannel') ?? 'Channel'}</th>
                             <th>{t?.('ledger.colModel') ?? 'Model'}</th>
                             <th>{t?.('ledger.colAccount') ?? 'Account'}</th>
                             <th className="dsm-xdpool-num">{t?.('ledger.colIn') ?? 'In'}</th>
@@ -278,7 +304,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
                           {details.map((entry, index) => (
                             <tr key={`${entry.turnId}:${String(entry.at)}:${String(index)}`} data-ok={entry.ok}>
                               <td>{fmtClock(entry.at)}</td>
-                              <td>{regionLabel(entry.region, t)}</td>
+                              <td>{channelLabel(entry, t)}</td>
                               <td className="dsm-xdpool-ellipsis" title={entry.model}>{entry.model}</td>
                               <td className="dsm-xdpool-ellipsis" title={entry.account ?? ''}>
                                 {entry.account ?? (t?.('ledger.noAccount') ?? '—')}
@@ -302,7 +328,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
                         <thead>
                           <tr>
                             <th>{t?.('ledger.colAccount') ?? 'Account'}</th>
-                            <th>{t?.('ledger.colRegion') ?? 'Region'}</th>
+                            <th>{t?.('ledger.colChannel') ?? 'Channel'}</th>
                             <th className="dsm-xdpool-num">{t?.('ledger.colTurns') ?? 'Turns'}</th>
                             <th className="dsm-xdpool-num">{t?.('ledger.colCalls') ?? 'Calls'}</th>
                             <th className="dsm-xdpool-num">{t?.('ledger.colIn') ?? 'In'}</th>
@@ -316,7 +342,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
                               <td className="dsm-xdpool-ellipsis" title={row.account}>
                                 {row.account === '' ? (t?.('ledger.unattributed') ?? '(unattributed)') : row.account}
                               </td>
-                              <td>{regionLabel(row.region, t)}</td>
+                              <td>{channelLabel(row, t)}</td>
                               <td className="dsm-xdpool-num">{fmtInt(row.turns)}</td>
                               <td className="dsm-xdpool-num">{fmtInt(row.calls)}</td>
                               <td className="dsm-xdpool-num">{fmtInt(row.inputTokens)}</td>
@@ -336,8 +362,8 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
                       <table className="dsm-xdpool-table">
                         <thead>
                           <tr>
+                            <th>{t?.('ledger.colChannel') ?? 'Channel'}</th>
                             <th>{t?.('ledger.colModel') ?? 'Model'}</th>
-                            <th>{t?.('ledger.colRegion') ?? 'Region'}</th>
                             <th className="dsm-xdpool-num">{t?.('ledger.colCalls') ?? 'Calls'}</th>
                             <th className="dsm-xdpool-num">{t?.('ledger.colTps') ?? 'tok/s'}</th>
                             <th className="dsm-xdpool-num">{t?.('ledger.colTtft') ?? 'TTFT'}</th>
@@ -350,9 +376,16 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
                               ? 0
                               : Math.round((row.inputTokens / (totals?.input ?? 1)) * 100)
                             return (
-                              <tr key={`${row.region}:${row.model}`}>
+                              <tr key={`${row.channel}:${row.region}:${row.model}`}>
+                                {/*
+                                  Channel FIRST, then the model. The same id can be
+                                  served by several vendors, so a table led by the
+                                  model name silently merged them and the share
+                                  column then divided one vendor's tokens by a total
+                                  that included another's.
+                                */}
+                                <td>{channelLabel(row, t)}</td>
                                 <td className="dsm-xdpool-ellipsis" title={row.model}>{row.model}</td>
-                                <td>{regionLabel(row.region, t)}</td>
                                 <td className="dsm-xdpool-num">{fmtInt(row.calls)}</td>
                                 <td className="dsm-xdpool-num">{fmtTps(row.tps)}</td>
                                 <td className="dsm-xdpool-num">

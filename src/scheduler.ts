@@ -25,14 +25,14 @@
 import type { WorkBuddyAccount, WorkBuddyAccountPool, WorkBuddyCredential } from './accounts'
 import { randomUUID } from 'node:crypto'
 import { isAlreadyCheckin, isNoCompensation, regionOf } from './upstream'
-import type { WorkBuddyTask, WorkBuddyUpstreamClient } from './upstream'
+import type { WorkBuddyRegion, WorkBuddyTask, WorkBuddyUpstreamClient } from './upstream'
 import {
   APPEARANCE_THEME_KEY, LIGHTHOUSE_EXPERT_ID, automationChain, appearanceChain, buddyAppChain,
   canvasChain, chatChain, expertActualUseEvent, expertChatEvents, expertFromTask, expertIdFromJumpUrl,
   expertSummonEvents, libraryReadChain, playbookChain, skillChain, templateChains,
 } from './task-events.ts'
 import type { MarketExpert, TaskEventChain } from './task-events.ts'
-import { DEFAULT_AUTOMATION_HOURS } from './status-paths.ts'
+import { DEFAULT_AUTOMATION_HOURS, type PoolWebAutomationItem } from './status-paths.ts'
 
 /** Per-account gap between upstream calls, so a pool of accounts is not a burst. */
 export const AUTOMATION_ACCOUNT_DELAY_MS = 800
@@ -232,6 +232,16 @@ export interface AutomationJobState {
    * is the question the panel exists to answer.
    */
   detail?: readonly string[]
+  /**
+   * The same work with a status per item.
+   *
+   * `detail` is a flat list of sentences, so the card can print it but cannot
+   * group it. This carries `claimed` / `already` / `skipped` / `failed` per
+   * thing the job looked at, which is what separates "everything was already
+   * done" from "nothing was claimable" from "the endpoint is down" — three
+   * outcomes that all print as "0 claimed".
+   */
+  items?: readonly PoolWebAutomationItem[]
   /**
    * A pending milestone worth naming, when there is one.
    *
@@ -484,11 +494,46 @@ export function isFireHour(now: Date, hours: readonly number[]): boolean {
   return hours.includes(Number(hour))
 }
 
-/** Whether this account may be used: not switched off, not cooling. */
-function eligible(account: WorkBuddyAccount, now: number): boolean {
+/**
+ * Which account classes each job may touch.
+ *
+ * This replaced a single `global → false`, which was right about the growth
+ * system and wrong as a blanket: it excluded a global account from EVERY job,
+ * including the ones that are idempotent, cheap, and pay credits regardless of
+ * region. The blanket also made the rule unfalsifiable — "global does nothing"
+ * cannot be checked, whereas "the checkin job tries global accounts and here is
+ * what came back" can.
+ *
+ * So the scope is per job, and the default for a job that is not named is `cn`:
+ * a new job must opt in explicitly rather than inherit an accident.
+ */
+const JOB_REGION_SCOPE: Readonly<Record<string, readonly WorkBuddyRegion[]>> = {
+  // Growth jobs are CN-only: the international gateway has no task centre, no
+  // activity report and no streak ladder, so calling those endpoints there would
+  // only produce 404s and noise.
+  report: ['cn'],
+  tasks: ['cn'],
+  streak: ['cn'],
+  travel: ['cn'],
+  compensation: ['cn'],
+  // Check-in is the one job that pays credits on both gateways, and it is the
+  // safest to try: idempotent, one call, and "already checked in" is already
+  // classified as success rather than failure. So a global account is allowed
+  // here — if the endpoint turns out not to exist there, the run records one
+  // skipped item and the rest of the pool is unaffected.
+  checkin: ['cn', 'global'],
+}
+
+/** Whether `job` may run against `region`; unnamed jobs stay CN. */
+function jobAllowsRegion(job: string, region: WorkBuddyRegion): boolean {
+  return (JOB_REGION_SCOPE[job] ?? ['cn']).includes(region)
+}
+
+/** Whether this account may be used for a job: not cooling, and right region. */
+function eligible(account: WorkBuddyAccount, now: number, job?: string): boolean {
   if (account.cooldownUntilMs > now) return false
-  // The growth system is CN-only; a global account has no task centre at all.
-  if (regionOf(account.credential.domain) === 'global') return false
+  // Per-job region scope, not a blanket exclusion: see JOB_REGION_SCOPE.
+  if (job !== undefined && !jobAllowsRegion(job, regionOf(account.credential.domain))) return false
   return true
 }
 
@@ -1081,9 +1126,38 @@ export class WorkBuddyScheduler {
     let energy = 0
     let claimed = 0
     const detail: string[] = []
+    /**
+     * Every item this run considered, with a status attached.
+     *
+     * `detail` stays as the human-readable log line; this is the same work in a
+     * shape the card can GROUP and COUNT, so "3 tasks unclaimed — locked" is
+     * distinguishable from "0 tasks, everything already collected".
+     */
+    const items: PoolWebAutomationItem[] = []
     let progressNote: string | undefined
     
-    const accounts = this.accountsInOrder()
+    // Give benched accounts a chance to come back BEFORE the run, not after.
+    //
+    // The cooldown that benches a rejected credential is a guess at how long the
+    // problem lasts, and a wrong guess has a real cost: a token the user already
+    // re-signed-into elsewhere stays out of rotation for the whole window, and an
+    // upstream hiccup benches a healthy account for half an hour. Probing once per
+    // run replaces "wait and hope" with "ask" — one cheap authenticated read per
+    // benched account, and only a successful one clears the bench.
+    //
+    // `fetchCredits` is the probe because it is the cheapest call that proves the
+    // credential itself is accepted: a read, no generation, and it is the same
+    // endpoint the balance refresh already uses, so a passing probe also warms
+    // the number the card shows.
+    try {
+      const revived = await this.pool.reviveBenched(credential => this.client.fetchCredits(credential))
+      for (const account of revived) detail.push(`复活 ${account.label}`)
+    } catch (error: unknown) {
+      // A probe loop must never fail the run it was meant to help.
+      this.logger.warn?.('automation: could not probe benched accounts:', error)
+    }
+
+    const accounts = this.accountsInOrder(kind)
 
     // Pass 1 (tasks only): light up the client-scored tasks for EVERY account
     // before claiming any of them. Claiming inside this loop would find each
@@ -1097,20 +1171,46 @@ export class WorkBuddyScheduler {
       try {
         switch (kind) {
           case 'checkin': {
+              // READ the state before spending a claim.
+              //
+              // The claim endpoint is idempotent — a repeat pays 0 and answers
+              // with an "already checked in" error — so the old flow worked, but
+              // it worked by deliberately provoking a failure. Two costs: the run
+              // summary had to translate an upstream error back into success (and
+              // `isAlreadyCheckin` only recognises a couple of phrasings, so an
+              // unfamiliar wording turned a healthy account into a failure), and
+              // every already-done account still spent a write request per run.
+              //
+              // Reading first makes the common case a GET: if the status already
+              // says today is collected, there is nothing to claim and nothing to
+              // classify. The read is allowed to fail — a status endpoint having a
+              // bad minute must not cost the user their check-in — in which case
+              // the old behaviour (claim, translate the error) is the fallback.
+              let alreadyDone = false
+              try {
+                const status = await this.client.fetchCheckinStatus(account.credential)
+                alreadyDone = status.todayCheckedIn === true
+              } catch (error: unknown) {
+                this.logger.warn?.(`automation checkin ${account.label}: status read failed, claiming anyway:`, error)
+              }
+              if (alreadyDone) {
+                this.logger.info?.(`automation checkin ${account.label}: already done today (read, not claimed)`)
+                break
+              }
               try {
                 const claim = await this.client.claimDailyCheckin(account.credential)
                 // Check-in pays credits, so it belongs in the earnings ledger. A
                 // repeat check-in pays 0, which records as a no-op.
                 this.recordEarnings(account.id, today, { checkinCredit: claim.credit })
                 if (claim.credit > 0) {
-                if (claim.credit > 0) detail.push(`签到 +${claim.credit}`)
+                  detail.push(`签到 +${claim.credit}`)
                   this.logger.info?.(`automation checkin ${account.label}: +${claim.credit} credit`)
                 }
               } catch (error: unknown) {
-                // "Already checked in today" arrives as an error from the upstream
-                // but is an idempotent success: the day is already collected.
-                // Counting it as a failure would make a healthy account look
-                // broken and would inflate the run summary.
+                // Still translated, because the status read above can fail or
+                // race another client: "already checked in" arriving as an error
+                // is an idempotent success, and counting it as a failure would
+                // make a healthy account look broken.
                 if (!isAlreadyCheckin(error)) throw error
                 this.logger.info?.(`automation checkin ${account.label}: already done today`)
               }
@@ -1127,6 +1227,9 @@ export class WorkBuddyScheduler {
             energy += result.energy
             claimed += result.claimed
             detail.push(...result.titles)
+            // Merged per item, not per account: the card shows one list of what
+            // happened, and a task is the unit a person checks off.
+            items.push(...result.items)
             this.claimableSeen += result.claimableCount
             this.recordEarnings(account.id, today, { credit: result.credit, energy: result.energy, claimed: result.claimed })
             this.logger.info?.(
@@ -1198,7 +1301,13 @@ export class WorkBuddyScheduler {
     state.claimed = claimed
     state.message = this.summarise(kind, ok, failed, claimed, credit, energy)
     state.detail = detail
-    state.progress = progressNote
+    state.items = items
+    // Cleared explicitly when this run produced no milestone: `progress` is a
+    // `?: string`, which under `exactOptionalPropertyTypes` cannot be assigned
+    // `undefined`. Mutating a state object that may still hold LAST run's note is
+    // why this deletes rather than skips.
+    if (progressNote === undefined) delete state.progress
+    else state.progress = progressNote
     this.logger.info?.(`automation ${accountWord}: ${state.message}`)
     // The rewards above are already recorded; make sure they are ACROSS the
     // process boundary before this run reports itself done. #98 hit the exact
@@ -1231,12 +1340,16 @@ export class WorkBuddyScheduler {
    *
    * Disabled accounts are excluded here rather than filtered by the caller so a
    * card switch takes effect on the next pass without any event plumbing.
+   *
+   * `job` narrows the set by region scope: the growth jobs are CN-only while
+   * check-in runs on both gateways, so eligibility cannot be decided without
+   * knowing which job is about to run.
    */
-  private accountsInOrder(): WorkBuddyAccount[] {
+  private accountsInOrder(job?: string): WorkBuddyAccount[] {
     const now = Date.now()
     return this.pool.list().filter(account => {
       if (this.pool.isDisabled(account.id)) return false
-      return eligible(account, now)
+      return eligible(account, now, job)
     })
   }
 
@@ -1402,13 +1515,90 @@ export class WorkBuddyScheduler {
    * logs "could not be built" only for exceptions, and a task shape this code
    * does not understand is information, not a fault.
    */
+  /**
+   * Find the expert a task is about, by matching its title against the
+   * marketplace.
+   *
+   * The marketplace listing is ~500 entries across `agent` and `team`, and this
+   * only runs for a task whose deeplink carried no id — at most a handful per
+   * run — so the cost is acceptable. It is not cached because a freshly
+   * published expert must become findable without a restart.
+   *
+   * Matching rules, all of them strict on purpose:
+   *   - the task's title must appear IN the expert's name or profession, or the
+   *     expert's display name must appear in the title (both directions, since
+   *     the board and the marketplace word things differently);
+   *   - comparison ignores case, whitespace and the punctuation vendors sprinkle
+   *     through names;
+   *   - several matches means NO answer. Summoning the wrong agent scores 0, so a
+   *     guess costs an upstream call and still fails — worse than declining.
+   */
+  private async expertIdByKeyword(
+    credential: WorkBuddyCredential,
+    task: WorkBuddyTask,
+  ): Promise<string | undefined> {
+    const normalise = (value: string): string =>
+      value.toLowerCase().replace(/[\s_\-·:：,，.。()（）【】[\]「」]/gu, '')
+    const wanted = normalise(task.title)
+    if (wanted === '') return undefined
+    let candidates: readonly MarketExpert[]
+    try {
+      const [agents, teams] = await Promise.all([
+        this.client.marketExpertList(credential, 'agent'),
+        this.client.marketExpertList(credential, 'team'),
+      ])
+      candidates = [...agents, ...teams]
+    } catch (error: unknown) {
+      // A listing outage must not turn into a failed task: the caller treats a
+      // throw as "this chain could not be built", and the task may still be
+      // claimable through another route.
+      this.logger.warn?.(`automation events ${task.taskCode}: marketplace lookup failed:`, error)
+      return undefined
+    }
+    const matches = candidates.filter(candidate => {
+      const name = normalise(candidate.displayName ?? '')
+      const profession = normalise(candidate.profession ?? '')
+      if (name === '' && profession === '') return false
+      return (name !== '' && (name.includes(wanted) || wanted.includes(name)))
+        || (profession !== '' && (profession.includes(wanted) || wanted.includes(profession)))
+    })
+    if (matches.length !== 1) {
+      if (matches.length > 1) {
+        this.logger.info?.(
+          `automation events ${task.taskCode}: ${String(matches.length)} marketplace experts match "${task.title}", not guessing`,
+        )
+      }
+      return undefined
+    }
+    const found = matches[0]
+    if (found === undefined) return undefined
+    this.logger.info?.(`automation events ${task.taskCode}: resolved expertId ${found.expertId} by keyword "${task.title}"`)
+    return found.expertId
+  }
+
   private async taskExpertChains(
     credential: WorkBuddyCredential,
     task: WorkBuddyTask,
   ): Promise<readonly TaskEventChain[]> {
-    const expertId = expertIdFromJumpUrl(task.jumpUrl)
+    // Two ways to learn the expert id, in order of certainty.
+    //
+    // 1. The task's own deeplink. Best, because it cannot be wrong: the id came
+    //    from the board that scores the task.
+    // 2. A KEYWORD search of the marketplace. Added because #110's
+    //    `WorkBuddy_Valorant` points at a bare `workbuddy://expert` with no query
+    //    at all, so the deeplink path gave up and the task was permanently
+    //    unclaimable — the id existed, it just was not written down in the one
+    //    place this code looked.
+    //
+    // The keyword pass is deliberately conservative: it only runs when the
+    // deeplink had nothing, it only accepts a match on the task's own title, and
+    // it refuses when the title matches more than one expert. A wrong expert id
+    // would summon somebody else's agent and still score 0, so "no answer" is
+    // better than a guess.
+    const fromLink = expertIdFromJumpUrl(task.jumpUrl)
+    const expertId = fromLink ?? await this.expertIdByKeyword(credential, task)
     if (expertId === undefined) {
-      this.logger.warn?.(`automation events ${task.taskCode}: no expertId in jump_url, skipping`)
+      this.logger.warn?.(`automation events ${task.taskCode}: no expertId in jump_url and no marketplace match, skipping`)
       return []
     }
     const expert = expertFromTask(expertId, task.title)
@@ -1520,6 +1710,8 @@ export class WorkBuddyScheduler {
     claimableCount: number
     /** Reward titles collected on this pass, for the card to list. */
     titles: readonly string[]
+    /** Every task the pass considered, with what happened to each. */
+    items: readonly PoolWebAutomationItem[]
   }> {
     const credential = account.credential
     const tasks = await this.client.listTasks(credential)
@@ -1538,23 +1730,50 @@ export class WorkBuddyScheduler {
     let energy = 0
     let claimed = 0
     const titles: string[] = []
+    // One entry per task the board showed, not just the ones that paid. The
+    // distinction is the point: "0 claimed" is three different situations —
+    // everything already collected, nothing claimable yet, or the endpoint
+    // failing — and each needs a different action from the reader.
+    const items: PoolWebAutomationItem[] = []
+    for (const task of refreshed) {
+      const blocked = task.locked === true || task.claimable !== true
+      if (blocked) {
+        items.push({
+          title: task.title === '' ? task.taskCode : task.title,
+          status: 'skipped',
+          // Named so the card can say WHY without a second lookup: a locked task
+          // is waiting on the client-side scoring pass, an unlocked-but-not-
+          // claimable one has simply not been scored yet.
+          note: task.locked === true ? 'locked' : (task.acceptStatus === 'not_accepted' ? 'not accepted' : 'not scored yet'),
+        })
+      }
+    }
     for (const task of claimable) {
       if (this.stopped) break
       const reward = await this.client.claimTaskReward(credential, task.taskCode)
       credit += reward.credit
       energy += reward.energy
+      const label = task.title === '' ? task.taskCode : task.title
       if (reward.credit > 0 || reward.energy > 0) {
         claimed++
         titles.push(task.title)
+        items.push({
+          title: label,
+          status: 'claimed',
+          ...reward.credit > 0 ? { credit: reward.credit } : {},
+          ...reward.energy > 0 ? { energy: reward.energy } : {},
+        })
         this.logger.info?.(`automation claim ${account.label}: ${task.title} +${reward.credit}c +${reward.energy}e`)
       } else {
-        // already_claimed: the reward was collected on an earlier pass.
+        // already_claimed: the reward was collected on an earlier pass. A real
+        // outcome, not a failure — the card would otherwise count it as one.
+        items.push({ title: label, status: 'already' })
         this.logger.info?.(`automation claim ${account.label}: ${task.taskCode} already claimed`)
       }
       if (this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
     }
 
-    return { claimed, credit, energy, claimableCount: claimable.length, titles }
+    return { claimed, credit, energy, claimableCount: claimable.length, titles, items }
   }
 
   /**

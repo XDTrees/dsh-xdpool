@@ -40,7 +40,8 @@ import {
   type ProviderRecord,
   type ProviderSetting,
 } from './providers.ts'
-import { combosOf, providerAuthUsable, providerEnabled, type AggregateStore } from './store.ts'
+import { combosOf, orderApiKeys, providerApiKeys, providerAuthUsable, providerEnabled, type AggregateStore } from './store.ts'
+import { StreamTracker, type UsageCall } from './stats.ts'
 import {
   buildComboCatalog,
   pruneRotation,
@@ -174,7 +175,17 @@ export interface ResolvedAggregateProvider {
   providerId: string
   /** Display name, used in failure messages so the user knows which key to fix. */
   providerName: string
+  /** The preferred key: `apiKeys[0]`, kept as one string for redaction. */
   apiKey: string
+  /**
+   * Every key this provider holds, preferred first.
+   *
+   * One entry is the normal case. More than one is what the pool card's "account
+   * usage" setting distributes over — a vendor that rate-limits a key has the
+   * request retried on the next instead of failing, which is the only reason to
+   * paste several.
+   */
+  apiKeys: readonly string[]
   baseUrl: string
   format: ProviderFormat
   wire: AggregateWire
@@ -251,7 +262,11 @@ export function resolveAggregateProvider(
   if (chatUrl === null) {
     throw new AggregateError('client', `"${provider.name}" has no usable ${provider.format} endpoint`)
   }
-  const apiKey = text(setting.apiKey)
+  // Ordered by the chosen strategy so `apiKeys[0]` is the key to try first. The
+  // retry loop walks the list in this order, which means a non-priority strategy
+  // changes which key leads without changing the fallback order behind it.
+  const apiKeys = orderApiKeys(providerApiKeys(setting), setting.distribution)
+  const apiKey = apiKeys[0] ?? ''
   // The provider's own declared headers first, credential last: a provider that
   // ships a `user-agent` or an `anthropic-beta` keeps it.
   const headers = defaultHeaders(provider, apiKey)
@@ -260,6 +275,15 @@ export function resolveAggregateProvider(
     providerId: provider.id,
     providerName: provider.name,
     apiKey,
+    /**
+     * Every key, preferred first — what rotation reads.
+     *
+     * `apiKey` above stays entry 0 because the redaction helper and every existing
+     * caller want one string. This is the field that makes several pasted keys
+     * mean something: a key the vendor rate-limits is swapped for the next one
+     * instead of failing the request.
+     */
+    apiKeys,
     baseUrl,
     format: provider.format,
     wire: WIRE_BY_FORMAT[provider.format],
@@ -750,26 +774,107 @@ export async function forwardAggregateStreamed(
     signal?: AbortSignal
     onData: (payload: string) => void
     timeoutMs?: number
+    /**
+     * Where to file this call, when the caller keeps a ledger.
+     *
+     * The aggregate lane was the one lane that recorded NOTHING: the ledger's
+     * first column said `国内版` for every row because only the WorkBuddy pool and
+     * the free lane ever called `record`. A user reading "70 calls, all domestic"
+     * while working through OpenCode and Raccoon was seeing a table that was not
+     * wrong so much as blind.
+     *
+     * Filed from HERE rather than from the caller because this function is the
+     * only place that knows the outcome of the physical attempt: it catches the
+     * refusal, sees the successful status, and owns the abort. Filing from the
+     * caller would double-count the retry-on-next-key loop.
+     */
+    usage?: {
+      recorder: { record(call: UsageCall): void }
+      /** The conversation this call belongs to, so retries share one turn. */
+      turnId: string
+    }
   },
 ): Promise<AggregateForwardResult> {
   const model = text(modelId)
   const bodyText = typeof body === 'string' ? body : JSON.stringify({ ...(body as Record<string, unknown>), stream: true })
   const controller = new AbortController()
+  /**
+   * Every payload goes through here first, so the tracker sees the first byte and
+   * any usage frame without the transport caring.
+   *
+   * Wrapped rather than instrumented at each `onData` call site: this function has
+   * four of them, and one missed would silently under-report the turn's tokens.
+   */
+  const emit = (payload: string): void => {
+    tracker.markFirstByte()
+    // `observe` takes a PARSED frame. A payload that does not parse is not this
+    // function's business — it still goes to the caller untouched, and the
+    // tracker simply learns nothing from it — so the failure is swallowed rather
+    // than turned into a transport error for the sake of a usage figure.
+    try {
+      tracker.observe(JSON.parse(payload) as unknown)
+    } catch {
+      // Not JSON (or not a frame we understand): nothing to fold in.
+    }
+    options.onData(payload)
+  }
+  /**
+   * Measures this physical attempt for the ledger.
+   *
+   * Created before the request so `markFirstByte` reports from the moment the
+   * caller asked, and kept in the outer scope so the `finally` can file the call
+   * whether it succeeded or threw — a broken stream is a failed call from the
+   * user's side of the wire, and the panel must count it rather than show nothing.
+   */
+  const tracker = new StreamTracker()
+  let delivered = false
   const timeoutMs = options.timeoutMs ?? TURN_TIMEOUT_MS
   const onCallerAbort = (): void => controller.abort()
   options.signal?.addEventListener('abort', onCallerAbort, { once: true })
   try {
-    const response = await fetch(resolved.chatUrl, {
-      method: 'POST',
-      headers: { ...resolved.headers, accept: 'text/event-stream' },
-      body: bodyText,
-      redirect: 'error',
-      signal: controller.signal,
-    })
-    const retryAfter = retryAfterMs(response)
-    if (!response.ok) {
+    /**
+     * POST, rotating the key when the vendor refuses the one we used.
+     *
+     * A provider holding several keys is a user who already knows a single key
+     * gets rate-limited. Failing the turn on a 429/401 from key #1 wastes the very
+     * thing they set up: the alternates. So a REFUSAL that looks like "this key,
+     * not this request" retries with the next key.
+     *
+     * Only the request-credential classes retry — `soft_rate` (429) and
+     * `session_dead` (401). A `client` (400), `not_found` (404), `hard_credit`
+     * (402) or `server` (5xx) failure is about the request or the account balance
+     * and would fail identically on every key, so retrying would only multiply the
+     * wait. Keys are tried in order and each at most once, so the attempt count is
+     * bounded by how many the user pasted.
+     */
+    const keys = resolved.apiKeys.length === 0 ? [''] : resolved.apiKeys
+    let response!: Response
+    let usedKey = resolved.apiKey
+    for (const [index, key] of keys.entries()) {
+      usedKey = key
+      // The provider's own headers, with THIS key swapped in. `defaultHeaders`
+      // produced the map for key 0, so the credential entry is replaced rather
+      // than the whole map rebuilt (which would drop a `user-agent` or an
+      // `anthropic-beta` the provider declared).
+      const headers: Record<string, string> = { ...resolved.headers, accept: 'text/event-stream' }
+      if (resolved.apiKey !== '') {
+        for (const [name, value] of Object.entries(headers)) {
+          if (value === resolved.apiKey) headers[name] = key
+        }
+      }
+      response = await fetch(resolved.chatUrl, {
+        method: 'POST',
+        headers,
+        body: bodyText,
+        redirect: 'error',
+        signal: controller.signal,
+      })
+      if (response.ok) break
+      const retryAfter = retryAfterMs(response)
       const refusal = await response.text().catch(() => '')
-      throw classifyUpstream(response.status, refusal, retryAfter, resolved.apiKey)
+      const failure = classifyUpstream(response.status, refusal, retryAfter, key)
+      const rotatable = failure.kind === 'soft_rate' || failure.kind === 'session_dead'
+      if (!rotatable || index === keys.length - 1) throw failure
     }
     if (response.body === null) throw new AggregateError('server', 'the provider returned no body', response.status)
     const head = await readSseHead(response.body, controller.signal, timeoutMs)
@@ -777,7 +882,8 @@ export async function forwardAggregateStreamed(
     if (head.shape === 'sse') {
       // Raw payloads, straight through: the wire's own decoder reads them, so
       // nothing is rewritten between the provider and the host.
-      for (const payload of head.payloads) options.onData(payload)
+      for (const payload of head.payloads) emit(payload)
+      delivered = true
       return { status: response.status }
     }
     let raw = head.text
@@ -815,9 +921,14 @@ export async function forwardAggregateStreamed(
       )
     }
     if (isRecord(payload) && (payload.error !== undefined || payload.type === 'error')) {
-      throw classifyUpstream(response.status, raw, retryAfter, resolved.apiKey)
+      // `retryAfter` is recomputed here rather than carried out of the retry loop:
+      // the loop keeps only the SUCCESSFUL response, so its headers are what this
+      // frame arrived with. Reading it from a wider scope would pick up whatever
+      // the last REFUSED attempt sent, which is a different request's advice.
+      throw classifyUpstream(response.status, raw, retryAfterMs(response), usedKey)
     }
-    for (const frame of synthesisedFrames(resolved.wire, payload, model)) options.onData(frame)
+    for (const frame of synthesisedFrames(resolved.wire, payload, model)) emit(frame)
+    delivered = true
     return { status: response.status }
   } catch (error: unknown) {
     if (error instanceof AggregateError) throw error
@@ -832,6 +943,28 @@ export async function forwardAggregateStreamed(
     )
   } finally {
     options.signal?.removeEventListener('abort', onCallerAbort)
+    // File the call exactly once, whether it succeeded or threw.
+    //
+    // `delivered` is what separates "answered" from "refused": a stream that ends
+    // after emitting frames is a success even if the closing frame never arrived,
+    // and a 429 is a failure even though this function saw a response object. The
+    // ledger's `ok` column drives the per-account and per-model success counts, so
+    // getting it backwards would report a working vendor as broken.
+    tracker.finish(Date.now())
+    options.usage?.recorder.record({
+      // The CHANNEL, by provider id — the same spelling the aggregate page and the
+      // model picker use. This is the field that stops every row reading `国内版`.
+      channel: resolved.providerId,
+      // No WorkBuddy region applies: this call did not go to either gateway.
+      region: '',
+      model,
+      turnId: options.usage.turnId,
+      at: Date.now(),
+      ok: delivered,
+      ...(tracker.ttftMs === undefined ? {} : { ttftMs: tracker.ttftMs }),
+      ...(tracker.decodeMs === undefined ? {} : { decodeMs: tracker.decodeMs }),
+      ...(tracker.usage === undefined ? {} : { usage: tracker.usage }),
+    })
   }
 }
 /**

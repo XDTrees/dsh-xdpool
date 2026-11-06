@@ -871,6 +871,20 @@ describe('the free lane transport', () => {
  * looks exactly like a working one. The seam takes a `Response`, which is all
  * `freeFetch` ever returns, and nothing outside this closure is involved.
  */
+/**
+ * A catalog with the lane switched ON.
+ *
+ * The lane defaults off (it is a shared third-party endpoint nobody asked for),
+ * so every test that asserts something about the ROSTER has to say so. Using the
+ * factory instead of repeating `setEnabled(true)` keeps the intent at the call
+ * site: these tests are about what the lane does when it is in use.
+ */
+function enabledCatalog(): FreeCatalog {
+  const catalog = new FreeCatalog()
+  catalog.setEnabled(true)
+  return catalog
+}
+
 async function withListing(
   answer: () => Response | (() => Promise<Response>),
   run: () => Promise<void>,
@@ -895,6 +909,37 @@ function listingReply(ids: readonly string[]): Response {
 }
 
 describe('the free lane catalog', () => {
+  it('contributes NOTHING until it is switched on', () => {
+    // The lane is a shared third-party endpoint with no credential of the user's
+    // own, so it defaults off — it used to drop a group into the model picker
+    // that nothing in the UI could remove (the "关不掉" report). `current()` is
+    // the offering; the roster the page explains is still available.
+    const catalog = new FreeCatalog()
+    expect(catalog.enabled()).toBe(false)
+    expect(catalog.current()).toEqual([])
+    // …and the roster is not lost: the aggregate page still lists what it could
+    // serve, which is what makes "off" a choice rather than an erasure.
+    expect(catalog.allRows().length).toBeGreaterThan(0)
+
+    catalog.setEnabled(true)
+    expect(catalog.enabled()).toBe(true)
+    expect(catalog.current().length).toBeGreaterThan(0)
+
+    catalog.setEnabled(false)
+    expect(catalog.current()).toEqual([])
+  })
+
+  it('tells listeners when the switch flips, so a picker updates without a poll', () => {
+    const catalog = new FreeCatalog()
+    let changes = 0
+    const off = catalog.onChange(() => { changes += 1 })
+    catalog.setEnabled(true)
+    catalog.setEnabled(true) // idempotent: no second notification
+    catalog.setEnabled(false)
+    expect(changes).toBe(2)
+    off()
+  })
+
   it('advertises only the免密 ids, prefixed for routing', () => {
     // The prefix is what the shim routes on, so it is applied in one place.
     expect(isFreeLane('space-bunny-free')).toBe(true)
@@ -935,7 +980,7 @@ describe('the free lane catalog', () => {
 
   it('starts from a static roster so an unreachable gateway still answers', () => {
     // An empty group is the one shape a user reads as "the plugin is broken".
-    const catalog = new FreeCatalog()
+    const catalog = enabledCatalog()
     expect(catalog.current().length).toBeGreaterThan(0)
     expect(catalog.hasRows()).toBe(true)
     expect(FALLBACK_FREE_MODEL_IDS.length).toBeGreaterThan(0)
@@ -951,7 +996,7 @@ describe('the free lane catalog', () => {
  * server, so the failure path is the one under test and the duration is ours.
  */
 it('keeps its rows when a listing refresh fails', async () => {
-  const catalog = new FreeCatalog()
+  const catalog = enabledCatalog()
   const before = catalog.current().length
   expect(before).toBeGreaterThan(0)
 
@@ -978,7 +1023,7 @@ it('keeps its rows when a listing refresh fails', async () => {
 })
 
 it('takes a working listing when one arrives, and keeps it through a later failure', async () => {
-  const catalog = new FreeCatalog()
+  const catalog = enabledCatalog()
   await withListing(() => listingReply(['space-bunny-free', 'union-alpha']), async () => {
     await catalog.refresh({ session: 'ses_0000000000000000000000000000' })
   })
@@ -1000,7 +1045,7 @@ it('takes a working listing when one arrives, and keeps it through a later failu
 })
 
 it('records why a refresh failed, without clearing the rows it already had', async () => {
-  const catalog = new FreeCatalog()
+  const catalog = enabledCatalog()
   const before = catalog.current().length
   await withListing(() => new Response('gone', { status: 503 }), async () => {
     await catalog.refresh({ session: 'ses_0000000000000000000000000000' }).catch(() => null)

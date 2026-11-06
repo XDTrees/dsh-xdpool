@@ -253,6 +253,14 @@ export const POOL_CARD_CSS = `
 .dsm-xdpool-models-title{margin:0;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:14px;font-weight:600;line-height:20px}
 .dsm-xdpool-models-summary{margin:2px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
 .dsm-xdpool-model-list{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;overflow:hidden}
+/* The expander under a collapsed model list. A full-width quiet strip rather
+   than a floating link: it belongs to the list above it, and a centred pill
+   would read as a separate action. */
+.dsm-xdpool-model-more{margin-top:8px;width:100%;appearance:none;padding:8px 12px;border-radius:10px;border:1px dashed color-mix(in srgb, var(--dsw-alias-border-l2,#36373b) 92%, transparent);background:transparent;color:var(--dsw-alias-label-secondary,#c6c9d0);font:inherit;font-size:12px;line-height:17px;font-weight:600;cursor:pointer;transition:color .18s ease, border-color .18s ease, background .18s ease}
+.dsm-xdpool-model-more:hover{color:var(--dsw-alias-state-business-primary,#5686fe);border-color:color-mix(in srgb, var(--dsw-alias-state-business-primary,#5686fe) 48%, transparent);background:color-mix(in srgb, var(--dsw-alias-state-business-primary,#5686fe) 7%, transparent)}
+/* "N saved models not offered right now": the one line that stops a roster
+   change from reading as lost settings. Amber, not red — nothing is broken. */
+.dsm-xdpool-region-pane-warn{font-size:11px;line-height:15px;color:color-mix(in srgb, #f0a441 78%, var(--dsw-alias-label-secondary,#c6c9d0));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px;cursor:help}
 .dsm-xdpool-model{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;padding:10px 12px;background:var(--dsw-alias-bg-layer-2,#232529);transition:opacity .16s}
 .dsm-xdpool-model+.dsm-xdpool-model{border-top:1px solid var(--dsw-alias-border-l2,#36373b)}
 .dsm-xdpool-model-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
@@ -300,6 +308,7 @@ export const POOL_CARD_CSS = `
 .dsm-xdpool-usage-model{font-size:12px;font-weight:600;word-break:break-all}
 .dsm-xdpool-usage-numbers{color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:17px;word-break:break-word}
 .dsm-xdpool-usage-note{margin:0;color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:17px}
+.dsm-xdpool-sidebar-row-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
 .dsm-xdpool-models-actions{display:flex;align-items:center;gap:8px;flex:none}
 /* "Built-in list (offline)" chip: a warning tint, since the user is looking at
    a SHORTER roster than the gateway offers and may wonder where models went. */
@@ -307,6 +316,17 @@ export const POOL_CARD_CSS = `
 /* Automation: run-now button and the per-job progress line. */
 .dsm-xdpool-auto-run{flex:none}
 .dsm-xdpool-auto-job-detail{grid-column:1/-1;color:var(--dsw-alias-label-tertiary,#9aa0a8);font-size:11px;line-height:16px}
+/* Per-item counts, grouped by status. Deliberately quieter than the detail
+   line above: the sentences are the narrative, these are the tally. Colour
+   carries the meaning so four chips stay scannable — grey for a non-event, amber
+   for "not yet" (the only one that implies something may still happen), red only
+   for a real failure. */
+.dsm-xdpool-auto-job-items{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.dsm-xdpool-auto-job-item{appearance:none;padding:1px 7px;border-radius:999px;border:1px solid transparent;font-size:10px;line-height:15px;font-weight:600;letter-spacing:.01em;cursor:default;background:color-mix(in srgb, var(--dsw-alias-label-tertiary,#9aa0a8) 12%, transparent);color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-xdpool-auto-job-item-claimed{background:color-mix(in srgb, #3ec98a 16%, transparent);border-color:color-mix(in srgb, #3ec98a 38%, transparent);color:color-mix(in srgb, #3ec98a 86%, var(--dsw-alias-label-primary,#e9ebef))}
+.dsm-xdpool-auto-job-item-already{background:color-mix(in srgb, var(--dsw-alias-label-tertiary,#9aa0a8) 10%, transparent);color:var(--dsw-alias-label-tertiary,#9aa0a8)}
+.dsm-xdpool-auto-job-item-skipped{background:color-mix(in srgb, #f0a441 14%, transparent);border-color:color-mix(in srgb, #f0a441 34%, transparent);color:color-mix(in srgb, #f0a441 82%, var(--dsw-alias-label-primary,#e9ebef))}
+.dsm-xdpool-auto-job-item-failed{background:color-mix(in srgb, #ef5f5f 16%, transparent);border-color:color-mix(in srgb, #ef5f5f 40%, transparent);color:color-mix(in srgb, #ef5f5f 86%, var(--dsw-alias-label-primary,#e9ebef))}
 /* Credit packages ride on the figures line above the check-in row. */
 .dsm-xdpool-panel-packages{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
 /* Check-in: the action and its state on ONE line. It was a centred column under
@@ -913,13 +933,20 @@ export const SHELL_CSS = `
 /* The invite dialog. Positioned against the shell (which is the containing
    block) so it covers the card and nothing of the host dialog around it. */
 .dsm-xdpool-groupmask{position:absolute;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;border-radius:16px;background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 72%, transparent)}
-.dsm-xdpool-groupcard{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:340px;padding:16px 18px 18px;border-radius:16px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 86%, transparent);background:var(--dsw-alias-bg-layer-2,#1c1e22);box-shadow:0 18px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 7%)}
+.dsm-xdpool-groupcard{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:520px;padding:16px 18px 18px;border-radius:16px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 86%, transparent);background:var(--dsw-alias-bg-layer-2,#1c1e22);box-shadow:0 18px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 7%)}
+/* The two codes sit side by side and WRAP to a column before either shrinks:
+   a QR squeezed narrower than its module grid is a QR that stops scanning, so
+   the layout gives up the row rather than the size. */
+.dsm-xdpool-groupcodes{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;width:100%}
+.dsm-xdpool-groupcode{display:flex;flex-direction:column;align-items:center;gap:6px;flex:0 0 auto}
+.dsm-xdpool-groupcode-label{font-size:12px;line-height:16px;font-weight:650;color:var(--dsw-alias-label-primary,#e8e8ea)}
+.dsm-xdpool-groupcode-step{max-width:220px;font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary,#8a90a0);text-align:center}
 .dsm-xdpool-groupcardhead{display:flex;align-items:center;gap:10px;width:100%;font-size:13px;line-height:18px;color:var(--dsw-alias-label-primary,#e8e8ea)}
 .dsm-xdpool-groupclose{margin-left:auto;appearance:none;border:none;background:transparent;padding:0 4px;font:inherit;font-size:18px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8a90a0);cursor:pointer;border-radius:8px}
 .dsm-xdpool-groupclose:hover{color:var(--dsw-alias-label-primary,#e8e8ea)}
 /* A white plate under the code, always: a QR inverted onto a dark panel scans
    on some phones and not others, and there is no way to tell which from here. */
-.dsm-xdpool-groupqr{display:block;width:260px;height:260px;border-radius:12px;background:#fff;padding:6px;object-fit:contain}
+.dsm-xdpool-groupqr{display:block;width:220px;height:220px;border-radius:12px;background:#fff;padding:6px;object-fit:contain}
 .dsm-xdpool-groupnote{width:100%;margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary,#8a90a0);text-align:center}
 .dsm-xdpool-navtabs{grid-column:1/-1;position:relative;display:flex;flex-wrap:wrap;gap:2px;padding:3px;border-radius:13px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l1,#ffffff14) 80%, transparent);background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 62%, transparent);box-shadow:inset 0 1px 2px rgb(0 0 0 / 4%)}
 /* A raised surface, not a tinted wash: the glider has to read as "this one is
@@ -989,6 +1016,22 @@ export const ROUTING_CARD_CSS = `
 /* Members render as an ordered, numbered list: order IS the semantics of a
    chain, so a two-column tag cloud would throw away the thing that matters. */
 .dsm-xdpool-rt-members{display:flex;flex-direction:column;gap:5px;margin:0;padding:0;list-style:none}
+/* Collapsed chain: one capsule per platform, numbered by priority.
+   A wrapping row, not a list — these are labels to scan, not rows to operate, and
+   the count after the dot is what makes "tries TRAE first, one model there" legible
+   without opening the editor. */
+.dsm-xdpool-rt-lanes{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 0;padding:0;list-style:none}
+.dsm-xdpool-rt-lane{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 62%, transparent);font-size:12px;line-height:18px}
+.dsm-xdpool-rt-lanename{color:var(--dsw-alias-label-primary,#e9ebef);font-weight:560;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsm-xdpool-rt-lanecount{color:var(--dsw-alias-label-tertiary,#9aa0a8);font-variant-numeric:tabular-nums}
+/* Editor: one box per platform, visually nested so "these models belong to that
+   platform" is spatial rather than something the reader has to infer from ids. */
+.dsm-xdpool-rt-laneboxes{display:flex;flex-direction:column;gap:10px}
+.dsm-xdpool-rt-lanebox{display:flex;flex-direction:column;gap:8px;padding:11px 12px;border-radius:12px;border:1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary,#5686fe) 26%, var(--dsw-alias-border-l2,#36373b));background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 58%, transparent)}
+.dsm-xdpool-rt-lanebox-head{display:flex;align-items:center;gap:8px;min-width:0}
+.dsm-xdpool-rt-lanebox-name{font-size:13px;line-height:19px;font-weight:640;color:var(--dsw-alias-label-primary,#e9ebef);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsm-xdpool-rt-laneacts{display:flex;flex-wrap:wrap;gap:6px}
+.dsm-xdpool-rt-laneacts .dsm-xdpool-rt-drop{min-width:0}
 .dsm-xdpool-rt-member{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:9px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 72%, transparent)}
 .dsm-xdpool-rt-ord{flex:none;width:19px;height:19px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:19px;color:var(--dsw-alias-label-tertiary,#8a90a0);border:1px solid var(--dsw-alias-border-l2,#36373b);font-variant-numeric:tabular-nums}
 .dsm-xdpool-rt-mid{flex:1 1 auto;min-width:0;font-family:var(--dsw-alias-font-mono,ui-monospace,Menlo,Consolas,monospace);font-size:11px;line-height:17px;color:var(--dsw-alias-label-primary,#e8e8ea);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1194,6 +1237,14 @@ export const SHARED_CARD_CSS = `
 .dsm-xdpool-table td{padding:7px 10px;border-bottom:1px solid color-mix(in srgb, var(--dsw-alias-border-l1,#ffffff14) 62%, transparent);color:var(--dsw-alias-label-secondary,#c6c9d0);font-variant-numeric:tabular-nums}
 .dsm-xdpool-table tbody tr:last-child td{border-bottom:none}
 .dsm-xdpool-table tbody tr[data-ok="false"] td{color:var(--dsw-alias-state-error-primary,#ef4444)}
+/* Numeric columns, header AND cells together.
+   The bare .dsm-xdpool-num rule could never win: .dsm-xdpool-table th is (0,1,1)
+   and .dsm-xdpool-num is (0,1,0), so every numeric HEADER stayed left-aligned
+   while its cells went right — the column read as shifted against its own title.
+   Both selectors below out-specify the th rule, so the pair moves together and
+   the table lines up. */
+.dsm-xdpool-table th.dsm-xdpool-num,
+.dsm-xdpool-table td.dsm-xdpool-num,
 .dsm-xdpool-num{text-align:right;font-variant-numeric:tabular-nums}
 .dsm-xdpool-ellipsis{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 

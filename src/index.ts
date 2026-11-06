@@ -40,7 +40,10 @@ import {
   buildComboCatalog,
   comboId,
   COMBO_DEFAULT_CONTEXT_WINDOW,
+  siblingRoutes,
+  splitPlatforms,
   type ComboSetting,
+  type HostModelRow,
 } from './combos.ts'
 import {
   clearProviderSetting,
@@ -72,6 +75,7 @@ import type {
   PoolWebRelayStatus,
 } from './status-paths.ts'
 import { describeError, recordStartupNote } from './diagnostics.ts'
+import { applyLaneSelection, laneSelectionFrom } from './model-switch-bridge.ts'
 import { probeModelConnectivity } from './model-probe.ts'
 /**
  * One aggregate catalog row as the card renders it.
@@ -124,6 +128,14 @@ function combosStatusOf(
   store: AggregateStore,
   catalog: AggregateCatalog,
   poolRows: readonly WorkBuddyModelInfo[],
+  /**
+   * Models served by the 扫码登录 channels, from the host's own registry.
+   *
+   * Passed in rather than fetched here because this function is synchronous and the
+   * host's listing is not. Omitted or empty simply means "no channel member is
+   * offered", which is the behaviour before this parameter existed.
+   */
+  hostRows: readonly HostModelRow[] = [],
 ): PoolWebCombosStatus {
   const chains = combosOf(store)
   const providerRows = catalog.providerRows()
@@ -138,6 +150,10 @@ function combosStatusOf(
       usable: true,
       contextWindow: row.contextWindow,
       supportsImages: row.supportsImages,
+      // A pool model has no sibling routes: the other lanes are other vendors,
+      // and the pool's own two lanes (`buddy`/`workbuddy`) are a region split of
+      // one account pool rather than an alternate supplier.
+      siblings: [] as readonly string[],
     })),
     ...providerRows.map(row => {
       const setting = settings.get(row.providerId)
@@ -151,17 +167,50 @@ function combosStatusOf(
           : providerAuthUsable(provider, setting),
         contextWindow: row.contextWindow,
         supportsImages: row.supportsImages,
+        // Every OTHER lane serving the same model, this row's provider kept
+        // primary. This is what makes "one model, several routes" a chain the card
+        // can build without the user hunting for the same name under each vendor.
+        siblings: siblingRoutes(row.id, { pool: poolRows, aggregate: providerRows }, row.providerId)
+          .filter(candidate => candidate !== row.id),
       }
     }),
+    /**
+     * The 扫码登录 channels.
+     *
+     * This is the block whose ABSENCE made the routing page offer exactly one
+     * platform while the login page showed thirteen. Their ids are
+     * `<channel>:<model>`, which the shim already resolves to its fifth lane, so a
+     * chain naming one runs through the host's own adapter registry — the same
+     * credential and endpoint the model picker uses.
+     *
+     * `usable: true` because a row only appears in this list once the host has
+     * already listed it for that channel, i.e. the account exists. The window and
+     * image flag are unknown (the host's listing publishes neither), so they are
+     * left at the documented defaults rather than invented.
+     */
+    ...hostRows.map(row => ({
+      id: row.id,
+      name: row.name,
+      owner: row.channel,
+      usable: true,
+      contextWindow: COMBO_DEFAULT_CONTEXT_WINDOW,
+      supportsImages: false,
+      siblings: [] as readonly string[],
+    })),
   ]
   const known = new Set(candidates.map(candidate => candidate.id))
   return {
     combos: chains.map(chain => {
-      const resolved = buildComboCatalog([chain], { pool: poolRows, aggregate: providerRows })[0]
+      const resolved = buildComboCatalog([chain], { pool: poolRows, aggregate: providerRows, host: hostRows })[0]
       return {
         id: resolved?.id ?? comboId(chain.name),
         name: chain.name,
         models: resolved?.models ?? [],
+        // Grouped from what the ROUTER can actually serve, not from the stored
+        // groups: a platform whose every model disappeared would otherwise render
+        // as a card with nothing in it, and the editor would offer to reorder
+        // members that no longer exist.
+        platforms: splitPlatforms(resolved?.models ?? []),
         missing: chain.models.filter(modelId => !known.has(modelId)),
         strategy: resolved?.strategy ?? chain.strategy ?? 'fallback',
         stickyLimit: resolved?.stickyLimit ?? chain.stickyLimit ?? 1,
@@ -377,6 +426,15 @@ export interface Config {
    * does not wipe what the automation already earned.
    */
   automationEarnings?: AutomationLedger
+  /**
+   * Whether the shared 免密 free lane contributes models.
+   *
+   * Absent reads as OFF. It is the only lane that defaults off: it is a shared
+   * third-party endpoint with no credential of the user's own, so leaving it on
+   * dropped a group into the model picker that nothing in the UI could remove
+   * (the aggregate switch does not govern it — it is not an aggregate provider).
+   */
+  freeLane?: boolean
 }
 /** One region's saved model selection. */
 export interface ModelSelectionConfig {
@@ -554,7 +612,26 @@ export const Config: z<Config> = z.object({
   modelSelectionCn: asVolatile(modelSelectionSchema.description('Model selection for the domestic gateway')),
   modelSelectionGlobal: asVolatile(modelSelectionSchema.description('Model selection for the international gateway')),
   automation: asVolatile(automationSchema.description('Daily points automation (activity report, task claiming, check-in)')),
-  automationEarnings: asVolatile(z.any().description('Automation earnings ledger (written by the scheduler)'))
+  automationEarnings: asVolatile(z.any().description('Automation earnings ledger (written by the scheduler)')),
+  // Issue #70. Read by the client bundle (which owns the sidebar registration)
+  // as well as stored here, so it must be a plain schema field rather than a
+  // scheduler-shaped blob: the settings mirror is the only channel both sides
+  // share, and an undeclared key would be stripped on the way in.
+  sidebarRow: asVolatile(z.boolean().default(true).description('Show the XD Pool entry in the left sidebar (the Settings page keeps working either way)')),
+  /**
+   * The 免密 free lane (`free:` models).
+   *
+   * OFF unless set, and it is the only lane that works that way. It is a shared
+   * third-party endpoint with no credential of its own, so there is nothing for
+   * a user to "configure" — it simply appears in the picker or does not. On by
+   * default it added a group nobody asked for that the aggregate switch does not
+   * govern (it is not an aggregate provider), leaving no way to remove it
+   * without editing a file. Reported as "关不掉，应该默认是关闭的".
+   */
+  freeLane: asVolatile(
+    z.boolean().default(false)
+      .description('Offer the shared 免密 free models (the "XD Pool · 免费模型" group). Off by default: it is a third-party endpoint with no key of your own.'),
+  )
 })
 /** Everything the CLI needs from a live plugin instance. */
 export interface WorkBuddyPoolApi {
@@ -635,6 +712,16 @@ function warnOnPiAiGenerationMismatch(ctx: Context): void {
     // mismatch it looks for.
   }
 }
+/**
+ * Late-bound switch for the 免密 lane, set once the catalog exists.
+ *
+ * `applyConfigFromSource` is defined before the catalog is built and can be
+ * called at any point after, so it cannot close over the object directly without
+ * a declaration-order dance. A one-line indirection states the ordering instead
+ * of leaving it to be inferred: before the catalog exists this is a no-op, and
+ * the catalog applies the current value itself the moment it is built.
+ */
+let freeLaneSwitch: (enabled: boolean) => void = () => {}
 /**
  * Start the loopback endpoint, register the `xdpool` provider, and
  * discover accounts. The provider registers only after `shim.ready` resolves,
@@ -777,8 +864,17 @@ export function apply(ctx: Context, config: Config = {}): void {
     setSource(source: () => Config) { rawCurrent = source },
     onChange() { applyConfigFromSource() },
   }
-  const applyConfigFromSource = (): void => {
-    const { authFile, cooldownMs, distribution, disabledAccountIds, creditReserves, enabledModelIds, imageModelIds, contextBudgets, modelSelectionCn, modelSelectionGlobal, automation } = current()
+  const applyConfigFromSource = (): void => {    const { authFile, cooldownMs, distribution, disabledAccountIds, creditReserves, enabledModelIds, imageModelIds, contextBudgets, modelSelectionCn, modelSelectionGlobal, automation, freeLane: freeLaneEnabled } = current()
+    // The 免密 lane's switch, applied here with everything else so a save takes
+    // effect without a restart. Absent reads as OFF: the lane is a shared
+    // third-party endpoint with no key of the user's own, and it used to appear
+    // in the picker before anyone asked for it (the "关不掉" report).
+    //
+    // Read through a module-scope holder rather than the local `freeCatalog`:
+    // this closure is defined before that catalog exists (it is built with the
+    // shims further down), and the holder makes the ordering explicit instead of
+    // relying on the call never happening early.
+    freeLaneSwitch(freeLaneEnabled === true)
     core.pool.applyConfig({
       ...authFile === undefined
         ? {}
@@ -826,6 +922,27 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
     core.catalogs.cn.applySelection(modelSelectionCn ?? fallbackSelection('cn'))
     core.catalogs.global.applySelection(modelSelectionGlobal ?? fallbackSelection('global'))
+    // Publish the same allow-lists where the vendored pack can read them (#121).
+    //
+    // The card's selection and the pack's `disabledModels` were two switches that
+    // never talked: the pool's own catalog honoured `modelSelectionCn`, while the
+    // HOST's model picker rendered whatever `listModels()` returned — and for
+    // `buddy`/`workbuddy` that was always everything, because those two lanes are
+    // exempt from the startup silence pass that fills `disabledModels` for the
+    // other eleven channels. A user who ticked one model and saved saw all sixteen
+    // in the picker.
+    //
+    // The bridge lives here because this is the one place both documents are
+    // already resolved: publishing after `applySelection` means the pack sees
+    // exactly what the gateway serves.
+    //
+    // `undefined` is passed through on purpose — it means "no restriction", and
+    // collapsing it to `[]` would blank the picker for anyone who never touched
+    // the card.
+    applyLaneSelection(laneSelectionFrom(
+      core.catalogs.cn.currentSelection().enabledModelIds,
+      core.catalogs.global.currentSelection().enabledModelIds,
+    ))
     // The automation reads the same settings document, so a save on the card
     // re-arms it without a host restart. An absent block means off, which is why
     // this passes `enabled: false` explicitly rather than leaving it undefined.
@@ -1057,6 +1174,11 @@ function canonicalJson(value: unknown): string {
   // listing has not landed must still answer the picker, because an empty group
   // is the one thing a user reads as "the plugin is broken".
   const freeCatalog = new FreeCatalog()
+  // Bind the switch now that the catalog exists. `applyConfigFromSource` runs
+  // before this line (the settings source is installed earlier), so the setter
+  // is applied once here with whatever the config already said.
+  freeLaneSwitch = (enabled: boolean): void => { freeCatalog.setEnabled(enabled) }
+  freeLaneSwitch(current().freeLane === true)
   const freeLane = createFreeLaneSource(freeCatalog, ctx.logger, usageRecorder)
   /**
    * The login channels, for the LAN gateway.
@@ -1095,6 +1217,36 @@ function canonicalJson(value: unknown): string {
    * object has no reason to carry a list it never consults.
    */
   const lanModelsOf = (): readonly string[] | undefined => readAggregateSettingsSync().relay?.models
+  /**
+   * The login channels' models, as the route editor needs them.
+   *
+   * `channelLane.rows()` already caches per channel (60s TTL) and de-duplicates
+   * concurrent requests, so calling it per routing-document request is cheap — but
+   * it is ASYNC, and the chain table is built synchronously. Hence this helper: the
+   * callers that can await do, and a failed listing degrades to the previous answer
+   * rather than emptying the platform list (a channel that cannot be listed right
+   * now must not make its models disappear from every chain).
+   *
+   * The two pool-owned channels are excluded by `channelLane` itself, so the same
+   * model cannot appear once as a pool row and again as a channel row.
+   */
+  let hostRosterCache: readonly HostModelRow[] = []
+  const hostRoster = async (): Promise<readonly HostModelRow[]> => {
+    try {
+      const rows = await channelLane.rows()
+      hostRosterCache = rows.map(row => ({
+        id: row.id,
+        channel: row.channel,
+        modelId: row.modelId,
+        name: row.name,
+      }))
+    } catch (error: unknown) {
+      // Keep whatever the last successful listing produced. An empty list here
+      // would silently drop every channel member from every chain on screen.
+      ctx.logger?.warn?.('dsh-xdpool: could not list login-channel models:', error)
+    }
+    return hostRosterCache
+  }
   const shims = {
     cn: createWorkBuddyShim({
       pool: core.pool,
@@ -1288,6 +1440,9 @@ function canonicalJson(value: unknown): string {
         await updateProviderSetting(patch.providerId, {
           ...patch.enabled === undefined ? {} : { enabled: patch.enabled },
           ...patch.apiKey === undefined ? {} : { apiKey: patch.apiKey },
+          ...patch.apiKeys === undefined ? {} : { apiKeys: patch.apiKeys },
+          ...patch.appendApiKey === undefined ? {} : { appendApiKey: patch.appendApiKey },
+          ...patch.distribution === undefined ? {} : { distribution: patch.distribution },
           ...patch.baseUrl === undefined ? {} : { baseUrl: patch.baseUrl },
           ...patch.models === undefined ? {} : { models: patch.models },
         })
@@ -1503,15 +1658,25 @@ function canonicalJson(value: unknown): string {
     // two sources for the same list could disagree, and a chain that resolved
     // against a different roster than the one displayed is exactly the kind of
     // self-contradiction this panel must not have.
-    combosDocument: (): PoolWebCombosStatus =>
-      combosStatusOf(readAggregateSettingsSync(), aggregateCatalog, core.catalogs.cn.current()),
+    combosDocument: async (): Promise<PoolWebCombosStatus> =>
+      combosStatusOf(
+        readAggregateSettingsSync(),
+        aggregateCatalog,
+        core.catalogs.cn.current(),
+        await hostRoster(),
+      ),
     saveCombos: async (raw: unknown): Promise<PoolWebCombosStatus> => {
       await writeCombos(raw)
       // Refresh before answering, so a chain written here is pickable in the
       // same breath instead of after a restart. `writeCombos` normalises on the
       // way in, so what comes back out is what will actually be served.
       await aggregateCatalog.refresh()
-      return combosStatusOf(readAggregateSettingsSync(), aggregateCatalog, core.catalogs.cn.current())
+      return combosStatusOf(
+        readAggregateSettingsSync(),
+        aggregateCatalog,
+        core.catalogs.cn.current(),
+        await hostRoster(),
+      )
     },
       /**
      * Relay state plus the gateway's model picker.
@@ -1639,7 +1804,13 @@ function canonicalJson(value: unknown): string {
         // service first owns it. So the wiring is attempted either way, and a
         // loss is not an error: it is just another reader of the same object.
         if (stopped) return
-        void adoptChannelPackAccounts(ctx, core.pool, ctx.logger)
+        // `scoped`, not `ctx`: the pack runs on this injected fiber and
+        // `ctx.provide('accountPool', …)` publishes into THAT fiber's service
+        // store. Cordis scopes the store per isolate, so reading it from the
+        // outer apply ctx finds nothing — and the pool then silently keeps
+        // serving only the desktop credentials, which is exactly how the scanned
+        // accounts went missing while the channel cards still rendered.
+        void adoptChannelPackAccounts(scoped, core.pool, ctx.logger)
       })
   })
   // Register once BOTH loopback listeners hold a port: each adapter reads its

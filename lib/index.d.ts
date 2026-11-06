@@ -1067,6 +1067,16 @@ export declare class WorkBuddyAccountPool {
    */
   private disabledIds;
   /**
+   * The account ids the store held after the last successful write.
+   *
+   * Read back on the next scan to say WHICH accounts left, not just how many.
+   * The list is written wholesale, so a scan that does not find an account
+   * deletes it — and that account's credential is then unrecoverable without a
+   * fresh sign-in (#117). `undefined` until the first write, so the first scan
+   * never reports every account as "leave".
+   */
+  private lastPersistedIds;
+  /**
    * Account ids the user threw out of the pool for good.
    *
    * Enforced BEFORE the credential is parsed: `scan()` skips a file whose
@@ -1143,6 +1153,11 @@ export declare class WorkBuddyAccountPool {
    * A function rather than a list because that pool is mounted asynchronously
    * and can be re-read on demand; `undefined` means "no such source", which is
    * the state every test and every pre-mount startup is in.
+   *
+   * The `| undefined` is explicit because `applyExternalSource` CLEARS the field by
+   * assigning `undefined` — under `exactOptionalPropertyTypes` a bare `?:` means
+   * "may be absent, never undefined", which made that documented clearing action
+   * a type error.
    */
   private externalSource?;
   constructor(options?: AccountPoolOptions);
@@ -1415,6 +1430,28 @@ export declare class WorkBuddyAccountPool {
   /** Accounts currently kept out of rotation because their sign-in was rejected. */
   deadCredentials(): readonly WorkBuddyAccount[];
   /**
+   * Try to bring benched accounts back WITHOUT waiting out the cooldown.
+   *
+   * The cooldown is a guess about how long a problem lasts, and the guess is
+   * usually wrong in one direction or the other: a token revoked by a password
+   * change stays dead for the full window even after the user signs in again in
+   * some other client, and a transient upstream hiccup benches a perfectly good
+   * account for half an hour.
+   *
+   * So instead of only waiting, ask. For each benched account, one cheap
+   * authenticated read: if it answers, the credential works and the account goes
+   * back into rotation immediately. Nothing about the failure is trusted — only a
+   * successful call clears it — and a probe that fails keeps the original
+   * cooldown untouched (probing must never EXTEND a bench, or a broken endpoint
+   * would keep every account locked out for as long as it stayed broken).
+   *
+   * `probe` is injected rather than imported so this class stays free of the
+   * upstream client: the pool knows about accounts, not about HTTP.
+   *
+   * Returns the accounts it revived, for logging and for the run summary.
+   */
+  reviveBenched(probe: (credential: WorkBuddyCredential) => Promise<unknown>): Promise<readonly WorkBuddyAccount[]>;
+  /**
    * Refresh the account's access token when it is within the margin (or already
    * expired), in-flight de-duped per account. A failed refresh keeps the
    * existing token when it has not yet expired, so an unreachable refresh
@@ -1517,6 +1554,35 @@ type PoolWebAggregatePatch = {
   providerId: string;
   enabled?: boolean;
   apiKey?: string;
+  /**
+   * Every key, preferred first — replaces whatever was stored.
+   *
+   * A REPLACEMENT rather than a delta, for the same reason `models` is: the
+   * card sends the whole list it is showing, and a delta would let two open
+   * tabs interleave into a set neither of them chose. An empty array clears
+   * every key.
+   */
+  apiKeys?: readonly string[];
+  /**
+   * Append ONE key to the stored list.
+   *
+   * The card cannot send `apiKeys`, because the read route never echoes keys
+   * back — it reports only `keyCount`. A replacement list from the browser
+   * would therefore have to be built from placeholders, and would overwrite
+   * every key the user cannot see. This field says "add this one after the
+   * ones already stored", which is the only instruction the card can honestly
+   * give.
+   *
+   * Ignored when it duplicates a stored key.
+   */
+  appendApiKey?: string;
+  /**
+   * How requests spread across those keys.
+   *
+   * Same vocabulary as the pool lane (`priority`, `round-robin`, `balanced`,
+   * `sticky`, `expiry`); unknown values are rejected rather than stored.
+   */
+  distribution?: string;
   baseUrl?: string;
   /**
    * The chosen model set, replacing whatever this provider exposed before.
@@ -1589,6 +1655,23 @@ interface PoolWebAggregateProvider {
   discovered: boolean;
   /** When the provider was first configured. */
   addedAt?: string;
+  /**
+   * How many keys this vendor holds.
+   *
+   * `0` for a keyless vendor, `1` for the ordinary case, more when the user
+   * pasted alternates. The card needs the COUNT rather than the keys themselves —
+   * keys never leave the host — because "account usage" only means anything when
+   * there is something to distribute over: with one key it would be a switch with
+   * a single option and no effect, so the card hides it.
+   */
+  keyCount: number;
+  /**
+   * The usage strategy in force, when the user has chosen one.
+   *
+   * Absent means the documented default (priority). Shares the pool lane's
+   * vocabulary so both kinds of card present one idea one way.
+   */
+  distribution?: string;
 }
 /** The document {@link POOL_AGGREGATE_PATH} answers with. */
 interface PoolWebAggregateStatus {
@@ -1687,6 +1770,19 @@ interface PoolWebComboCandidate {
   usable: boolean;
   contextWindow: number;
   supportsImages: boolean;
+  /**
+   * Other lanes that serve the SAME model, best-first, excluding this row.
+   *
+   * The "same model, different route" tier: when one provider rate-limits, the
+   * right move is usually to reach the same model through another provider, not
+   * to fall back to a different model — a different model changes the context
+   * window, tool-calling behaviour and writing style.
+   *
+   * Present so the card can offer "also try this model via …" in one click
+   * instead of making the user find the same name under another vendor and add
+   * it three times. Empty when the model has only one route.
+   */
+  siblings: readonly string[];
 }
 /** One chain, resolved against the live roster. */
 interface PoolWebCombo {
@@ -1695,6 +1791,21 @@ interface PoolWebCombo {
   name: string;
   /** Members that exist right now, in order. Empty means the chain is dead. */
   models: readonly string[];
+  /**
+   * The chain as PLATFORM GROUPS, for the two-level editor.
+   *
+   * Always present — grouping `models` when the chain was saved flat — so the
+   * editor never has to branch on which shape reached it. `models` stays the flat,
+   * authoritative sequence; this is the same content arranged the way the router
+   * walks it (platform order, then model order within each platform).
+   *
+   * Model ids here are BARE (no `provider/` prefix): the owner is the field beside
+   * them, and carrying the prefix in both invites the two to disagree.
+   */
+  platforms: readonly {
+    owner: string;
+    models: readonly string[];
+  }[];
   /** Members the user configured but which the roster no longer serves. */
   missing: readonly string[];
   strategy: 'fallback' | 'round-robin';
@@ -2137,8 +2248,39 @@ interface PoolWebAutomationJob {
    * what turns a row from "it ran" into "it did the things I care about".
    */
   detail?: readonly string[];
+  /**
+   * Per-item outcome of the last run, one entry per thing the job looked at.
+   *
+   * `detail` is free text and mixes counters with titles ("签到 +12",
+   * "复活 Account A"), so the card can print it but cannot GROUP it. This is the
+   * same information with a status attached, which is what makes "which tasks
+   * are still unclaimed, and why" answerable:
+   *
+   *   claimed  — the reward was collected on this run
+   *   already  — collected earlier today; nothing to do
+   *   skipped  — the board would not let it be claimed (locked, no energy, …)
+   *   failed   — the call came back an error
+   *
+   * Without it, "0 claimed" reads the same whether everything was already done,
+   * the account had no energy, or the endpoint is broken — three situations with
+   * three different fixes.
+   */
+  items?: readonly PoolWebAutomationItem[];
   /** A pending milestone worth naming, e.g. the next streak tier countdown. */
   progress?: string;
+}
+/** How one item of an automation run ended. */
+type PoolWebAutomationItemStatus = 'claimed' | 'already' | 'skipped' | 'failed';
+/** One item an automation job considered, with what happened to it. */
+interface PoolWebAutomationItem {
+  /** The task board's own title, or a short label for a non-task step. */
+  title: string;
+  status: PoolWebAutomationItemStatus;
+  /** Credits/energy collected, when the upstream reported any. */
+  credit?: number;
+  energy?: number;
+  /** Why it was skipped or how it failed, in the upstream's words. */
+  note?: string;
 }
 /**
  * Automation block on the status document.
@@ -2264,8 +2406,23 @@ interface WorkBuddyModelInfo {
  * (`kimi-k3-1`). A stale fallback is worse than a short one — it looks
  * authoritative while being wrong.
  *
- * `multiplier: 0` is the gateways' own spelling of "free" (`credits: "x0.00"`),
- * which is what turns on the free badge.
+ * NO PRICES AND NO PROMO BADGES HERE. This table is what the picker shows when
+ * the startup fetch fails, and a multiplier captured months ago is a price the
+ * user will budget against while it is quietly wrong. Two specific harms:
+ *
+ *   - `multiplier: 0` renders the "free" badge, so a model that was free at
+ *     capture time keeps claiming to be free after the promotion ends;
+ *   - a non-zero multiplier renders next to the model, so a stale figure reads
+ *     as the current rate.
+ *
+ * `undefined` is the honest state: the card prints no rate and no badge, which
+ * is exactly true — this build does not know the price. The live fetch fills
+ * both in within a second of a working startup, and `catalogSource` already
+ * tells the card to say the list is the built-in one.
+ *
+ * Windows, output ceilings and the `craft` capability tag stay: those are
+ * properties of the model, not of a campaign, and they are what makes the list
+ * usable offline at all.
  */
 export declare const FALLBACK_WORKBUDDY_MODELS: readonly WorkBuddyModelInfo[];
 /** Which gateway a catalog describes. Mirrors `WorkBuddyRegion` in `upstream.ts`. */
@@ -2302,11 +2459,24 @@ export declare class WorkBuddyCatalog {
   current(): readonly WorkBuddyModelInfo[];
   /**
    * The models DSH should actually offer, after applying the user's selection:
-   * disabled models are dropped, an explicit image list overrides the upstream
-   * capability flag, and a per-model budget caps the advertised window.
+   * disabled models are dropped, an explicit image list decides image support,
+   * and a per-model budget caps the advertised window.
    *
    * An absent `enabledModelIds` means "everything" — a fresh install with no
    * saved selection must not present an empty picker.
+   *
+   * IMAGE SUPPORT IS THE USER'S SET, NOT AN OR. The upstream flag is `true` for
+   * essentially every model of this vendor (measured: 15 of 16 on CN, 23 of 23
+   * on international), so `supportsImages || imageSet.has(id)` could only ever
+   * turn the flag ON — un-ticking the box in the card changed nothing, and the
+   * adapter kept advertising `['text','image']`. The checkbox existed and did
+   * not work, which is worse than not offering it.
+   *
+   * So when the user HAS saved an image selection, that set is the answer, in
+   * both directions. When they have not (undefined — a fresh install, or a
+   * config written before this fix), the upstream capability stands: silently
+   * disabling image input for everyone who never touched the switch would be a
+   * regression, and the absent case is exactly "no opinion".
    */
   visible(): readonly WorkBuddyModelInfo[];
   /** Replace the catalog and notify the adapter to rebuild its model list. */
@@ -2373,7 +2543,42 @@ interface ProviderSetting {
    * one vendor that WAS configured indistinguishable from the rest.
    */
   enabled?: boolean;
+  /**
+   * The FIRST usable key, kept as the single-key spelling.
+   *
+   * Almost every provider needs one key, and a user pasting one must not have to
+   * learn an array to do it. This field and {@link apiKeys} are kept in step by
+   * `updateProviderSetting`: writing `apiKey` sets a one-entry list, and writing
+   * `apiKeys` mirrors its first entry back here. Readers therefore do not have to
+   * know which spelling a config file happens to hold.
+   */
   apiKey?: string;
+  /**
+   * Every key this provider may rotate through.
+   *
+   * The pool has always rotated accounts, but a third-party vendor could only
+   * ever hold ONE key, so "account usage" (priority / round-robin / balanced …)
+   * had nothing to distribute over and was not offered on those cards. A vendor
+   * with several keys on one account — which is how most rate limits are actually
+   * dodged — could not express that at all.
+   *
+   * The first entry is the preferred one; the rest are alternates in order.
+   * Absent or empty means "no key configured", which is the same state `apiKey`
+   * has always described.
+   */
+  apiKeys?: readonly string[];
+  /**
+   * How requests spread across those keys.
+   *
+   * The same five strategies the pool lane offers, and deliberately the same
+   * vocabulary rather than a second set of names for one idea. Absent means
+   * `priority`: use the preferred key until the vendor refuses it, then move on.
+   *
+   * Only meaningful when {@link apiKeys} holds more than one entry — with a single
+   * key there is nothing to distribute over, which is why the card hides the row
+   * in that case.
+   */
+  distribution?: string;
   /** User override for the base URL, for providers whose host is per-deployment. */
   baseUrl?: string;
   /**
@@ -2410,13 +2615,45 @@ interface AggregateSettings {
 /** Chain strategies. Anything else on disk falls back to `fallback`. */
 declare const COMBO_STRATEGIES: readonly ['fallback', 'round-robin'];
 type ComboStrategy = (typeof COMBO_STRATEGIES)[number];
+/**
+ * One platform's contribution to a chain: which lane, and which of its models.
+ *
+ * Chains are edited as a TWO-LEVEL list — platform order, then model order inside
+ * each platform — because that is the order the router actually walks and the
+ * order a reader thinks in ("try the bytes one, then Qoder; if both fail, go to
+ * CodeBuddy"). A flat member list expresses the same sequence but cannot show the
+ * grouping, so re-ordering "all of WorkBuddy's models together" meant moving them
+ * one at a time and hoping none was missed.
+ *
+ * `owner` is `workbuddy` for a pool model, or an aggregate provider id. Model ids
+ * are BARE here (no `provider/` prefix): the prefix is derived from the owner when
+ * the chain is flattened, so storing it twice would let the two disagree.
+ */
+interface ComboPlatform {
+  owner: string;
+  models: readonly string[];
+}
 /** A chain as the user configured it, before the catalogs are consulted. */
 interface ComboSetting {
   /** `combo:<slug>`; derived from the name when absent or malformed. */
   id?: string;
   name: string;
-  /** Member model ids, in the order the user put them. */
+  /**
+   * Member model ids in the order the user put them — the FLATTENED, authoritative
+   * sequence the router walks.
+   *
+   * Kept as the single source of truth so every resolver, the picker row and the
+   * shim keep reading one field. A chain saved with `platforms` also carries this,
+   * derived from them, so an older build and an older config file both keep working.
+   */
   models: readonly string[];
+  /**
+   * The same chain as platform groups, when it was edited that way.
+   *
+   * Absent for a chain written before this existed, or saved flat. The editor
+   * groups such a chain by owner on the fly, so it opens correctly either way.
+   */
+  platforms?: readonly ComboPlatform[];
   /** How the chain advances; `fallback` restarts from the top each turn. */
   strategy?: ComboStrategy;
   /** Consecutive turns one member serves before `round-robin` advances. */
@@ -2493,60 +2730,6 @@ interface RelaySetting {
   models?: string[];
 }
 //#endregion
-//#region src/aggregate.d.ts
-/** Registry `format` → the wire vocabulary this module speaks. */
-type AggregateWire = 'chat' | 'responses' | 'messages';
-/** One model the aggregate lane offers. */
-interface AggregateModelRow {
-  /** Composite id: `providerId/modelId`, which is also the picker id. */
-  id: string;
-  /** Display name: the provider's own name plus the row's label. */
-  name: string;
-  providerId: string;
-  modelId: string;
-  contextWindow: number;
-  maxOutputTokens: number;
-  supportsImages: boolean;
-  wire: AggregateWire;
-  /** `static` from the registry, `discovered` from a live listing. */
-  source: 'static' | 'discovered';
-}
-/** One stored aggregate row set, refreshed on change, for the shim and adapter. */
-declare class AggregateCatalog {
-  private readonly read;
-  private readonly poolRows;
-  private rows;
-  private chainRows;
-  /**
-   * @param read    The settings document.
-   * @param poolRows The pool's own rows, needed only to resolve a chain member
-   *   that names a WorkBuddy model. A chain may mix pool models with aggregate
-   *   ones, so without this a perfectly valid chain would lose its pool half.
-   */
-  constructor(read: () => AggregateStore | Promise<AggregateStore>, poolRows?: () => readonly WorkBuddyModelInfo[]);
-  /**
-   * Every row this catalog offers: third-party rows first, then chain rows.
-   *
-   * Chains come last so a picker listing stays readable — a chain is a
-   * convenience over models the user already has listed, not a new vendor.
-   */
-  current(): readonly (AggregateModelRow | ComboModelRow)[];
-  /** Only the third-party rows, which is what the aggregate resolver needs. */
-  providerRows(): readonly AggregateModelRow[];
-  /** Only the chain rows. */
-  comboRows(): readonly ComboModelRow[];
-  /** Re-read the store and notify listeners when the roster actually changed. */
-  refresh(): Promise<readonly (AggregateModelRow | ComboModelRow)[]>;
-  private listeners;
-  onChange(listener: () => void): () => void;
-  /** One third-party row by composite id, or undefined. */
-  find(id: string): AggregateModelRow | undefined;
-  /** One chain row by combo id, or undefined. */
-  findCombo(id: string): ComboModelRow | undefined;
-  /** Whether any provider or chain is serving anything right now. */
-  hasRows(): boolean;
-}
-//#endregion
 //#region src/stats.d.ts
 /**
  * Per-call usage accounting for the chat path.
@@ -2587,7 +2770,18 @@ interface TokenUsage {
 }
 /** One upstream HTTP round trip, successful or not. */
 interface UsageCall {
-  /** Which gateway served it: `cn` or `global`. */
+  /**
+   * Which CHANNEL served the call: `workbuddy`, `free`, or a provider id.
+   *
+   * Until this existed the ledger could only say `地区` (domestic /
+   * international), which is a property of the WorkBuddy pool and of nothing
+   * else. Every row therefore read `国内版` even when the call had gone to a
+   * third-party vendor or to the keyless lane, and the only honest reading of the
+   * table was "the other channels are not recorded at all" — which was true:
+   * only the pool and the free lane ever called `record`.
+   */
+  channel: string;
+  /** Which WorkBuddy gateway served it: `cn` or `global`; empty for other lanes. */
   region: string;
   /** The model id the request asked for. */
   model: string;
@@ -2621,6 +2815,14 @@ interface UsageCall {
 }
 /** One row of the per-model aggregate. */
 interface UsageRow {
+  /**
+   * The channel this row is about: `workbuddy`, `free`, or a provider id.
+   *
+   * Part of the grouping key, not just a label. Two vendors can publish the same
+   * model id, and the pool and the free lane can both serve `glm-5.3` — summing
+   * them into one row would attribute a third-party vendor's tokens to WorkBuddy.
+   */
+  channel: string;
   region: string;
   model: string;
   /** Physical upstream calls. */
@@ -2646,6 +2848,14 @@ interface UsageRow {
 interface UsageAccountRow {
   /** Display label of the account, as the pool prints it. */
   account: string;
+  /**
+   * The channel this account belongs to.
+   *
+   * Part of the grouping key: a provider's key and a pool account are different
+   * things even when both are labelled, and `free` is not a WorkBuddy account at
+   * all.
+   */
+  channel: string;
   /** Region the account belongs to; an account serves one gateway. */
   region: string;
   /** Physical calls this account served. */
@@ -2755,6 +2965,60 @@ declare class UsageRecorder {
    * calls apart is so that number stays honest in every place it appears.
    */
   private days;
+}
+//#endregion
+//#region src/aggregate.d.ts
+/** Registry `format` → the wire vocabulary this module speaks. */
+type AggregateWire = 'chat' | 'responses' | 'messages';
+/** One model the aggregate lane offers. */
+interface AggregateModelRow {
+  /** Composite id: `providerId/modelId`, which is also the picker id. */
+  id: string;
+  /** Display name: the provider's own name plus the row's label. */
+  name: string;
+  providerId: string;
+  modelId: string;
+  contextWindow: number;
+  maxOutputTokens: number;
+  supportsImages: boolean;
+  wire: AggregateWire;
+  /** `static` from the registry, `discovered` from a live listing. */
+  source: 'static' | 'discovered';
+}
+/** One stored aggregate row set, refreshed on change, for the shim and adapter. */
+declare class AggregateCatalog {
+  private readonly read;
+  private readonly poolRows;
+  private rows;
+  private chainRows;
+  /**
+   * @param read    The settings document.
+   * @param poolRows The pool's own rows, needed only to resolve a chain member
+   *   that names a WorkBuddy model. A chain may mix pool models with aggregate
+   *   ones, so without this a perfectly valid chain would lose its pool half.
+   */
+  constructor(read: () => AggregateStore | Promise<AggregateStore>, poolRows?: () => readonly WorkBuddyModelInfo[]);
+  /**
+   * Every row this catalog offers: third-party rows first, then chain rows.
+   *
+   * Chains come last so a picker listing stays readable — a chain is a
+   * convenience over models the user already has listed, not a new vendor.
+   */
+  current(): readonly (AggregateModelRow | ComboModelRow)[];
+  /** Only the third-party rows, which is what the aggregate resolver needs. */
+  providerRows(): readonly AggregateModelRow[];
+  /** Only the chain rows. */
+  comboRows(): readonly ComboModelRow[];
+  /** Re-read the store and notify listeners when the roster actually changed. */
+  refresh(): Promise<readonly (AggregateModelRow | ComboModelRow)[]>;
+  private listeners;
+  onChange(listener: () => void): () => void;
+  /** One third-party row by composite id, or undefined. */
+  find(id: string): AggregateModelRow | undefined;
+  /** One chain row by combo id, or undefined. */
+  findCombo(id: string): ComboModelRow | undefined;
+  /** Whether any provider or chain is serving anything right now. */
+  hasRows(): boolean;
 }
 //#endregion
 //#region src/channel-lane.d.ts
@@ -3161,6 +3425,16 @@ interface AutomationJobState {
    */
   detail?: readonly string[];
   /**
+   * The same work with a status per item.
+   *
+   * `detail` is a flat list of sentences, so the card can print it but cannot
+   * group it. This carries `claimed` / `already` / `skipped` / `failed` per
+   * thing the job looked at, which is what separates "everything was already
+   * done" from "nothing was claimable" from "the endpoint is down" — three
+   * outcomes that all print as "0 claimed".
+   */
+  items?: readonly PoolWebAutomationItem[];
+  /**
    * A pending milestone worth naming, when there is one.
    *
    * Streak tiers are why this exists: every tier reads `locked` until enough
@@ -3522,6 +3796,10 @@ export declare class WorkBuddyScheduler {
    *
    * Disabled accounts are excluded here rather than filtered by the caller so a
    * card switch takes effect on the next pass without any event plumbing.
+   *
+   * `job` narrows the set by region scope: the growth jobs are CN-only while
+   * check-in runs on both gateways, so eligibility cannot be decided without
+   * knowing which job is about to run.
    */
   private accountsInOrder;
   /**
@@ -3564,6 +3842,25 @@ export declare class WorkBuddyScheduler {
    * logs "could not be built" only for exceptions, and a task shape this code
    * does not understand is information, not a fault.
    */
+  /**
+   * Find the expert a task is about, by matching its title against the
+   * marketplace.
+   *
+   * The marketplace listing is ~500 entries across `agent` and `team`, and this
+   * only runs for a task whose deeplink carried no id — at most a handful per
+   * run — so the cost is acceptable. It is not cached because a freshly
+   * published expert must become findable without a restart.
+   *
+   * Matching rules, all of them strict on purpose:
+   *   - the task's title must appear IN the expert's name or profession, or the
+   *     expert's display name must appear in the title (both directions, since
+   *     the board and the marketplace word things differently);
+   *   - comparison ignores case, whitespace and the punctuation vendors sprinkle
+   *     through names;
+   *   - several matches means NO answer. Summoning the wrong agent scores 0, so a
+   *     guess costs an upstream call and still fails — worse than declining.
+   */
+  private expertIdByKeyword;
   private taskExpertChains;
   /**
    * The summon-and-use chains for the expert tasks.
@@ -3960,7 +4257,16 @@ interface PoolStatusRouteOptions {
    * a chain name, and does what it names still exist" — and answering them from
    * two snapshots could show a member that the chains no longer resolve.
    */
-  combosDocument?: () => PoolWebCombosStatus;
+  /**
+   * The routing document.
+   *
+   * May return a PROMISE: login-channel rows come from the host's
+   * `llm.listModels`, which is asynchronous, and a chain that cannot name TRAE or
+   * Qoder is precisely the defect this document had. A synchronous build keeps
+   * returning the object directly, so both shapes are accepted rather than forcing
+   * every caller to become async.
+   */
+  combosDocument?: () => PoolWebCombosStatus | Promise<PoolWebCombosStatus>;
   /**
    * Replace the chain table and refresh the running catalog, then re-answer the
    * document. The catalog refresh is what makes a new chain pickable at once.
@@ -4082,6 +4388,15 @@ export interface Config {
    * does not wipe what the automation already earned.
    */
   automationEarnings?: AutomationLedger;
+  /**
+   * Whether the shared 免密 free lane contributes models.
+   *
+   * Absent reads as OFF. It is the only lane that defaults off: it is a shared
+   * third-party endpoint with no credential of the user's own, so leaving it on
+   * dropped a group into the model picker that nothing in the UI could remove
+   * (the aggregate switch does not govern it — it is not an aggregate provider).
+   */
+  freeLane?: boolean;
 }
 /** One region's saved model selection. */
 export interface ModelSelectionConfig {

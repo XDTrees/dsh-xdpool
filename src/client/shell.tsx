@@ -34,7 +34,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { ReactNode } from 'react'
 import type { XdPoolSettingsKey } from './locales.ts'
 import { SHARED_CARD_CSS, SHELL_CSS } from './styles.ts'
-import { COMMUNITY_QR_DATA_URI } from './community-qr.ts'
+import { COMMUNITY_QR_QQ, COMMUNITY_QR_WECHAT } from './community-qr.ts'
 /** The translator the settings section injects. */
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
 /** One page in the tab strip. `num` renders the OFM-style corner count. */
@@ -333,20 +333,55 @@ export function PoolShell({
               </button>
             </div>
             {/*
-              `alt` carries the instruction, not a description: someone using a
-              screen reader cannot scan a code, so the honest thing to say is
-              what the code is for and that it expires.
+              Two codes, side by side, because they are joined in two different
+              ways and one caption cannot describe both:
+
+                - WeChat is a BOT's personal code: scanning only adds the bot,
+                  and the user must then send `XD` before being pulled in. A
+                  reader who scans and waits sees nothing happen, so the step is
+                  printed right under that code rather than in a footnote.
+                - QQ is the group's own code: scanning IS joining.
+
+              `alt` carries the instruction rather than a description: a screen
+              reader user cannot scan a code, so "what to do" is the only useful
+              thing to say. The design is column-flowing so the panel stays one
+              dialog on a narrow settings pane instead of two stacked screens.
             */}
-            <img
-              className="dsm-xdpool-groupqr"
-              src={COMMUNITY_QR_DATA_URI}
-              alt={t?.('shell.groupAlt') ?? '微信群二维码：用微信扫一扫加入 XD 交流群'}
-              width={260}
-              height={260}
-            />
+            <div className="dsm-xdpool-groupcodes">
+              <div className="dsm-xdpool-groupcode">
+                <img
+                  className="dsm-xdpool-groupqr"
+                  src={COMMUNITY_QR_WECHAT}
+                  alt={t?.('shell.groupWechatAlt') ?? '微信机器人二维码：扫码添加后发送 XD，即可被拉进群'}
+                  width={220}
+                  height={220}
+                />
+                <span className="dsm-xdpool-groupcode-label">
+                  {t?.('shell.groupWechat') ?? '微信（机器人）'}
+                </span>
+                <span className="dsm-xdpool-groupcode-step">
+                  {t?.('shell.groupWechatStep') ?? '扫码添加机器人后，发送「XD」拉你进群'}
+                </span>
+              </div>
+              <div className="dsm-xdpool-groupcode">
+                <img
+                  className="dsm-xdpool-groupqr"
+                  src={COMMUNITY_QR_QQ}
+                  alt={t?.('shell.groupQqAlt') ?? 'QQ 群二维码：直接扫码加入 XD 交流群'}
+                  width={220}
+                  height={220}
+                />
+                <span className="dsm-xdpool-groupcode-label">
+                  {t?.('shell.groupQq') ?? 'QQ 群'}
+                </span>
+                <span className="dsm-xdpool-groupcode-step">
+                  {t?.('shell.groupQqStep') ?? '直接扫码即可加入'}
+                </span>
+              </div>
+            </div>
             <p className="dsm-xdpool-groupnote">
               {t?.('shell.groupNote')
-                ?? '用微信「扫一扫」加入 XD 交流群。二维码 7 天内有效，过期了在 GitHub 提 issue 说一声，会更新。'}
+                ?? '两个群都在；哪个方便用哪个。二维码失效了在 GitHub 提 issue 说一声，会更新。'}
             </p>
           </div>
         </div>

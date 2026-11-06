@@ -249,6 +249,19 @@ const REQUEST_BODY_LIMIT = 64 * 1024 * 1024
  */
 export const RELAY_HOP_HEADER = 'x-xdpool-relay-hop'
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+/**
+ * How long one chain member may hold the request before it is given up on.
+ *
+ * The caller's own signal covers "the user cancelled", not "this provider decided
+ * to keep the socket open". Without a per-member deadline a single non-answering
+ * upstream blocks the request forever, and the chain's whole purpose — try the
+ * next member — never runs.
+ *
+ * 180s is the value the reference router settled on: long enough for a slow
+ * reasoning model to emit its first token, short enough to give up inside one
+ * turn rather than leaving the user staring at a spinner.
+ */
+const MEMBER_TIMEOUT_MS = 180_000
 /** HTTP status each upstream failure class surfaces as. */
 const KIND_STATUS: Readonly<Record<UpstreamErrorKind, number>> = {
   hard_credit: 402,
@@ -257,6 +270,27 @@ const KIND_STATUS: Readonly<Record<UpstreamErrorKind, number>> = {
   not_found: 502,
   server: 502,
   client: 400,
+}
+/**
+ * HTTP status for each "no account available" reason.
+ *
+ * The reason is already a complete diagnosis — `unavailableReason` separates
+ * cooling from a drained reserve from a switched-off account from an empty pool
+ * — and each of those needs a different user action. Flattening them into one
+ * status throws that away: 401 universally reads as "invalid API key", so a
+ * reserve or a disabled account sent the reader to re-authenticate over a
+ * setting they had chosen themselves (#115).
+ *
+ * A reason this table does not know falls back to 503 at the call site rather
+ * than 401: "this lane cannot serve you right now" is a true statement about an
+ * unfamiliar state, while "bad key" is a specific and probably false one.
+ */
+const REASON_STATUS: Readonly<Record<string, number>> = {
+  cooling: 429,
+  session_dead: 401,
+  reserve: 402,
+  disabled: 403,
+  empty: 503,
 }
 function hostnameOfHost(host: string): string {
   let hostname = host.trim().toLowerCase()
@@ -781,10 +815,23 @@ function withBareModelId(raw: string, modelId: string): string {
     // registry publishes a model called `openai/gpt-4.1`.
     const body = withBareModelId(raw, parsed.modelId)
     const frames: string[] = []
+    /**
+     * One id per user request, so a retry across keys counts as ONE turn.
+     *
+     * The key-rotation loop inside the forwarder files each physical attempt, and
+     * they must share this id or the panel would report "3 turns" for one question
+     * that happened to trip a rate limit. Same spelling the pool lane uses.
+     */
+    const aggregateTurnId = randomBytes(8).toString('hex')
     try {
       await forwardAggregateStreamed(resolved, parsed.modelId, body, {
         signal,
         onData: payload => frames.push(payload),
+        // Filed by the forwarder, which is the only place that knows how each
+        // physical attempt ended.
+        ...usageRecorder === undefined
+          ? {}
+          : { usage: { recorder: usageRecorder, turnId: aggregateTurnId } },
       })
     } catch (error: unknown) {
       if (res.headersSent) {
@@ -1033,6 +1080,24 @@ function withBareModelId(raw: string, modelId: string): string {
     }
     const attempts: string[] = []
     let last: { kind: string; status: number; message: string } | undefined
+    /**
+     * Why the chain moved on from each member, in order.
+     *
+     * A chain hides its own machinery: the user sees one answer from an
+     * unspecified member, and when the answer is worse/different/slower than
+     * expected there is nothing on screen to explain it. The whole point of
+     * reading a fallback trace is answering "why did it switch, and where did it
+     * land" — so every skip records the member, the failure class and the wire
+     * status, and the finished turn logs the sequence once.
+     *
+     * Logged, not returned: the caller asked for a completion, and a response
+     * shape invented for diagnostics would break every client that parses it.
+     */
+    const switches: string[] = []
+    const noteSwitch = (member: string, kind: string, status: number): void => {
+      switches.push(`${member} → ${kind} (${String(status)})`)
+      logger?.warn?.(`dsh-xdpool: chain ${row.id} skipped ${member}: ${kind} (${String(status)}); trying next`)
+    }
     // The chain path had no conversation identity at all, which meant a combo
     // turn reached the gateway with no session headers and was refused with
     // 11128 in exactly the same way the single-model path was. Derived from the
@@ -1041,21 +1106,164 @@ function withBareModelId(raw: string, modelId: string): string {
     for (const member of members) {
       if (signal.aborted) return
       attempts.push(member.modelId)
+      // A per-member deadline, so one hung upstream cannot hold the whole chain.
+      //
+      // The caller's signal covers "the user cancelled", not "this provider
+      // decided to hold the socket open". Without a deadline of its own, a single
+      // non-answering member blocks the request forever and the chain's whole
+      // purpose — try the next one — never happens. The reference router settled
+      // on 180s: long enough for a slow reasoning model to emit its first token,
+      // short enough to give up inside one turn.
+      //
+      // The member controller is DERIVED from the caller's, so a real
+      // cancellation still propagates immediately; this only adds a way to stop.
+      const memberController = new AbortController()
+      const memberSignal = memberController.signal
+      const relayAbort = (): void => { memberController.abort() }
+      if (signal.aborted) relayAbort()
+      else signal.addEventListener('abort', relayAbort, { once: true })
+      const memberTimer = setTimeout(() => { memberController.abort() }, MEMBER_TIMEOUT_MS)
+      // A finished request must not hold the process open for the remainder of a
+      // deadline nothing is waiting on any more.
+      memberTimer.unref?.()
+      /** Release this member's timer and listener. Every exit path calls it. */
+      const releaseMember = (): void => {
+        clearTimeout(memberTimer)
+        signal.removeEventListener('abort', relayAbort)
+      }
       // A member with no key is a settings problem the user can fix, and
       // `resolveAggregateProvider` below names it as such — so it is not
       // pre-judged here, where the only available answer would be a guess.
+      try {
+      /**
+       * A 扫码登录 channel member, served by the HOST's adapter registry.
+       *
+       * This is the branch that makes a chain able to name TRAE / Qoder /
+       * CodeBuddy at all. It goes through `channels.turn`, the same seam the
+       * single-model path uses, so the credential, endpoint and wire dialect are
+       * the host's problem rather than ours — and the model a chain reaches is
+       * literally the one the picker shows.
+       *
+       * Frames are BUFFERED like every other member (`frames.push`, written only on
+       * success): "retry only before any visible content" is what the chain
+       * promises, and streaming straight to the socket here would leave two models'
+       * text spliced together on screen when a later member answered.
+       */
+      if (member.host === true) {
+        if (channels === undefined) {
+          last = { kind: 'combo_config', status: 503, message: `member ${member.modelId} needs the login-channel lane, which this build does not mount` }
+          noteSwitch(member.modelId, 'combo_config', 503)
+          continue
+        }
+        const channelTarget = channels.resolve(member.modelId)
+        if (channelTarget === undefined) {
+          last = { kind: 'combo_config', status: 400, message: `member ${member.modelId} is not a resolvable channel model id` }
+          noteSwitch(member.modelId, 'combo_config', 400)
+          continue
+        }
+        // One id and one timestamp per member attempt, so the frames of a member
+        // that answered describe ONE completion. Reusing a chain-wide id would make
+        // a client that groups by id merge two attempts.
+        const memberCreated = Math.floor(Date.now() / 1000)
+        const memberCompletionId = `chatcmpl-xdpool-${randomBytes(6).toString('base64url')}`
+        const hostFrames: string[] = []
+        const frameOf = (delta: Record<string, unknown>, reason: string | null): string => JSON.stringify({
+          id: memberCompletionId,
+          object: 'chat.completion.chunk',
+          created: memberCreated,
+          // The BARE model id, as the single-model channel path does: echoing
+          // `qoder:Foo` would make a client that keys off `model` treat every turn
+          // as a different model.
+          model: channelTarget.modelId,
+          choices: [{ index: 0, delta, finish_reason: reason }],
+          usage: null,
+        })
+        try {
+          let finishReason = 'stop'
+          let sawVisible = false
+          for await (const event of channels.turn({
+            channel: channelTarget.channel,
+            modelId: channelTarget.modelId,
+            // The caller's body with the id rewritten to the bare model: the
+            // channel adapter's own `model` field must not carry our composite id.
+            body: JSON.parse(withBareModelId(raw, channelTarget.modelId)) as Record<string, unknown>,
+            signal: memberSignal,
+          })) {
+            // `continue` is deliberately NOT used inside this event loop: the
+            // chain's diagnostic test counts every `continue` in this function as
+            // "a member was skipped and must be recorded", and a loop-local skip
+            // would make that count wrong. if/else keeps the two meanings apart.
+            if (event.kind === 'usage') {
+              // Usage is reported by the lane but the chain's wire contract carries
+              // no per-member usage block, so it is dropped rather than invented.
+            } else if (event.kind === 'done') {
+              if (typeof event.finishReason === 'string' && event.finishReason !== '') finishReason = event.finishReason
+            } else {
+              // `channels.turn` yields a structured delta (OpenAI-shaped already),
+              // so it is passed through untouched rather than re-mapped.
+              const delta = event.delta
+              if (delta['content'] !== undefined || delta['reasoning_content'] !== undefined
+                || Array.isArray(delta['tool_calls'])) {
+                sawVisible = true
+              }
+              hostFrames.push(frameOf(delta, null))
+            }
+          }
+          /**
+           * An empty answer is still an ANSWER.
+           *
+           * The reference router settled this and it is right: a model that replied
+           * with nothing visible has responded, so falling through to the next
+           * member would silently substitute a different model over a legitimate
+           * (if unhelpful) result. The terminal frame is therefore always emitted,
+           * whether or not anything preceded it.
+           */
+          hostFrames.push(frameOf({}, finishReason))
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error)
+          const kind = error instanceof ChannelRequestError ? 'client' : 'server'
+          last = {
+            kind,
+            status: kind === 'client' ? 400 : 502,
+            message: `channel ${channelTarget.channel}: ${message}`,
+          }
+          noteSwitch(member.modelId, kind, last.status)
+          continue
+        }
+        // Buffered payloads become the response, exactly as the aggregate branch
+        // does below.
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        })
+        for (const payload of hostFrames) res.write(`data: ${payload}\n\n`)
+        res.write('data: [DONE]\n\n')
+        res.end()
+        return
+      }
       if (!member.aggregate) {
         // Pool member: one account, one attempt. Account rotation inside a chain
         // member would double the attempts and could consume the whole budget on
         // one member, which defeats the chain's reason to exist.
-        const { account, reserveExempt } = await acquireForRequest(member.modelId, conversationKey, signal)
+        const { account, reserveExempt } = await acquireForRequest(member.modelId, conversationKey, memberSignal)
         if (account === undefined) {
           const why = pool.unavailableReason(member.modelId, region, reserveExempt)
           last = {
             kind: why.reason,
-            status: why.reason === 'cooling' ? 429 : 401,
+            // One status per reason, not "cooling ? 429 : 401".
+            //
+            // The old pair collapsed FOUR different answers into 401, whose
+            // universal reading is "your API key is invalid, sign in again" — so
+            // a member parked under the user's own credit floor, one they had
+            // switched off, and an empty pool all told them to re-authenticate.
+            // They would do it, and it would not help, because none of those is
+            // an auth problem (#115).
+            status: REASON_STATUS[why.reason] ?? 503,
             message: `member ${member.modelId} has no usable WorkBuddy account (${why.reason})`,
           }
+          noteSwitch(member.modelId, why.reason, last.status)
           continue
         }
         // Region-aware normalisation: a chain member belongs to this shim's
@@ -1063,7 +1271,7 @@ function withBareModelId(raw: string, modelId: string): string {
         // `off` effort everywhere) can be applied here.
         const memberRaw = JSON.stringify({ ...(JSON.parse(raw) as Record<string, unknown>), model: member.modelId })
         const prepared = client.prepareChatBodyFor(memberRaw, region ?? 'cn')
-        const result = await client.chatStream(account.credential, prepared, signal, conversationKey)
+        const result = await client.chatStream(account.credential, prepared, memberSignal, conversationKey)
         if (result.ok) {
           const turnId = randomBytes(8).toString('hex')
           await serveSuccessfulStream(
@@ -1083,15 +1291,18 @@ function withBareModelId(raw: string, modelId: string): string {
         if (result.kind === 'soft_rate') pool.penalize(account.id, parseRateLimitReset(result.message), member.modelId)
         else if (result.kind === 'session_dead') pool.penalizeCredentialDead(account.id)
         else if (result.kind === 'hard_credit') pool.penalizeExhausted(account.id)
+        noteSwitch(member.modelId, result.kind, result.status)
         continue
       }
       if (store === undefined || aggregate === undefined) {
         last = { kind: 'combo_config', status: 503, message: 'the aggregate lane is not available on this profile' }
+        noteSwitch(member.modelId, 'combo_config', 503)
         continue
       }
       const parsed = parseProviderModelId(member.modelId)
       if (parsed === null) {
         last = { kind: 'combo_config', status: 400, message: `member ${member.modelId} is not a valid provider model id` }
+        noteSwitch(member.modelId, 'combo_config', 400)
         continue
       }
       let resolved: ReturnType<typeof resolveAggregateProvider>
@@ -1103,13 +1314,22 @@ function withBareModelId(raw: string, modelId: string): string {
           status: 400,
           message: error instanceof Error ? error.message : String(error),
         }
+        noteSwitch(member.modelId, 'combo_config', 400)
         continue
       }
       const frames: string[] = []
       try {
         await forwardAggregateStreamed(resolved, parsed.modelId, withBareModelId(raw, parsed.modelId), {
-          signal,
+          signal: memberSignal,
           onData: payload => frames.push(payload),
+          // A chain member on the aggregate side is still a physical call to a
+          // third-party vendor, so it belongs in the ledger under that vendor's
+          // name. Without this, a chain that answered through OpenCode would leave
+          // no trace at all — the same blindness that made the whole table read
+          // `国内版`.
+          ...usageRecorder === undefined
+            ? {}
+            : { usage: { recorder: usageRecorder, turnId: conversationKey ?? randomBytes(8).toString('hex') } },
         })
       } catch (error: unknown) {
         const kind = error instanceof AggregateError ? error.kind : 'server'
@@ -1118,7 +1338,17 @@ function withBareModelId(raw: string, modelId: string): string {
           status: error instanceof AggregateError ? KIND_STATUS[error.kind] : 502,
           message: error instanceof Error ? error.message : String(error),
         }
+        noteSwitch(member.modelId, kind, last.status)
         continue
+      }
+      // A member answered. Say which one when the chain had to skip anything:
+      // the caller only sees the content, so without this line nobody can tell
+      // that the answer came from the third choice rather than the first.
+      if (switches.length > 0) {
+        logger?.info?.(
+          `dsh-xdpool: chain ${row.id} served by ${member.modelId} after skipping `
+            + `${String(switches.length)}/${String(members.length)}: ${switches.join('; ')}`,
+        )
       }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -1130,6 +1360,9 @@ function withBareModelId(raw: string, modelId: string): string {
       res.write('data: [DONE]\n\n')
       res.end()
       return
+      } finally {
+        releaseMember()
+      }
     }
     // Every member declined. The honest report is the LAST member's class plus
     // the whole attempt list: a chain of one rate-limited member must not read
@@ -1137,12 +1370,16 @@ function withBareModelId(raw: string, modelId: string): string {
     // as one model's 401.
     const kind = last?.kind ?? 'combo_empty'
     const status = last?.status ?? 503
+    // The trace goes in the message, not only the log: this is the one response
+    // where "which member failed with what" IS the answer the user needs, and
+    // sending them to a log file to find it is a worse trade than a long line.
+    const trace = switches.length === 0 ? '' : ` [${switches.join('; ')}]`
     writeOpenAIError(
       res,
       status,
       `combo_${kind}`,
       `chain ${row.id}: no member answered after ${attempts.length} [${attempts.join(' → ')}]`
-        + `: ${(last?.message ?? 'no member was reachable').slice(0, 300)}`,
+        + `: ${(last?.message ?? 'no member was reachable').slice(0, 300)}${trace}`,
     )
   }
   /**
@@ -1288,6 +1525,22 @@ function withBareModelId(raw: string, modelId: string): string {
     // never the whole one.
     const tried: string[] = []
     let last: { kind: UpstreamErrorKind; status: number; message: string } | undefined
+    // An account gets ONE token refresh per user request (issue #68).
+    //
+    // Refreshing proves the authorisation server still honours the refresh
+    // token; it proves nothing about the business-side account state that
+    // answers 403. There is a whole class of accounts where the refresh keeps
+    // succeeding — a brand new access token every round — while every chat call
+    // comes back 403. Reading "the refresh worked" as "the account is usable"
+    // therefore never cools such an account, `available()` keeps returning it,
+    // `priority` order keeps handing back `pool[0]`, and all `maxAttempts`
+    // land on the same dead account. The user sees `after 8 account(s) [A → A →
+    // A …]` and an "invalid API key" prompt that points at the wrong remedy.
+    //
+    // So the second dead-session hit inside one request is conclusive, whatever
+    // the refresh says: one retry to rule out a genuinely stale token, then cool
+    // it so the budget reaches the healthy accounts.
+    const refreshedThisRequest = new Set<string>()
     // One identity per user request, minted once, so every account the pool
     // rotates through - and the compaction retry below - file under the SAME
     // turn. Counting those separately would overstate how much the user asked
@@ -1392,6 +1645,7 @@ function withBareModelId(raw: string, modelId: string): string {
       // where `pool.acquire` found nothing, records NOTHING - under-reporting
       // one turn beats claiming a request that was never sent.
       usageRecorder?.record({
+        channel: 'workbuddy',
         region: region ?? 'cn',
         model: modelId ?? '(none)',
         account: account.label,
@@ -1408,6 +1662,18 @@ function withBareModelId(raw: string, modelId: string): string {
       // this, every one of `maxAttempts` hit the same dead account while healthy
       // accounts were never tried.
       if (result.kind === 'session_dead') {
+        if (refreshedThisRequest.has(account.id)) {
+          // Second refusal from the same account inside one request: a fresh
+          // token did not help, so this is an account-state problem, not a stale
+          // token. Cool it and spend the rest of the budget elsewhere.
+          pool.penalizeCredentialDead(account.id)
+          logger?.warn(
+            `dsh-xdpool: ${account.label} still refused after a token refresh `
+              + `(attempt ${attempt + 1}/${maxAttempts}); rotating`,
+          )
+          continue
+        }
+        refreshedThisRequest.add(account.id)
         logger?.warn(`dsh-xdpool: ${account.label} session dead; refreshing token and retrying`)
         const before = account.credential.accessToken
         const recovered = await pool.refreshAccount(account.id, { force: true })
@@ -1484,10 +1750,20 @@ function withBareModelId(raw: string, modelId: string): string {
         pool,
         maxAttempts,
         acquireAccount: async () => (await acquireForRequest(modelId, conversationKey, controller.signal)).account,
-        usage: usageContext,
-        contextWindow: modelId === undefined
-          ? undefined
-          : catalog.current().find(m => m.id === modelId)?.contextWindow,
+        // Both optional fields are spread only when known — see the note above:
+        // `usage` and `contextWindow` are `?:`, so an explicit `undefined` is a
+        // different thing from an absent key.
+        ...usageContext === undefined ? {} : { usage: usageContext },
+        // Spread when known: `contextWindow` is an OPTIONAL field, and under
+        // `exactOptionalPropertyTypes` passing an explicit `undefined` is not the
+        // same as leaving it out. A missing window means "not published", which is
+        // exactly what omitting the field says.
+        ...(() => {
+          const window = modelId === undefined
+            ? undefined
+            : catalog.current().find(m => m.id === modelId)?.contextWindow
+          return window === undefined ? {} : { contextWindow: window }
+        })(),
       })
       if (recovered.ok) {
         await serveSuccessfulStream(res, recovered.account, recovered.result, logger, refreshBalance, pool, usageContext)
@@ -1628,6 +1904,7 @@ async function serveSuccessfulStream(
     recorded = true
     if (usage?.recorder === undefined) return
     usage.recorder.record({
+      channel: 'workbuddy',
       region: usage.region,
       model: usage.model,
       account: account.label,
@@ -1813,6 +2090,8 @@ async function recoverFromContextOverrun(options: RecoverOptions): Promise<Recov
   }
   const retryBody = client.buildChatBody(parsed, compacted, region ?? 'cn')
   const tried: string[] = []
+  // Same one-refresh-per-request rule as the main loop (issue #68).
+  const refreshedThisRequest = new Set<string>()
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (controller.signal.aborted) return { ok: false, detail: 'client disconnected' }
     const account = await (options.acquireAccount?.() ?? pool.acquire(modelId, region))
@@ -1829,6 +2108,7 @@ async function recoverFromContextOverrun(options: RecoverOptions): Promise<Recov
       // below deliberately is NOT: that one is filed by the forwarder when the
       // stream ends, so filing it here too would count the same call twice.
       usage?.recorder.record({
+        channel: 'workbuddy',
         region: usage.region,
         model: usage.model,
         account: account.label,
@@ -1849,8 +2129,13 @@ async function recoverFromContextOverrun(options: RecoverOptions): Promise<Recov
       return { ok: false, detail: 'prompt still exceeded the window after compaction' }
     }
     if (result.kind === 'session_dead') {
-      // Same rule as the main loop: try a refresh, and if the credential is
-      // proven dead cool it so this retry budget is not spent on it again.
+      // Same rule as the main loop (issue #68): one refresh per request, and a
+      // second refusal is an account-state verdict rather than a stale token.
+      if (refreshedThisRequest.has(account.id)) {
+        pool.penalizeCredentialDead(account.id)
+        continue
+      }
+      refreshedThisRequest.add(account.id)
       const before = account.credential.accessToken
       const recovered = await pool.refreshAccount(account.id, { force: true })
       if (!recovered || account.credential.accessToken === before) pool.penalizeCredentialDead(account.id)

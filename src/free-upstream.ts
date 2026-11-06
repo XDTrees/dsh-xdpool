@@ -671,7 +671,15 @@ export function freeFetch(
       },
       response => {
         resolve(
-          new Response(Readable.toWeb(response) as ReadableStream<Uint8Array>, {
+          // Cast through `Parameters<typeof Response>[0]` — "whatever THIS
+          // config's Response accepts as a body" — because the two configs
+          // disagree and neither name is available in both: the host has no `dom`
+          // lib (so `BodyInit` is undefined there), and with both libs loaded the
+          // bare `ReadableStream` resolves to NODE's, which reproduces the error
+          // instead of fixing it. At runtime they are one object and undici
+          // accepts it; only the buffer type parameter and `getReader().read`
+          // signatures differ on paper.
+          new Response(Readable.toWeb(response) as unknown as ConstructorParameters<typeof Response>[0], {
             status: response.statusCode ?? 0,
             statusText: response.statusMessage ?? '',
             headers: response.headers as unknown as Headers,
@@ -924,7 +932,10 @@ export async function postFreeStreamed(
     result.usage = usage
   }
   result.suppressedOnly = tools.suppressed()
-  result.finishReason = finish
+  // Assigned only when there is one: `finishReason?: string` means "may be
+  // absent, never undefined" under `exactOptionalPropertyTypes`, and left
+  // unassigned reads identically at every call site (`=== undefined`).
+  if (finish !== undefined) result.finishReason = finish
   return result
 }
 

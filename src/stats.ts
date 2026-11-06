@@ -39,7 +39,18 @@ export interface TokenUsage {
 
 /** One upstream HTTP round trip, successful or not. */
 export interface UsageCall {
-  /** Which gateway served it: `cn` or `global`. */
+  /**
+   * Which CHANNEL served the call: `workbuddy`, `free`, or a provider id.
+   *
+   * Until this existed the ledger could only say `地区` (domestic /
+   * international), which is a property of the WorkBuddy pool and of nothing
+   * else. Every row therefore read `国内版` even when the call had gone to a
+   * third-party vendor or to the keyless lane, and the only honest reading of the
+   * table was "the other channels are not recorded at all" — which was true:
+   * only the pool and the free lane ever called `record`.
+   */
+  channel: string
+  /** Which WorkBuddy gateway served it: `cn` or `global`; empty for other lanes. */
   region: string
   /** The model id the request asked for. */
   model: string
@@ -74,6 +85,14 @@ export interface UsageCall {
 
 /** One row of the per-model aggregate. */
 export interface UsageRow {
+  /**
+   * The channel this row is about: `workbuddy`, `free`, or a provider id.
+   *
+   * Part of the grouping key, not just a label. Two vendors can publish the same
+   * model id, and the pool and the free lane can both serve `glm-5.3` — summing
+   * them into one row would attribute a third-party vendor's tokens to WorkBuddy.
+   */
+  channel: string
   region: string
   model: string
   /** Physical upstream calls. */
@@ -100,6 +119,14 @@ export interface UsageRow {
 export interface UsageAccountRow {
   /** Display label of the account, as the pool prints it. */
   account: string
+  /**
+   * The channel this account belongs to.
+   *
+   * Part of the grouping key: a provider's key and a pool account are different
+   * things even when both are labelled, and `free` is not a WorkBuddy account at
+   * all.
+   */
+  channel: string
   /** Region the account belongs to; an account serves one gateway. */
   region: string
   /** Physical calls this account served. */
@@ -354,11 +381,16 @@ export class UsageRecorder {
       else bucket.failed += 1
       turns.set(call.turnId, bucket)
 
-      const key = `${call.region}\u0000${call.model}`
+      // The channel is part of the grouping key, not a label added afterwards:
+      // two vendors can publish the same model id, and the pool and the free lane
+      // can both serve `glm-5.3`. Summing them would credit a third-party vendor's
+      // tokens to WorkBuddy and make the per-model share column nonsense.
+      const key = `${call.channel}\u0000${call.region}\u0000${call.model}`
       let acc = rows.get(key)
       if (acc === undefined) {
         acc = {
           row: {
+            channel: call.channel,
             region: call.region,
             model: call.model,
             calls: 0,
@@ -459,12 +491,16 @@ export class UsageRecorder {
     const buckets = new Map<string, Acc>()
     for (const call of this.samples) {
       const label = call.account ?? ''
-      const key = `${call.region}\u0000${label}`
+      // Channel in the key too: a provider's key and a pool account can share a
+      // label, and `free` is not a WorkBuddy account at all. Grouping by region
+      // alone merged them into one row that belonged to neither.
+      const key = `${call.channel}\u0000${call.region}\u0000${label}`
       let acc = buckets.get(key)
       if (acc === undefined) {
         acc = {
           row: {
             account: label,
+            channel: call.channel,
             region: call.region,
             calls: 0,
             turns: 0,

@@ -141,6 +141,10 @@ export function createFreeLaneSource(
         // count it rather than pretend nothing happened.
         tracker.finish(Date.now())
         usageRecorder?.record({
+          // The channel, not the region: this lane is not on either WorkBuddy
+          // gateway, and the ledger's first column now names the channel so the
+          // free models stop being filed as `国内版`.
+          channel: 'free',
           region: 'free',
           model: modelId,
           account: 'free',

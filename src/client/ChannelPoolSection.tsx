@@ -82,6 +82,19 @@ interface ChannelPoolSnapshot {
   error?: string | undefined
 }
 let poolSnapshot: ChannelPoolSnapshot | undefined
+/**
+ * `provider.status` answered recently, kept across unmounts.
+ *
+ * One request counts EVERY named provider's accounts, so its cost is the sum of
+ * thirteen pool walks. Re-running that on the next visit, for numbers that cannot
+ * have moved, is what made this section feel slow on every open while the login page
+ * (static metadata, no counting) appeared instantly.
+ *
+ * Module-level rather than component state on purpose: switching settings tabs
+ * unmounts the section, and the whole point is that coming back is cheap.
+ */
+let providerStatusCache: { at: number; key: string; answer: ChannelRpcEnvelope } | undefined
+const PROVIDER_STATUS_TTL_MS = 30_000
 
 /**
  * Drop the snapshot after anything that changes the data behind it.
@@ -90,9 +103,13 @@ let poolSnapshot: ChannelPoolSnapshot | undefined
  * stale in a way a silent revalidation cannot hide: showing yesterday's account
  * list for a card the user just added an account to is worse than showing the
  * "reading" line for a moment.
+ *
+ * The provider-status cache is dropped with it, or a rescan that just found an
+ * account would be invisible behind a 30-second-old count.
  */
 export function invalidatePoolSnapshot(): void {
   poolSnapshot = undefined
+  providerStatusCache = undefined
 }
 
 /** Which of the two lists a card has open. At most one, like the reference. */
@@ -207,9 +224,30 @@ function expiryText(
   if (expiresAt === undefined || !Number.isFinite(expiresAt) || expiresAt <= 0) {
     return t?.('channelpool.expiryNever') ?? 'no expiry'
   }
-  const days = Math.ceil((expiresAt - Date.now()) / 86_400_000)
-  if (days <= 0) return t?.('channelpool.expiryNever') ?? 'no expiry'
-  return days === 1 ? '1d' : `${days}d`
+  // Two defects fixed here, both of which made the label actively misleading:
+  //
+  // 1. An EXPIRED credential used to return the "no expiry" string. `days <= 0`
+  //    covered both a negative value (already past) and zero (due today), and it
+  //    shared the placeholder meant for channels that carry no expiry at all
+  //    (ZCode among them). A CodeArts row whose STS token had lapsed read
+  //    "长期有效" while the balance cell beside it said
+  //    `APIG.0602: the security token has expired` — one row contradicting
+  //    itself, each half pointing at a different, wrong fix (#114).
+  //
+  // 2. `Math.ceil(days)` collapsed every sub-day remainder into "1d", so the
+  //    rows with the MOST urgent clocks (CodeArts STS tokens live about two
+  //    hours) were exactly the ones that could never show one.
+  //
+  // So: a past stamp is its own state, and the unit steps down to hours and then
+  // minutes as the deadline approaches. "no expiry" now means only what it says.
+  const remainingMs = expiresAt - Date.now()
+  if (remainingMs <= 0) return t?.('channelpool.expiryExpired') ?? 'expired'
+  const minutes = Math.floor(remainingMs / 60_000)
+  if (minutes < 60) return minutes <= 1 ? '<1m' : `${String(minutes)}m`
+  const hours = Math.floor(remainingMs / 3_600_000)
+  if (hours < 24) return `${String(hours)}h`
+  const days = Math.floor(remainingMs / 86_400_000)
+  return days === 1 ? '1d' : `${String(days)}d`
 }
 
 /** The vendor's currency, spelled the way that vendor spells it. */
@@ -224,6 +262,19 @@ function creditUnitLabel(channel: PoolWebChannel, t: Translate | undefined): str
 /** Trim a decimal to something a card can print without lying about it. */
 function amount(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2)
+}
+async function cachedProviderStatus(providers: readonly string[]): Promise<ChannelRpcEnvelope> {
+  // The key is the provider SET, not just a timestamp: a channel list that changed
+  // (a new pack row, a removed channel) must not be answered from a cache built for
+  // the old one.
+  const key = [...providers].sort().join('\u0000')
+  const hit = providerStatusCache
+  if (hit !== undefined && hit.key === key && Date.now() - hit.at < PROVIDER_STATUS_TTL_MS) {
+    return hit.answer
+  }
+  const answer = await callPack('provider.status', { providers: [...providers] })
+  providerStatusCache = { at: Date.now(), key, answer }
+  return answer
 }
 
 export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }): ReactElement {
@@ -284,9 +335,14 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
       // *which* providers hold accounts is one `provider.status` round trip:
       // it counts every named provider in a single answer, so the pool pays
       // two extra calls only for channels that actually have an account.
-      const statusAnswer = await callPack('provider.status', {
-        providers: channels.map(channel => channel.id),
-      })
+      //
+      // CACHED, because it is the single most expensive call on this page: the
+      // pack walks every named provider's account pool to count them, so one
+      // request is the sum of thirteen. Opening this section again a minute later
+      // pays that cost again for numbers that cannot have moved — which is why it
+      // "loads slowly every time" while the login page (static metadata, no
+      // counting) appears instantly.
+      const statusAnswer = await cachedProviderStatus(channels.map(channel => channel.id))
       const statuses = providerStatusesFrom(statusAnswer)
       const scanProviders = channels
         .map(channel => channel.id)

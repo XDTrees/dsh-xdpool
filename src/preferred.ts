@@ -18,9 +18,10 @@
  * @module dsh-xdpool/preferred
  */
 
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { readFile, rename, rm } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { ensureSecretDir, writeSecretFile } from './file-perms.ts'
 import { pluginDataDir } from './ignored.ts'
 
 /** File holding the preferred account id, inside the plugin data directory. */
@@ -101,13 +102,17 @@ export async function writePreferredId(
 ): Promise<void> {
   // Create the directory the TARGET lives in, not the default one: tests pass an
   // explicit path, and creating the wrong directory fails the write with ENOENT.
-  await mkdir(dirname(path), { recursive: true })
+  await ensureSecretDir(dirname(path))
   if (accountId === undefined) {
     await rm(path, { force: true })
     return
   }
   const payload = JSON.stringify({ version: 1, accountId: accountId.trim() }, null, 2)
   const temp = `${path}.tmp`
-  await writeFile(temp, `${payload}\n`, 'utf8')
+  // Owner-only for consistency with its neighbours: this file names the account
+  // the user pinned, which is an identity even though it is not a token. A
+  // directory where one secret file is 0600 and the next is 0644 is a directory
+  // nobody can reason about.
+  await writeSecretFile(temp, `${payload}\n`)
   await rename(temp, path)
 }

@@ -283,6 +283,35 @@ export type PoolWebAggregatePatch =
       providerId: string
       enabled?: boolean
       apiKey?: string
+      /**
+       * Every key, preferred first — replaces whatever was stored.
+       *
+       * A REPLACEMENT rather than a delta, for the same reason `models` is: the
+       * card sends the whole list it is showing, and a delta would let two open
+       * tabs interleave into a set neither of them chose. An empty array clears
+       * every key.
+       */
+      apiKeys?: readonly string[]
+      /**
+       * Append ONE key to the stored list.
+       *
+       * The card cannot send `apiKeys`, because the read route never echoes keys
+       * back — it reports only `keyCount`. A replacement list from the browser
+       * would therefore have to be built from placeholders, and would overwrite
+       * every key the user cannot see. This field says "add this one after the
+       * ones already stored", which is the only instruction the card can honestly
+       * give.
+       *
+       * Ignored when it duplicates a stored key.
+       */
+      appendApiKey?: string
+      /**
+       * How requests spread across those keys.
+       *
+       * Same vocabulary as the pool lane (`priority`, `round-robin`, `balanced`,
+       * `sticky`, `expiry`); unknown values are rejected rather than stored.
+       */
+      distribution?: string
       baseUrl?: string
       /**
        * The chosen model set, replacing whatever this provider exposed before.
@@ -349,6 +378,23 @@ export interface PoolWebAggregateProvider {
   discovered: boolean
   /** When the provider was first configured. */
   addedAt?: string
+  /**
+   * How many keys this vendor holds.
+   *
+   * `0` for a keyless vendor, `1` for the ordinary case, more when the user
+   * pasted alternates. The card needs the COUNT rather than the keys themselves —
+   * keys never leave the host — because "account usage" only means anything when
+   * there is something to distribute over: with one key it would be a switch with
+   * a single option and no effect, so the card hides it.
+   */
+  keyCount: number
+  /**
+   * The usage strategy in force, when the user has chosen one.
+   *
+   * Absent means the documented default (priority). Shares the pool lane's
+   * vocabulary so both kinds of card present one idea one way.
+   */
+  distribution?: string
 }
 /** The document {@link POOL_AGGREGATE_PATH} answers with. */
 export interface PoolWebAggregateStatus {
@@ -447,6 +493,19 @@ export interface PoolWebComboCandidate {
   usable: boolean
   contextWindow: number
   supportsImages: boolean
+  /**
+   * Other lanes that serve the SAME model, best-first, excluding this row.
+   *
+   * The "same model, different route" tier: when one provider rate-limits, the
+   * right move is usually to reach the same model through another provider, not
+   * to fall back to a different model — a different model changes the context
+   * window, tool-calling behaviour and writing style.
+   *
+   * Present so the card can offer "also try this model via …" in one click
+   * instead of making the user find the same name under another vendor and add
+   * it three times. Empty when the model has only one route.
+   */
+  siblings: readonly string[]
 }
 /** One chain, resolved against the live roster. */
 export interface PoolWebCombo {
@@ -455,6 +514,18 @@ export interface PoolWebCombo {
   name: string
   /** Members that exist right now, in order. Empty means the chain is dead. */
   models: readonly string[]
+  /**
+   * The chain as PLATFORM GROUPS, for the two-level editor.
+   *
+   * Always present — grouping `models` when the chain was saved flat — so the
+   * editor never has to branch on which shape reached it. `models` stays the flat,
+   * authoritative sequence; this is the same content arranged the way the router
+   * walks it (platform order, then model order within each platform).
+   *
+   * Model ids here are BARE (no `provider/` prefix): the owner is the field beside
+   * them, and carrying the prefix in both invites the two to disagree.
+   */
+  platforms: readonly { owner: string; models: readonly string[] }[]
   /** Members the user configured but which the roster no longer serves. */
   missing: readonly string[]
   strategy: 'fallback' | 'round-robin'
@@ -968,8 +1039,39 @@ export interface PoolWebAutomationJob {
    * what turns a row from "it ran" into "it did the things I care about".
    */
   detail?: readonly string[]
+  /**
+   * Per-item outcome of the last run, one entry per thing the job looked at.
+   *
+   * `detail` is free text and mixes counters with titles ("签到 +12",
+   * "复活 Account A"), so the card can print it but cannot GROUP it. This is the
+   * same information with a status attached, which is what makes "which tasks
+   * are still unclaimed, and why" answerable:
+   *
+   *   claimed  — the reward was collected on this run
+   *   already  — collected earlier today; nothing to do
+   *   skipped  — the board would not let it be claimed (locked, no energy, …)
+   *   failed   — the call came back an error
+   *
+   * Without it, "0 claimed" reads the same whether everything was already done,
+   * the account had no energy, or the endpoint is broken — three situations with
+   * three different fixes.
+   */
+  items?: readonly PoolWebAutomationItem[]
   /** A pending milestone worth naming, e.g. the next streak tier countdown. */
   progress?: string
+}
+/** How one item of an automation run ended. */
+export type PoolWebAutomationItemStatus = 'claimed' | 'already' | 'skipped' | 'failed'
+/** One item an automation job considered, with what happened to it. */
+export interface PoolWebAutomationItem {
+  /** The task board's own title, or a short label for a non-task step. */
+  title: string
+  status: PoolWebAutomationItemStatus
+  /** Credits/energy collected, when the upstream reported any. */
+  credit?: number
+  energy?: number
+  /** Why it was skipped or how it failed, in the upstream's words. */
+  note?: string
 }
 /**
  * Automation block on the status document.
@@ -1039,6 +1141,14 @@ export interface PoolWebAutomationEarnings {
 export type PoolRegion = 'cn' | 'global'
 /** How the pool spreads requests across its accounts. */
 export type PoolDistribution = 'priority' | 'round-robin' | 'balanced' | 'sticky' | 'expiry'
+/** The five strategies, as a value, so a request body can be validated against it. */
+export const POOL_DISTRIBUTIONS: readonly PoolDistribution[] = Object.freeze([
+  'priority', 'round-robin', 'balanced', 'sticky', 'expiry',
+])
+/** True when `value` names one of the five documented strategies. */
+export function isDistributionStrategy(value: string): value is PoolDistribution {
+  return (POOL_DISTRIBUTIONS as readonly string[]).includes(value)
+}
 /**
  * The schedule every automation job falls back to.
  *

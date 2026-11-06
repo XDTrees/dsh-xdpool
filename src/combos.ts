@@ -44,19 +44,111 @@ export const COMBO_CHANNEL = 'combo'
 /** Chain strategies. Anything else on disk falls back to `fallback`. */
 export const COMBO_STRATEGIES = ['fallback', 'round-robin'] as const
 export type ComboStrategy = (typeof COMBO_STRATEGIES)[number]
+/** The owner id the pool lane uses in a platform group. */
+export const POOL_OWNER = 'workbuddy'
+/**
+ * One platform's contribution to a chain: which lane, and which of its models.
+ *
+ * Chains are edited as a TWO-LEVEL list — platform order, then model order inside
+ * each platform — because that is the order the router actually walks and the
+ * order a reader thinks in ("try the bytes one, then Qoder; if both fail, go to
+ * CodeBuddy"). A flat member list expresses the same sequence but cannot show the
+ * grouping, so re-ordering "all of WorkBuddy's models together" meant moving them
+ * one at a time and hoping none was missed.
+ *
+ * `owner` is `workbuddy` for a pool model, or an aggregate provider id. Model ids
+ * are BARE here (no `provider/` prefix): the prefix is derived from the owner when
+ * the chain is flattened, so storing it twice would let the two disagree.
+ */
+export interface ComboPlatform {
+  owner: string
+  models: readonly string[]
+}
 /** A chain as the user configured it, before the catalogs are consulted. */
 export interface ComboSetting {
   /** `combo:<slug>`; derived from the name when absent or malformed. */
   id?: string
   name: string
-  /** Member model ids, in the order the user put them. */
+  /**
+   * Member model ids in the order the user put them — the FLATTENED, authoritative
+   * sequence the router walks.
+   *
+   * Kept as the single source of truth so every resolver, the picker row and the
+   * shim keep reading one field. A chain saved with `platforms` also carries this,
+   * derived from them, so an older build and an older config file both keep working.
+   */
   models: readonly string[]
+  /**
+   * The same chain as platform groups, when it was edited that way.
+   *
+   * Absent for a chain written before this existed, or saved flat. The editor
+   * groups such a chain by owner on the fly, so it opens correctly either way.
+   */
+  platforms?: readonly ComboPlatform[]
   /** How the chain advances; `fallback` restarts from the top each turn. */
   strategy?: ComboStrategy
   /** Consecutive turns one member serves before `round-robin` advances. */
   stickyLimit?: number
   /** Absent is treated as on; an explicit false hides the row. */
   enabled?: boolean
+}
+/**
+ * Flatten platform groups into the member ids the router walks.
+ *
+ * Platform order first, then model order inside each platform — the documented
+ * semantics ("same platform: try the next model; platform exhausted: the next
+ * platform"). A pool model is its bare id; anything else carries its owner as the
+ * `provider/` prefix, the same composite id the aggregate catalog and the picker
+ * use.
+ *
+ * Duplicates are dropped: the same pair twice would spend two attempts on one
+ * endpoint and report a fallback that never happened.
+ */
+export function flattenPlatforms(platforms: readonly ComboPlatform[]): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const platform of platforms) {
+    const owner = text(platform.owner)
+    if (owner === '') continue
+    for (const raw of platform.models) {
+      const model = text(raw)
+      if (model === '' || isComboId(model)) continue
+      // Derived here rather than stored, so a platform's models never carry a
+      // prefix that could disagree with its owner.
+      const id = owner === POOL_OWNER ? model : `${owner}/${model}`
+      if (seen.has(id)) continue
+      seen.add(id)
+      out.push(id)
+    }
+  }
+  return out
+}
+/**
+ * Group a flat member list back into platforms.
+ *
+ * For a chain saved flat, so the two-level editor can still open it: each id's
+ * owner is read from its shape (`workbuddy` for a bare id, the prefix otherwise)
+ * and groups come out in first-seen order — which is the order the members were
+ * in, so re-flattening reproduces exactly what was stored.
+ */
+export function splitPlatforms(models: readonly string[]): ComboPlatform[] {
+  const groups = new Map<string, string[]>()
+  const order: string[] = []
+  for (const raw of models) {
+    const id = text(raw)
+    if (id === '') continue
+    const parsed = parseProviderModelId(id)
+    const owner = parsed === null ? POOL_OWNER : parsed.providerId
+    const model = parsed === null ? id : parsed.modelId
+    let bucket = groups.get(owner)
+    if (bucket === undefined) {
+      bucket = []
+      groups.set(owner, bucket)
+      order.push(owner)
+    }
+    if (!bucket.includes(model)) bucket.push(model)
+  }
+  return order.map(owner => ({ owner, models: groups.get(owner) ?? [] }))
 }
 /** One picker row standing for a chain. */
 export interface ComboModelRow {
@@ -77,14 +169,27 @@ export interface ComboModelRow {
    */
   combo: true
 }
-/** What a member id turned out to name, once both catalogs were consulted. */
+/** What a member id turned out to name, once every catalog was consulted. */
 export interface ComboMember {
   /** The id to send downstream, verbatim. */
   modelId: string
   /** True when it is an aggregate `providerId/modelId` row. */
   aggregate: boolean
+  /**
+   * True when it is a 扫码登录 channel row (`<channel>:<model>`).
+   *
+   * A THIRD lane, not a flavour of `aggregate`: an aggregate member is served by
+   * this plugin's own endpoint with a key from the aggregate store, while a channel
+   * member is served by the HOST's adapter registry through `ctx.llm`. Different
+   * credentials, different error vocabularies, different code path in the shim — so
+   * a boolean that conflated them would send channel members down a lane that would
+   * 401 on a key that does not exist.
+   */
+  host?: boolean
   /** Set only for aggregate members. */
   providerId?: string
+  /** Set only for channel members: which channel serves it. */
+  channel?: string
   /** Display name for the chain editor. */
   name: string
   contextWindow: number
@@ -173,7 +278,18 @@ export function normalizeCombos(raw: unknown): ComboSetting[] {
     const name = text(value.name) || text(value.id)
     if (name === '') continue
     const id = text(value.id)
-    const models = stringList(value.models).filter(model => model !== id && !isComboId(model))
+    // TWO SHAPES: `platforms` (the two-level editor) and `models` (the flat list
+    // every earlier version wrote, and what the resolvers read).
+    //
+    // When `platforms` is present it WINS and `models` is derived from it, so the
+    // two can never disagree: the editor sends groups, and the stored flat list is
+    // whatever those groups flatten to. An empty or entirely malformed `platforms`
+    // therefore yields no chain rather than silently falling back to a stale
+    // `models` field the user just replaced.
+    const platforms = Array.isArray(value.platforms) ? normalizePlatforms(value.platforms) : undefined
+    const models = platforms === undefined
+      ? stringList(value.models).filter(model => model !== id && !isComboId(model))
+      : flattenPlatforms(platforms)
     if (models.length === 0) continue
     const chainId = isComboId(id) ? id : comboId(name)
     if (chainId === '' || seen.has(chainId)) continue
@@ -188,6 +304,7 @@ export function normalizeCombos(raw: unknown): ComboSetting[] {
       id: chainId,
       name,
       models,
+      ...platforms === undefined ? {} : { platforms },
       strategy,
       stickyLimit: limit > 0 ? limit : 1,
       enabled: value.enabled !== false,
@@ -195,12 +312,58 @@ export function normalizeCombos(raw: unknown): ComboSetting[] {
   }
   return out
 }
-/** The two catalogs a combo chain is resolved against. */
+/**
+ * Normalise the `platforms` array from an untrusted document.
+ *
+ * Drops a group with no owner or no models rather than keeping it: an empty group
+ * renders as a platform card the user cannot act on, and it contributes no members,
+ * so keeping it would make the editor disagree with the router about what the chain
+ * contains.
+ */
+function normalizePlatforms(raw: readonly unknown[]): ComboPlatform[] {
+  const out: ComboPlatform[] = []
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const value = entry as Record<string, unknown>
+    const owner = text(value.owner)
+    if (owner === '') continue
+    const models = stringList(value.models).filter(model => !isComboId(model))
+    if (models.length === 0) continue
+    out.push({ owner, models })
+  }
+  return out
+}
+/**
+ * One model served by a 扫码登录 channel, as the route editor sees it.
+ *
+ * These are the channels the vendored pack registers with the HOST (`trae`,
+ * `qoder`, `codebuddy`…). They are in neither catalog above: the pool catalog
+ * describes the WorkBuddy account lanes, and the aggregate catalog describes the
+ * vendors in this plugin's own registry. A chain could not name them at all, which
+ * is why the routing page offered exactly ONE platform — the pool — while the login
+ * page happily showed thirteen.
+ */
+export interface HostModelRow {
+  /** `<channel>:<modelId>` — the id the shim already resolves to its fifth lane. */
+  id: string
+  channel: string
+  modelId: string
+  name: string
+}
+/** The catalogs a combo chain is resolved against. */
 export interface ComboSources {
   /** Pool rows, by id. */
   pool: readonly WorkBuddyModelInfo[]
   /** Aggregate rows, by composite id. */
   aggregate: readonly AggregateModelRow[]
+  /**
+   * Login-channel rows, by `<channel>:<model>`.
+   *
+   * Optional so every existing caller keeps compiling: an absent list means "no
+   * channel member can be resolved", which is exactly the behaviour before this
+   * existed.
+   */
+  host?: readonly HostModelRow[]
 }
 /**
  * Classify one member id against both catalogs.
@@ -225,6 +388,33 @@ export function resolveComboMember(modelId: string, sources: ComboSources): Comb
       supportsImages: aggregateRow.supportsImages,
     }
   }
+  /**
+   * A 扫码登录 channel row, checked BEFORE the pool.
+   *
+   * Channel ids are `<channel>:<model>`, and the channel set is closed (it comes
+   * from the pack's own registered list), so a match here is unambiguous. Order
+   * still matters: a pool model id is bare and can never contain `:`, so trying the
+   * channel first cannot shadow one — and doing it first keeps a channel named after
+   * a pool id from being swallowed.
+   *
+   * The window and image flag are not known for a channel row (the host's listing
+   * publishes neither), so the chain's intersection falls back to the documented
+   * defaults. That is the honest answer: an unknown window must not be treated as a
+   * large one, or the host would size a compaction against a limit nobody promised.
+   */
+  const hostRow = sources.host?.find(row => row.id === id)
+  if (hostRow !== undefined) {
+    return {
+      modelId: id,
+      aggregate: false,
+      host: true,
+      channel: hostRow.channel,
+      name: hostRow.name,
+      contextWindow: COMBO_DEFAULT_CONTEXT_WINDOW,
+      maxOutputTokens: COMBO_DEFAULT_MAX_OUTPUT,
+      supportsImages: false,
+    }
+  }
   const poolRow = sources.pool.find(row => row.id === id)
   if (poolRow === undefined) return undefined
   return {
@@ -236,6 +426,68 @@ export function resolveComboMember(modelId: string, sources: ComboSources): Comb
     supportsImages: poolRow.supportsImages,
   }
 }
+/**
+ * The same model served by more than one lane, in the order to try them.
+ *
+ * This is the "same model, different route" tier: when a lane rate-limits, the
+ * answer is usually to reach the SAME model through another provider, not to
+ * fall back to a different model. Switching models changes context window, tool
+ * calling, structured-output shape and writing style — a cross-model fallback is
+ * a last resort, not a first one.
+ *
+ * The registry carries 86 model ids under two or more providers (kimi-k2.5 sits
+ * under eight), so the tier is real and not theoretical. What was missing is
+ * that a user had to spell it out: three separate chain members naming the same
+ * model three times, in the right order, and re-edit the chain whenever a
+ * provider was added.
+ *
+ * Derivation, not configuration: for one model id, every aggregate row sharing
+ * `modelName` (or the bare id when the registry names no shared display name) is
+ * a route to it. Pool rows are excluded — `buddy:`/`workbuddy:` are the pool's
+ * own lanes and naming them here would silently spend the user's WorkBuddy
+ * credits as a "fallback".
+ *
+ * The requested provider, when given, comes FIRST: the user chose that lane, so
+ * it stays the primary and the others are the alternates.
+ */
+export function siblingRoutes(
+  modelId: string,
+  sources: ComboSources,
+  preferredProvider?: string,
+): string[] {
+  const id = text(modelId)
+  if (id === '') return []
+  const target = sources.aggregate.find(row => row.id === id)
+  if (target === undefined) return [id]
+  // A shared display name is what identifies "the same model" across vendors;
+  // the registry does not always publish one, so fall back to the bare id.
+  const name = text(target.name)
+  const bare = bareModelIdOf(target)
+  const out: string[] = [id]
+  for (const row of sources.aggregate) {
+    if (row.id === id) continue
+    if (row.providerId === target.providerId) continue
+    const sameName = name !== '' && text(row.name) === name
+    const sameBare = bare !== '' && bareModelIdOf(row) === bare
+    if (!sameName && !sameBare) continue
+    // Different vendors, same model. Context window and capabilities are not
+    // compared here on purpose: a vendor that publishes a narrower window is
+    // still a valid alternate route, and refusing it would drop the very
+    // provider the user is trying to fall back TO.
+    if (!out.includes(row.id)) out.push(row.id)
+  }
+  if (preferredProvider === undefined || out.length <= 1) return out
+  // Stable move-to-front: the user's chosen lane stays primary.
+  const primary = out.filter(candidate => candidate.startsWith(`${preferredProvider}/`))
+  return [...primary, ...out.filter(candidate => !candidate.startsWith(`${preferredProvider}/`))]
+}
+
+/** The model id without its provider prefix, for cross-vendor comparison. */
+function bareModelIdOf(row: AggregateModelRow): string {
+  const parsed = parseProviderModelId(row.id)
+  return parsed === null ? text(row.modelId) : parsed.modelId
+}
+
 /**
  * Every combo row that can currently answer, given the catalogs.
  *

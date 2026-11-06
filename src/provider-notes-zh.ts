@@ -56,6 +56,7 @@ export const PROVIDER_NOTES_ZH: Readonly<Record<string, string>> = Object.freeze
   "kimi_code": "Kimi Code 订阅，模型 id 取自 9router 的 kimi 注册表",
   "lightning": "Lightning AI 的 Model APIs 网关",
   "llamacpp": "本地服务器，模型列表取决于用户已加载的模型",
+  "custom_openai": "自定义 OpenAI 兼容端点：vLLM / LiteLLM / one-api / 自建网关，填 base URL 和 key 后拉取模型",
   "llm7": "default/fast/pro 别名被固定，只留流式工具模型",
   "lmstudio": "本地服务器，模型列表取决于用户已加载的模型",
   "minimax": "推理内容从正文流中单独拆出，语音与图像 id 已剔除",

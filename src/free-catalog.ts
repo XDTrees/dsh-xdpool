@@ -296,12 +296,54 @@ export class FreeCatalog {
   private listeners = new Set<() => void>()
   private lastError: string | undefined
   private lastUpdatedAt: string | undefined
+  /**
+   * Whether this lane contributes models at all.
+   *
+   * OFF unless the user turns it on, which is the opposite of every other lane
+   * here and deliberate: the 免密 lane is a shared third-party endpoint with no
+   * credential of its own, so it cannot be "configured" — it is either silently
+   * present or absent. Left on by default it dropped a group into the model
+   * picker that the user never asked for and could not remove: the aggregate
+   * switch does not govern it (it is not an aggregate provider), so the only
+   * way out was editing the file. Reported as "关不掉，应该默认是关闭的".
+   *
+   * An explicit `true` is what enables it — `undefined` (a config written before
+   * this switch existed, or a fresh install) stays off.
+   */
+  private laneEnabled = false
 
   constructor(fallback: readonly string[] = FALLBACK_FREE_MODEL_IDS) {
     this.rows = Object.freeze(buildFreeCatalog(fallback))
   }
 
+  /** Turn the lane on or off; the roster readers all consult this. */
+  setEnabled(enabled: boolean): void {
+    if (this.laneEnabled === enabled) return
+    this.laneEnabled = enabled
+    // Same notification the roster updates use: the card's toggle and the
+    // adapter's model list both read this class, and neither polls.
+    for (const listener of this.listeners) listener()
+  }
+
+  /** Whether the lane is contributing models right now. */
+  enabled(): boolean {
+    return this.laneEnabled
+  }
+
+  /**
+   * The rows that may be OFFERED.
+   *
+   * Empty when the lane is off. Callers that need the roster regardless (the
+   * aggregate page's "free" filter, which lists what the lane COULD serve) use
+   * {@link allRows} instead — so switching the lane off hides it from the model
+   * picker without erasing it from the page that explains it.
+   */
   current(): readonly FreeModelRow[] {
+    return this.laneEnabled ? this.rows : []
+  }
+
+  /** Every row the lane knows about, offered or not. */
+  allRows(): readonly FreeModelRow[] {
     return this.rows
   }
 

@@ -16,6 +16,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { createElement as h } from 'react'
+import { SIDEBAR_ROW_FIELD, readSidebarRow } from './sidebar-row.ts'
+import { DIST_OPTIONS, distHint, distLabel } from './distribution.ts'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
@@ -79,8 +81,15 @@ export interface PoolCardInjected {
 export interface PoolCardSettingsScope {
   getSnapshot(): { writable?: boolean; value?: unknown }
   subscribe?(listener: () => void): () => void
-  /** Write one field of the plugin settings section. */
-  set?(field: string, value: unknown): Promise<void> | void
+  /**
+   * Write one field of the plugin settings section.
+   *
+   * The host answers `false` when it refused the write (a revision conflict —
+   * it has already re-read the document for us, so it does not throw), and an
+   * older host answers nothing at all. Both have to be representable, otherwise
+   * a refusal is indistinguishable from a success (issue #75).
+   */
+  set?(field: string, value: unknown): Promise<boolean | void> | boolean | void
 }
 /** Props delivered by the Plugin configuration item slot. */
 /**
@@ -202,7 +211,6 @@ function formatCapacity(value: number | undefined): string {
  * the two cache-friendly extremes, then the two spreading modes. The row is
  * laid out one chip per mode, so this list length is also the column count.
  */
-const DIST_OPTIONS = ['sticky', 'priority', 'balanced', 'round-robin', 'expiry'] as const
 /**
  * The two supplier cards, in the order they are shown.
  *
@@ -261,6 +269,15 @@ interface RegionCardModel {
     readonly editable: boolean
     readonly dirty: boolean
     readonly enabled: number
+    /**
+     * Ids the SAVED selection names that the current catalog no longer lists.
+     *
+     * Non-empty is normal after a roster refresh (the gateway's list changes),
+     * and it is the one fact that explains "my selection reset to 1 of 14": the
+     * saved list is intact, the roster shrank. Shown so the count stops looking
+     * like data loss.
+     */
+    readonly missing: readonly string[]
   }
   readonly activeAccount: PoolWebAccount | undefined
   /**
@@ -325,21 +342,7 @@ function creditLeftOf(status: PoolWebStatus | undefined): string | undefined {
 }
 type DistTranslator = PoolCardInjected['t'] | undefined
 /** Localized name of one distribution mode. */
-function distLabel(option: PoolDistribution, t: DistTranslator): string {
-  if (option === 'sticky') return t?.('row.distSticky') ?? 'Per conversation'
-  if (option === 'priority') return t?.('row.distPriority') ?? 'Priority'
-  if (option === 'balanced') return t?.('row.distBalanced') ?? 'Balanced'
-  if (option === 'expiry') return t?.('row.distExpiry') ?? 'Expiring first'
-  return t?.('row.distRoundRobin') ?? 'Round-robin'
-}
 /** One-line explanation of what a mode does to caching and spend. */
-function distHint(option: PoolDistribution, t: DistTranslator): string {
-  if (option === 'sticky') return t?.('row.distStickyHint') ?? ''
-  if (option === 'priority') return t?.('row.distPriorityHint') ?? ''
-  if (option === 'balanced') return t?.('row.distBalancedHint') ?? ''
-  if (option === 'expiry') return t?.('row.distExpiryHint') ?? ''
-  return t?.('row.distRoundRobinHint') ?? ''
-}
 /** Pick the right promotion chip for a model. */
 /** One model's draft state while the card holds unsaved edits. */
 interface ModelDraftEntry {
@@ -455,6 +458,19 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
   // The slot tells us whether the settings document is writable; a
   // read-only scope (locked profile) renders the model rows disabled.
   const settingsWritable = settingsScope?.getSnapshot().writable === true
+  /**
+   * Whether the plugin owns a row in the left sidebar (issue #70).
+   *
+   * Seeded from, and kept in step with, the settings mirror rather than from the
+   * pool status: the row is registered by `apply()`, before any card exists, and
+   * both sides must answer the same question the same way.
+   */
+  const [sidebarRow, setSidebarRowState] = useState(() => readSidebarRow(settingsScope))
+  const [sidebarRowBusy, setSidebarRowBusy] = useState(false)
+  useEffect(() => {
+    const unsubscribe = settingsScope?.subscribe?.(() => { setSidebarRowState(readSidebarRow(settingsScope)) })
+    return () => { unsubscribe?.() }
+  }, [settingsScope])
   /** Which region tab is showing. A CN-only install never leaves this. */
   const [activeRegion, setActiveRegion] = useState<'cn' | 'global'>('cn')
   /**
@@ -476,9 +492,44 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
    * already expanded is a wall of text where the user asked for a summary, and
    * the disclosure is one click away.
    */
+  /**
+   * Which disclosure pane is open, keyed by pane id.
+   *
+   * ACCORDION WITHIN A CARD: opening one pane closes the others of the SAME
+   * card. The panes are tall — the account list is one row per account and the
+   * model list is one card per model — so two open at once means the second one
+   * is off-screen below the first, and the user who just clicked "Models"
+   * sees nothing happen (reported as "点了咋没起作用，实际都续在后面").
+   *
+   * Cross-CARD independence is kept: the pane ids carry the region, so opening
+   * the domestic model list must not close the international one. Collapsing is
+   * scoped to the prefix before the last separator.
+   *
+   * All panes start closed: a card that arrives with a 200-row account list
+   * already expanded is a wall of text where the user asked for a summary.
+   */
   const [openedPanes, setOpenedPanes] = useState<Record<string, boolean>>({})
   const setPane = (paneId: string, open: boolean): void => {
-    setOpenedPanes(prev => (prev[paneId] === open ? prev : { ...prev, [paneId]: open }))
+    setOpenedPanes(prev => {
+      // Closing: only this pane changes.
+      if (open === false) {
+        return prev[paneId] === false ? prev : { ...prev, [paneId]: false }
+      }
+      // Opening: this pane opens and its SIBLINGS on the same card close.
+      //
+      // The card a pane belongs to is everything up to the LAST "-": the ids are
+      // `dsm-xdpool-${region}-${pane}`. Derived from the id rather than passed in
+      // so a new pane cannot forget to declare its card and end up closing
+      // nothing — or, worse, closing the other lane's.
+      const cardPrefix = paneId.slice(0, paneId.lastIndexOf('-'))
+      const next: Record<string, boolean> = {}
+      for (const [id, value] of Object.entries(prev)) {
+        if (id !== paneId && value === true && id.startsWith(`${cardPrefix}-`)) continue
+        next[id] = value
+      }
+      next[paneId] = true
+      return next
+    })
   }
   const [error, setError] = useState<string | undefined>(undefined)
   /**
@@ -560,6 +611,16 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
    * drops it back to the copy the server last reported.
    */
   const [draftByRegion, setDraftByRegion] = useState<Partial<Record<PoolRegion, Record<string, ModelDraftEntry>>>>({})
+  /**
+   * Whether a region's model pane is showing the WHOLE roster.
+   *
+   * Per region, and default off, because the pane opens on a card the user
+   * scrolled to reach: fourteen full rows of mostly-disabled models pushed
+   * everything else a screen and a half further down (the reported "无限往下
+   * 续"). The enabled rows are what "my models" means; the rest are one click
+   * away and the button says how many there are.
+   */
+  const [showAllModels, setShowAllModels] = useState<Partial<Record<PoolRegion, boolean>>>({})
   /**
    * The draft one region card is holding, if it holds any.
    *
@@ -1011,15 +1072,29 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
     editable: boolean
     dirty: boolean
     enabled: number
+    missing: readonly string[]
   } => {
     const here = statusOf(region)
     const local = draftByRegion[region]
     const rows = local ?? (here === undefined ? {} : draftFromStatus(here))
+    // Count what the CATALOG can show, and separately note anything the saved
+    // selection names that the catalog no longer lists.
+    //
+    // The two numbers disagreeing is what a user reads as "it reset to 1 of 14"
+    // after a restart: the saved list still holds five ids, but the roster that
+    // came back from the gateway that time held only one of them. Neither number
+    // is wrong — the disagreement itself is the information, and it used to be
+    // invisible. `missing` names those ids so the card can say "still saved but
+    // not offered right now" instead of letting the count look like a reset.
+    const listed = new Set(Object.keys(rows))
+    const saved = here?.selection.enabledModelIds ?? []
+    const missing = saved.filter(id => !listed.has(id))
     return {
       draft: rows,
       editable: settingsWritable,
       dirty: local !== undefined && here !== undefined && draftIsDirty(here, local),
       enabled: Object.values(rows).filter(entry => entry.enabled).length,
+      missing,
     }
   }
   /**
@@ -1108,7 +1183,34 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
       for (const [id, entry] of Object.entries(local)) {
         if (entry.budget !== undefined) contextBudgets[id] = entry.budget
       }
-      await write.call(settingsScope, MODEL_SELECTION_KEY[region], { enabledModelIds, imageModelIds, contextBudgets })
+      // The host reports a revision conflict by RETURNING false, not by throwing
+      // (it has already re-read the document). Discarding that value is how a
+      // rejected write used to be announced as "saved" (issue #75).
+      const accepted = await write.call(
+        settingsScope,
+        MODEL_SELECTION_KEY[region],
+        { enabledModelIds, imageModelIds, contextBudgets },
+      )
+      if (accepted === false) {
+        // Keep the draft: the user's ticks are still the thing they meant to
+        // save, and a rollback would invite them to re-save the stale list.
+        if (mounted.current) {
+          setError(t?.('row.modelsConflict') ?? 'The settings changed elsewhere; review and save again')
+        }
+        return
+      }
+      // Re-read BEFORE dropping the draft. `setDraftFor(region, undefined)` does
+      // not mean "keep showing what I just wrote" — it means "fall back to the
+      // last status the pool reported", which is refreshed by a 30s poll. Without
+      // this read the card paints the PRE-save list for up to half a minute, and
+      // a second click in that window saves the rolled-back selection.
+      const reread = await refresh(region)
+      if (reread === undefined) {
+        // The write landed but we cannot prove what it landed on; keeping the
+        // draft is the honest state, and the poll will settle it shortly.
+        if (mounted.current) setFlash(t?.('row.modelsSaved') ?? 'Saved')
+        return
+      }
       setDraftFor(region, undefined)
       if (mounted.current) setFlash(t?.('row.modelsSaved') ?? 'Saved')
     } catch (cause: unknown) {
@@ -1146,6 +1248,39 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
       for (const other of REGION_CARDS) await refresh(other)
     } catch (cause: unknown) {
       if (mounted.current) setError(String(cause))
+    }
+  }
+  /**
+   * Turn the sidebar row on or off (issue #70).
+   *
+   * Written through the same settings field `apply()` reads, so the two agree
+   * without a new endpoint. The row itself is owned by the bundle registration,
+   * so the mirror's change notification is what makes this take effect without a
+   * restart on hosts that publish one; everywhere else it lands on next launch,
+   * which the hint text says rather than implies.
+   */
+  const setSidebarRow = async (next: boolean): Promise<void> => {
+    const write = settingsScope?.set
+    if (write === undefined) {
+      setError(t?.('row.modelsSaveError', { message: 'settings scope is read-only' })
+        ?? 'settings scope is read-only')
+      return
+    }
+    setSidebarRowBusy(true)
+    setFlash(undefined)
+    try {
+      const accepted = await write.call(settingsScope, SIDEBAR_ROW_FIELD, next)
+      if (accepted === false) {
+        if (mounted.current) {
+          setError(t?.('row.modelsConflict') ?? 'The settings changed elsewhere; review and save again')
+        }
+        return
+      }
+      if (mounted.current) setSidebarRowState(next)
+    } catch (cause: unknown) {
+      if (mounted.current) setError(String(cause))
+    } finally {
+      if (mounted.current) setSidebarRowBusy(false)
     }
   }
   /**
@@ -1479,6 +1614,37 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                     </p>
                   </section>}
               
+              {/* Issue #70: a switch over the sidebar entry, and only over it.
+                  The Settings page keeps the card either way (that is the
+                  escape hatch — hiding the row must never leave the switch out
+                  of reach), and the model pool is untouched: this is a question
+                  about where the page is reachable from, not about what it
+                  serves. */}
+              <section className="dsm-xdpool-card dsm-xdpool-sidebar-row" aria-label={t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}>
+                <div className="dsm-xdpool-sidebar-row-head">
+                  <h3 className="dsm-xdpool-usage-title">{t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}</h3>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={sidebarRow}
+                    disabled={!settingsWritable || sidebarRowBusy}
+                    className={`dsm-xdpool-auto-switch${sidebarRow ? ' dsm-xdpool-auto-switch-on' : ''}`}
+                    onClick={() => { void setSidebarRow(!sidebarRow) }}
+                  >
+                    {sidebarRowBusy
+                      ? (t?.('row.autoBusy') ?? 'Saving…')
+                      : sidebarRow
+                        ? (t?.('row.autoOn') ?? 'On')
+                        : (t?.('row.autoOff') ?? 'Off')}
+                  </button>
+                </div>
+                <p className="dsm-xdpool-usage-note">
+                  {sidebarRow
+                    ? (t?.('row.sidebarRowOn') ?? 'XD Pool has its own row in the left sidebar. Turn it off to open the pool from Settings instead.')
+                    : (t?.('row.sidebarRowOff') ?? 'The sidebar row is hidden; the pool still opens from Settings → XD Pool, and models are unaffected.')}
+                </p>
+              </section>
+
               {/* Two region cards side by side, one per supplier lane.
                   Both are always rendered, so a lane with no accounts reads as
                   "not signed in here yet" rather than a tab that only appears
@@ -1751,6 +1917,23 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                     total: models.length,
                                   }) ?? `${card.modelState.enabled} / ${models.length} enabled`}
                                 </span>
+                                {/*
+                                  The saved selection is intact; this roster is
+                                  shorter. Saying so is the difference between
+                                  "the plugin lost my choices" and "the gateway
+                                  is not offering those three right now" — the
+                                  same numbers, read two very different ways.
+                                */}
+                                {card.modelState.missing.length === 0 ? null : (
+                                  <span
+                                    className="dsm-xdpool-region-pane-warn"
+                                    title={card.modelState.missing.join(', ')}
+                                  >
+                                    {t?.('row.modelsMissingSaved', {
+                                      count: card.modelState.missing.length,
+                                    }) ?? `${card.modelState.missing.length} saved model(s) not offered right now`}
+                                  </span>
+                                )}
                                 <div className="dsm-xdpool-models-actions">
                                   {card.status?.catalogSource !== 'fallback'
                                     ? null
@@ -1781,7 +1964,25 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                 </div>
                               </div>
                               <div className="dsm-xdpool-model-list">
-                                {[...models]
+                                {/*
+                                  Collapsed to the ENABLED rows by default.
+                                  
+                                  The roster is 14–16 models per region and every
+                                  row is a full card, so opening "Models" used to
+                                  add a screen and a half of scroll to a panel the
+                                  user had just scrolled to reach — the reported
+                                  "无限往下续". The rows that matter when you open
+                                  this pane are the ones you turned on; the rest
+                                  are what you came to browse, and one click away
+                                  is close enough for them.
+                                  
+                                  Ordering is preserved, so collapsing cannot
+                                  reorder what the user sees when they expand.
+                                */}
+                                {(showAllModels[region] === true
+                                  ? [...models]
+                                  : models.filter(model => card.modelState.draft[model.id]?.enabled ?? model.enabled)
+                                )
                                   .sort((a, b) => Number(isFreeNow(b, now, region)) - Number(isFreeNow(a, now, region)))
                                   .map(model => (
                                     <ModelRow
@@ -1801,6 +2002,25 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                     />
                                   ))}
                               </div>
+                              {/*
+                                One control for the rest. The count is the point:
+                                "show the other 9" tells the reader how much is
+                                hidden, which is what makes the collapse safe
+                                rather than something that looks like lost rows.
+                              */}
+                              {models.length > models.filter(model => card.modelState.draft[model.id]?.enabled ?? model.enabled).length
+                                ? <button
+                                    type="button"
+                                    className="dsm-xdpool-model-more"
+                                    onClick={() => { setShowAllModels(prev => ({ ...prev, [region]: !(prev[region] === true) })) }}
+                                  >
+                                    {showAllModels[region] === true
+                                      ? (t?.('row.modelsShowLess') ?? '只显示已启用')
+                                      : (t?.('row.modelsShowAll', {
+                                          count: models.length - models.filter(model => card.modelState.draft[model.id]?.enabled ?? model.enabled).length,
+                                        }) ?? `显示其余 ${models.length} 个`)}
+                                  </button>
+                                : null}
                             </>}
                       </RegionCardPane>
                       <RegionCardPane id={distPaneId} open={distOpen}>
@@ -1962,6 +2182,37 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                             ? null
                                             : <span className="dsm-xdpool-auto-job-detail">
                                                 {job.detail.join(' · ')}
+                                              </span>}
+                                          {/*
+                                            The per-item breakdown, grouped by
+                                            status. `detail` above says what
+                                            happened in sentences; this says how
+                                            many are in each state, which is the
+                                            part that answers "is anything still
+                                            unclaimed, and why".
+
+                                            Only shown when at least one item
+                                            exists: a job that considered nothing
+                                            (a report pass, say) has no items and
+                                            gaining an empty strip would be noise.
+                                          */}
+                                          {job?.items === undefined || job.items.length === 0
+                                            ? null
+                                            : <span className="dsm-xdpool-auto-job-items">
+                                                {(['claimed', 'already', 'skipped', 'failed'] as const).map(status => {
+                                                  const group = job.items?.filter(item => item.status === status) ?? []
+                                                  if (group.length === 0) return null
+                                                  return <span
+                                                    key={status}
+                                                    className={`dsm-xdpool-auto-job-item dsm-xdpool-auto-job-item-${status}`}
+                                                    title={group.map(item => item.title
+                                                      + (item.note === undefined ? '' : ` (${item.note})`)).join('\n')}
+                                                  >
+                                                    {t?.(`row.autoItem.${status}` as const) ?? status}
+                                                    {' '}
+                                                    {group.length}
+                                                  </span>
+                                                })}
                                               </span>}
                                         </div>
                                       )

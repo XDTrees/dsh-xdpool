@@ -4973,5 +4973,23 @@
     "website": "https://openai.com/",
     "local": false,
     "source": "fcc"
+  },
+  {
+    "id": "custom_openai",
+    "name": "Custom OpenAI-compatible",
+    "category": "apikey",
+    "auth": {
+      "kind": "apiKey",
+      "env": "CUSTOM_OPENAI_API_KEY",
+      "url": null
+    },
+    "baseUrl": "",
+    "format": "openai-chat",
+    "models": [],
+    "notes": "Any OpenAI-compatible endpoint — vLLM, LiteLLM, one-api, LM Studio, a self-hosted gateway. Paste the base URL (ending in /v1) and the key on this card, then press Fetch models.",
+    "website": null,
+    "local": false,
+    "baseUrlOverrideEnv": "CUSTOM_OPENAI_BASE_URL",
+    "custom": true
   }
 ]

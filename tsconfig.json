@@ -9,6 +9,7 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,

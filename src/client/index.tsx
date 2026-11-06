@@ -38,6 +38,7 @@ import { PanelIcon } from './panel-icon.tsx'
 import { PoolPage } from './page.tsx'
 import { POOL_NAV_ICON_MASK_URL } from './nav-icon.ts'
 import { installPackRpc } from './channel-rpc.ts'
+import { readSidebarRow } from './sidebar-row.ts'
 import type { PoolCardInjected } from './PoolCard.tsx'
 import { en, zh } from './locales.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
@@ -164,22 +165,54 @@ export function apply(ctx: WorkBuddyClientContext): void {
     // by `key`. An overlay was tried first and rejected: a floating panel over
     // the conversation is not the same thing as a place, and the host already
     // has a slot for places.
+    //
+    // Issue #70 asked for a switch over that row, and asked for it to leave the
+    // settings page and the model pool alone — so the flag gates ONLY the row
+    // and the page it opens. `settings.section` above is registered
+    // unconditionally, which is also what keeps the switch reachable: hiding the
+    // row can never lock anybody out of the card that turns it back on.
     try {
-      ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-        name: 'sidebar.panellist',
-        id: 'xdpool',
-        // First-party rows are 0 (Plugins) and schedules, community ones sit at
-        // 30+, so 20 keeps the pool with the other top-level destinations.
-        order: 20,
-        // A thunk, like the settings section: the row label follows a locale
-        // change without re-registering.
-        label: () => t('row.navLabel'),
-      }, PanelIcon))
+      let disposeRow: (() => void) | undefined
+      const syncSidebarRow = (): void => {
+        const wanted = readSidebarRow(settingsScope)
+        if (wanted && disposeRow === undefined) {
+          disposeRow = ctx.slots.register({
+            name: 'sidebar.panellist',
+            id: 'xdpool',
+            // First-party rows are 0 (Plugins) and schedules, community ones sit
+            // at 30+, so 20 keeps the pool with the other top-level destinations.
+            order: 20,
+            // A thunk, like the settings section: the row label follows a locale
+            // change without re-registering.
+            label: () => t('row.navLabel'),
+          }, PanelIcon)
+        } else if (!wanted && disposeRow !== undefined) {
+          disposeRow()
+          disposeRow = undefined
+        }
+      }
+      ctx.slots.inject('sidebar.panellist', () => {
+        syncSidebarRow()
+        // Follow the checkbox without a restart where the host publishes
+        // settings changes; hosts that do not are covered by the next launch,
+        // because `syncSidebarRow` runs again here every time.
+        const unsubscribe = settingsScope?.subscribe?.(syncSidebarRow)
+        return () => {
+          unsubscribe?.()
+          disposeRow?.()
+          disposeRow = undefined
+        }
+      })
 
       // `main` picks its entry by `key === activePanelId`, so the key has to be
       // the same id the row selects. The card is the same component the settings
       // section renders — `settingsScope` resolves off the config-forms mirror,
       // not off the slot, so the page keeps its write access.
+      //
+      // Registered unconditionally even when the row is switched off: a stale
+      // `activePanelId` (the host remembers the last panel) would otherwise
+      // render nothing at all. With the page present, an off switch just means
+      // the pool opens from Settings.
       //
       // Wrapped in `PoolPage`, not registered bare: `.centerCol` is
       // `overflow:hidden`, so the page would clip at the fold with no way to

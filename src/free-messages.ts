@@ -134,22 +134,131 @@ function imageUrlOf(block: Record<string, unknown>, resolveImage: ImageResolver 
 interface ToolResult {
   callId: string
   content: Record<string, unknown>[]
+  /** The call failed, per the caller. Carried to wires that can express it. */
+  failed?: boolean
 }
 
-/** Every tool result a message carries, in order. */
-function toolResultsOf(message: Record<string, unknown>): ToolResult[] {
-  if (message.role !== 'tool') {
-    const blocks = blocksOf(message.content).filter(block => block.type === 'tool-result')
-    if (blocks.length === 0) return []
-    const callId = text(message.tool_call_id ?? message.toolCallId ?? message.id)
-    return [{ callId, content: blocks }]
+/**
+ * Drop tool calls nobody answered, and tool results nobody called.
+ *
+ * Every wire spells tool traffic as a PAIR: an assistant `tool_calls` entry with
+ * an id, and a `role: 'tool'` message answering that same id. Upstream rejects a
+ * conversation that breaks the pairing — and it rejects it EVERY TURN from then
+ * on, because the offending messages stay in the history. A single interrupted
+ * turn therefore makes a session permanently unusable, which is exactly what
+ * users report as "this conversation broke and won't come back".
+ *
+ * Three shapes are repaired, all by DROPPING rather than inventing:
+ *
+ *   1. a `tool_calls` entry with no answer — the model called a tool, the turn
+ *      was interrupted, and the result never arrived. Keeping the call and
+ *      fabricating an answer would teach the model a lie; dropping the call
+ *      leaves the assistant text intact and the conversation legible.
+ *   2. a `tool` message whose id answers no call — the call was pruned in an
+ *      earlier turn, or the result outlived its call.
+ *   3. a `tool_calls` entry with an EMPTY name — it is "answered" by any result
+ *      but cannot be replayed: upstream validates the name. Responding side is
+ *      already safe (an unknown name is held back rather than streamed), but the
+ *      HISTORY would otherwise keep shipping it.
+ *
+ * Dropping is safe here only because the alternative is a hard 400 that kills
+ * every subsequent turn. It is reported through `warnings` so the drop is not
+ * silent — the same channel the request body already uses for other repairs.
+ */
+function repairToolPairing(
+  messages: Record<string, unknown>[],
+  warnings: string[],
+): Record<string, unknown>[] {
+  // Which ids does the history actually call, and which does it answer?
+  const called = new Set<string>()
+  const answered = new Set<string>()
+  for (const message of messages) {
+    for (const call of toolCallsOf(message)) {
+      if (call.id !== '' && call.name !== '') called.add(call.id)
+    }
+    for (const result of toolResultsOf(message)) {
+      if (result.callId !== '') answered.add(result.callId)
+    }
   }
-  const out: ToolResult[] = []
-  const blocks = blocksOf(message.content).filter(block => block.type === 'tool-result')
-  for (const block of blocks) {
-    out.push({ callId: text(block.tool_use_id ?? block.toolCallId ?? message.tool_call_id ?? message.id), content: [block] })
+
+  let droppedCalls = 0
+  let droppedResults = 0
+  const out: Record<string, unknown>[] = []
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      const id = text(message.tool_call_id ?? message.toolCallId ?? message.id)
+      // Keep a result only when a call exists for it. An id-less result is kept:
+      // some callers omit it and upstream accepts the message positionally.
+      if (id !== '' && !called.has(id)) {
+        droppedResults += 1
+        continue
+      }
+      out.push(message)
+      continue
+    }
+    const calls = toolCallsOf(message)
+    if (calls.length === 0) {
+      out.push(message)
+      continue
+    }
+    const kept = calls.filter(call => call.id !== '' && call.name !== '' && answered.has(call.id))
+    if (kept.length === calls.length) {
+      out.push(message)
+      continue
+    }
+    droppedCalls += calls.length - kept.length
+    if (kept.length === 0) {
+      // The turn held nothing but unanswered calls. Its text (if any) is still
+      // worth keeping — that is the assistant's own words, not a tool record.
+      const body = textOf(blocksOf(message.content))
+      if (body === '') continue
+      const stripped = { ...message }
+      delete stripped.tool_calls
+      delete stripped.toolCalls
+      out.push(stripped)
+      continue
+    }
+    out.push({ ...message, tool_calls: kept })
+  }
+
+  if (droppedCalls > 0) {
+    warnings.push(`${String(droppedCalls)} unanswered tool call(s) were dropped so the conversation can continue`)
+  }
+  if (droppedResults > 0) {
+    warnings.push(`${String(droppedResults)} orphaned tool result(s) were dropped so the conversation can continue`)
   }
   return out
+}
+
+/**
+ * Every tool result a message carries, in order.
+ *
+ * The `role: 'tool'` case is the one that was silent and expensive: DSH's own
+ * tool messages carry the RESULT as their content — there is no `tool-result`
+ * block wrapper to find. Filtering for that wrapper therefore returned `[]`, and
+ * the call sites skip a tool message with no results (`continue`), so the whole
+ * result vanished from all three wires. The model then saw a conversation in
+ * which it had called a tool and never learned the outcome, and re-issued the
+ * same call forever — reported as "the tool returned no result" (#113).
+ *
+ * So: a tool message's content IS the result. Only a non-tool message is
+ * searched for the wrapper blocks (that is the Anthropic-shaped spelling, where
+ * a `user` turn can carry `tool-result` blocks).
+ */
+function toolResultsOf(message: Record<string, unknown>): ToolResult[] {
+  if (message.role === 'tool') {
+    const callId = text(message.tool_call_id ?? message.toolCallId ?? message.id)
+    const blocks = blocksOf(message.content)
+    const content = blocks.length > 0
+      ? blocks
+      : [{ type: 'text', text: typeof message.content === 'string' ? message.content : '' }]
+    const failed = message.is_error === true || message.isError === true
+    return [{ callId, content, ...failed ? { failed: true } : {} }]
+  }
+  const blocks = blocksOf(message.content).filter(block => block.type === 'tool-result')
+  if (blocks.length === 0) return []
+  const callId = text(message.tool_call_id ?? message.toolCallId ?? message.id)
+  return [{ callId, content: blocks }]
 }
 
 /** The tool call a message's `tool_calls` array holds, when it holds one. */
@@ -206,7 +315,7 @@ export function requestBodyFor(
   options: { modelId: string; resolveImage?: ImageResolver | undefined; warnings: string[] },
 ): Record<string, unknown> {
   const { modelId, resolveImage, warnings } = options
-  const messages = Array.isArray(body.messages) ? body.messages.filter(isRecord) : []
+  const messages = repairToolPairing(Array.isArray(body.messages) ? body.messages.filter(isRecord) : [], warnings)
   const stream = body.stream === true
   const reasoningEffort = text(body.reasoning_effort)
   const out: Record<string, unknown> = { model: modelId, stream }
@@ -363,7 +472,15 @@ function claudeTurns(
       turns.push({
         role: 'user',
         content: [
-          { type: 'tool_result', tool_use_id: result.callId, content: body !== '' ? body : content.length > 0 ? content : '(no output)' },
+          {
+            type: 'tool_result',
+            tool_use_id: result.callId,
+            content: body !== '' ? body : content.length > 0 ? content : '(no output)',
+            // A failed call must be marked as failed. Passed through only when
+            // the caller said so: an `is_error: false` on every result is noise,
+            // and some upstreams treat the presence of the field as the signal.
+            ...result.failed === true ? { is_error: true } : {},
+          },
         ],
       })
     }

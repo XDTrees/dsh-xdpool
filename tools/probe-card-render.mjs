@@ -164,13 +164,26 @@ if (mask === undefined) throw new Error('clicking the group button did not open 
 if (mask.props.role !== 'dialog') throw new Error('the dialog does not declare role="dialog"')
 if (mask.props['aria-modal'] !== 'true') throw new Error('the dialog is not marked modal')
 
-const image = all.find(el => classOf(el).includes('dsm-xdpool-groupqr'))
-if (image === undefined) throw new Error('the dialog contains no QR image')
-const src = String(image.props.src ?? '')
-if (!src.startsWith('data:image/png;base64,')) throw new Error('the QR image is not an inline data URI')
-if (src.length < 2000) throw new Error('the QR data URI is suspiciously short')
-if (image.props.width !== 260 || image.props.height !== 260) throw new Error('the QR image is not square at 260px')
-if (String(image.props.alt ?? '').trim() === '') throw new Error('the QR image has no alt text')
+// TWO codes now — a WeChat bot and a QQ group — each with its own caption. The
+// probe checks both, because a dialog that renders one image and drops the other
+// is exactly the half-broken state a single-image assertion cannot see.
+const images = all.filter(el => classOf(el).includes('dsm-xdpool-groupqr'))
+if (images.length !== 2) throw new Error(`the dialog should carry two QR images, found ${String(images.length)}`)
+for (const [index, image] of images.entries()) {
+  const label = `QR #${String(index + 1)}`
+  const src = String(image.props.src ?? '')
+  if (!src.startsWith('data:image/png;base64,')) throw new Error(`${label} is not an inline data URI`)
+  if (src.length < 2000) throw new Error(`${label} data URI is suspiciously short`)
+  if (image.props.width !== image.props.height) throw new Error(`${label} is not square`)
+  if (image.props.width !== 220) throw new Error(`${label} is not 220px (got ${String(image.props.width)})`)
+  if (String(image.props.alt ?? '').trim() === '') throw new Error(`${label} has no alt text`)
+}
+// And they must be DIFFERENT codes: rendering the same image twice would pass
+// every check above and still leave the QQ group unreachable.
+if (String(images[0].props.src) === String(images[1].props.src)) {
+  throw new Error('both QR images are the same code — the WeChat and QQ codes got crossed')
+}
+const src = String(images[0].props.src ?? '')
 
 const closers = all.filter(el => typeof el.props?.onClick === 'function'
   && (classOf(el).includes('dsm-xdpool-groupclose') || classOf(el).includes('dsm-xdpool-groupmask')))
