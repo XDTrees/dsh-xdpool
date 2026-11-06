@@ -207,9 +207,30 @@ function expiryText(
   if (expiresAt === undefined || !Number.isFinite(expiresAt) || expiresAt <= 0) {
     return t?.('channelpool.expiryNever') ?? 'no expiry'
   }
-  const days = Math.ceil((expiresAt - Date.now()) / 86_400_000)
-  if (days <= 0) return t?.('channelpool.expiryNever') ?? 'no expiry'
-  return days === 1 ? '1d' : `${days}d`
+  // Two defects fixed here, both of which made the label actively misleading:
+  //
+  // 1. An EXPIRED credential used to return the "no expiry" string. `days <= 0`
+  //    covered both a negative value (already past) and zero (due today), and it
+  //    shared the placeholder meant for channels that carry no expiry at all
+  //    (ZCode among them). A CodeArts row whose STS token had lapsed read
+  //    "长期有效" while the balance cell beside it said
+  //    `APIG.0602: the security token has expired` — one row contradicting
+  //    itself, each half pointing at a different, wrong fix (#114).
+  //
+  // 2. `Math.ceil(days)` collapsed every sub-day remainder into "1d", so the
+  //    rows with the MOST urgent clocks (CodeArts STS tokens live about two
+  //    hours) were exactly the ones that could never show one.
+  //
+  // So: a past stamp is its own state, and the unit steps down to hours and then
+  // minutes as the deadline approaches. "no expiry" now means only what it says.
+  const remainingMs = expiresAt - Date.now()
+  if (remainingMs <= 0) return t?.('channelpool.expiryExpired') ?? 'expired'
+  const minutes = Math.floor(remainingMs / 60_000)
+  if (minutes < 60) return minutes <= 1 ? '<1m' : `${String(minutes)}m`
+  const hours = Math.floor(remainingMs / 3_600_000)
+  if (hours < 24) return `${String(hours)}h`
+  const days = Math.floor(remainingMs / 86_400_000)
+  return days === 1 ? '1d' : `${String(days)}d`
 }
 
 /** The vendor's currency, spelled the way that vendor spells it. */

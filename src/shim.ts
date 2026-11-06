@@ -258,6 +258,27 @@ const KIND_STATUS: Readonly<Record<UpstreamErrorKind, number>> = {
   server: 502,
   client: 400,
 }
+/**
+ * HTTP status for each "no account available" reason.
+ *
+ * The reason is already a complete diagnosis — `unavailableReason` separates
+ * cooling from a drained reserve from a switched-off account from an empty pool
+ * — and each of those needs a different user action. Flattening them into one
+ * status throws that away: 401 universally reads as "invalid API key", so a
+ * reserve or a disabled account sent the reader to re-authenticate over a
+ * setting they had chosen themselves (#115).
+ *
+ * A reason this table does not know falls back to 503 at the call site rather
+ * than 401: "this lane cannot serve you right now" is a true statement about an
+ * unfamiliar state, while "bad key" is a specific and probably false one.
+ */
+const REASON_STATUS: Readonly<Record<string, number>> = {
+  cooling: 429,
+  session_dead: 401,
+  reserve: 402,
+  disabled: 403,
+  empty: 503,
+}
 function hostnameOfHost(host: string): string {
   let hostname = host.trim().toLowerCase()
   if (hostname.startsWith('[')) {
@@ -1071,7 +1092,15 @@ function withBareModelId(raw: string, modelId: string): string {
           const why = pool.unavailableReason(member.modelId, region, reserveExempt)
           last = {
             kind: why.reason,
-            status: why.reason === 'cooling' ? 429 : 401,
+            // One status per reason, not "cooling ? 429 : 401".
+            //
+            // The old pair collapsed FOUR different answers into 401, whose
+            // universal reading is "your API key is invalid, sign in again" — so
+            // a member parked under the user's own credit floor, one they had
+            // switched off, and an empty pool all told them to re-authenticate.
+            // They would do it, and it would not help, because none of those is
+            // an auth problem (#115).
+            status: REASON_STATUS[why.reason] ?? 503,
             message: `member ${member.modelId} has no usable WorkBuddy account (${why.reason})`,
           }
           noteSwitch(member.modelId, why.reason, last.status)
