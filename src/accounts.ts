@@ -767,6 +767,17 @@ export class WorkBuddyAccountPool {
    * lives on the pool and is re-applied from settings after each scan.
    */
   private disabledIds = new Set<string>()
+
+  /**
+   * The account ids the store held after the last successful write.
+   *
+   * Read back on the next scan to say WHICH accounts left, not just how many.
+   * The list is written wholesale, so a scan that does not find an account
+   * deletes it — and that account's credential is then unrecoverable without a
+   * fresh sign-in (#117). `undefined` until the first write, so the first scan
+   * never reports every account as "leave".
+   */
+  private lastPersistedIds: Set<string> | undefined
   /**
    * Account ids the user threw out of the pool for good.
    *
@@ -1018,9 +1029,24 @@ export class WorkBuddyAccountPool {
     // accounts are inserted FIRST so a credential freshly read from disk wins
     // the freshness comparison below — the store is memory, the auth dir is
     // the truth.
-    if (this.persistent && this.accounts.length === 0) {
+    //
+    // NOT gated on `this.accounts.length === 0` any more. That condition made
+    // this the ONE case the store could not serve: the desktop app keeps only
+    // the most-recently-signed-in account's `.info`, so "some accounts have an
+    // .info and some do not" is the NORMAL state — and in it the store was
+    // skipped, `this.accounts` (holding only what this scan found) was written
+    // back over it, and every account without an `.info` was deleted from disk
+    // with no warning (#117). Reported damage: a 6-account pool lost its
+    // highest-balance account (2,299 credits) and the user only noticed a card
+    // was missing.
+    //
+    // The loop is already safe without the gate: `byId` holds this scan's
+    // accounts first, and the `has` check below means a stored entry can only
+    // ADD an account, never overwrite a fresher in-memory credential.
+    if (this.persistent) {
       const stored = await loadStoredAccounts(this.storePath)
       for (const entry of stored) {
+        if (this.ignoredIds.size > 0 && this.ignoredIds.has(entry.id)) continue
         if (byId.has(entry.id)) continue
         byId.set(entry.id, {
           id: entry.id,
@@ -1111,7 +1137,26 @@ export class WorkBuddyAccountPool {
     // already pays.
     if (this.persistent) {
       try {
+        // Say it when a scan SHRINKS the store. The list is written wholesale, so
+        // anything this scan did not find and the store did not hold is gone for
+        // good — and the store holds the only copy of those credentials. A user
+        // whose card list quietly lost an account had no way to know it happened
+        // (#117), so the disappearance is reported with the ids that left. This
+        // is a log line rather than a block: a legitimate removal (the user
+        // deleted the account) goes through the same path, and refusing to write
+        // would resurrect it on every scan.
+        const leaving = this.lastPersistedIds === undefined
+          ? []
+          : [...this.lastPersistedIds].filter(id => !this.accounts.some(account => account.id === id))
+        if (leaving.length > 0) {
+          this.logger?.warn?.(
+            `dsh-xdpool: ${String(leaving.length)} account(s) are no longer in the pool after a rescan `
+              + `and were removed from the store: ${leaving.join(', ')}. `
+              + 'Their credentials are gone unless they are signed in again.',
+          )
+        }
         await saveStoredAccounts(this.storePath, this.accounts)
+        this.lastPersistedIds = new Set(this.accounts.map(account => account.id))
       } catch (error: unknown) {
         this.logger?.warn?.('dsh-xdpool: could not persist the account store', error)
       }

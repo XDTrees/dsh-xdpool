@@ -300,6 +300,7 @@ export const POOL_CARD_CSS = `
 .dsm-xdpool-usage-model{font-size:12px;font-weight:600;word-break:break-all}
 .dsm-xdpool-usage-numbers{color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:17px;word-break:break-word}
 .dsm-xdpool-usage-note{margin:0;color:var(--dsw-alias-label-tertiary,#999);font-size:11px;line-height:17px}
+.dsm-xdpool-sidebar-row-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
 .dsm-xdpool-models-actions{display:flex;align-items:center;gap:8px;flex:none}
 /* "Built-in list (offline)" chip: a warning tint, since the user is looking at
    a SHORTER roster than the gateway offers and may wonder where models went. */
@@ -913,13 +914,20 @@ export const SHELL_CSS = `
 /* The invite dialog. Positioned against the shell (which is the containing
    block) so it covers the card and nothing of the host dialog around it. */
 .dsm-xdpool-groupmask{position:absolute;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px;border-radius:16px;background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 72%, transparent)}
-.dsm-xdpool-groupcard{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:340px;padding:16px 18px 18px;border-radius:16px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 86%, transparent);background:var(--dsw-alias-bg-layer-2,#1c1e22);box-shadow:0 18px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 7%)}
+.dsm-xdpool-groupcard{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:520px;padding:16px 18px 18px;border-radius:16px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 86%, transparent);background:var(--dsw-alias-bg-layer-2,#1c1e22);box-shadow:0 18px 48px rgb(0 0 0 / 34%), inset 0 1px 0 rgb(255 255 255 / 7%)}
+/* The two codes sit side by side and WRAP to a column before either shrinks:
+   a QR squeezed narrower than its module grid is a QR that stops scanning, so
+   the layout gives up the row rather than the size. */
+.dsm-xdpool-groupcodes{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;width:100%}
+.dsm-xdpool-groupcode{display:flex;flex-direction:column;align-items:center;gap:6px;flex:0 0 auto}
+.dsm-xdpool-groupcode-label{font-size:12px;line-height:16px;font-weight:650;color:var(--dsw-alias-label-primary,#e8e8ea)}
+.dsm-xdpool-groupcode-step{max-width:220px;font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary,#8a90a0);text-align:center}
 .dsm-xdpool-groupcardhead{display:flex;align-items:center;gap:10px;width:100%;font-size:13px;line-height:18px;color:var(--dsw-alias-label-primary,#e8e8ea)}
 .dsm-xdpool-groupclose{margin-left:auto;appearance:none;border:none;background:transparent;padding:0 4px;font:inherit;font-size:18px;line-height:18px;color:var(--dsw-alias-label-tertiary,#8a90a0);cursor:pointer;border-radius:8px}
 .dsm-xdpool-groupclose:hover{color:var(--dsw-alias-label-primary,#e8e8ea)}
 /* A white plate under the code, always: a QR inverted onto a dark panel scans
    on some phones and not others, and there is no way to tell which from here. */
-.dsm-xdpool-groupqr{display:block;width:260px;height:260px;border-radius:12px;background:#fff;padding:6px;object-fit:contain}
+.dsm-xdpool-groupqr{display:block;width:220px;height:220px;border-radius:12px;background:#fff;padding:6px;object-fit:contain}
 .dsm-xdpool-groupnote{width:100%;margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-label-tertiary,#8a90a0);text-align:center}
 .dsm-xdpool-navtabs{grid-column:1/-1;position:relative;display:flex;flex-wrap:wrap;gap:2px;padding:3px;border-radius:13px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l1,#ffffff14) 80%, transparent);background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 62%, transparent);box-shadow:inset 0 1px 2px rgb(0 0 0 / 4%)}
 /* A raised surface, not a tinted wash: the glider has to read as "this one is

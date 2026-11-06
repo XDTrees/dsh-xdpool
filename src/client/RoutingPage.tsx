@@ -170,14 +170,24 @@ export function RoutingPage({ t }: RoutingPageProps) {
         // The WHOLE table, because the server replaces it: a chain removed here
         // must actually disappear, and a partial patch cannot express "drop the
         // member the user deleted from the middle of a chain".
-        body: JSON.stringify(drafts.map(draft => ({
-          ...draft.id === undefined ? {} : { id: draft.id },
-          name: draft.name,
-          models: draft.models,
-          strategy: draft.strategy,
-          stickyLimit: draft.stickyLimit,
-          enabled: draft.enabled,
-        }))),
+        //
+        // Wrapped in `{ combos: … }`, NOT sent as a bare array. The route reads
+        // `body['combos']`, so an array body made it fall into its
+        // `Array.isArray(raw) ? raw : []` guard and save an EMPTY table — the
+        // panel said "Saved", the chains were gone, and nothing in the response
+        // distinguished that from a successful write of nothing. The route now
+        // accepts both shapes so an already-shipped card cannot wipe a table,
+        // but the shape it documents is this one.
+        body: JSON.stringify({
+          combos: drafts.map(draft => ({
+            ...draft.id === undefined ? {} : { id: draft.id },
+            name: draft.name,
+            models: draft.models,
+            strategy: draft.strategy,
+            stickyLimit: draft.stickyLimit,
+            enabled: draft.enabled,
+          })),
+        }),
       })
       if (!response.ok) {
         const detail = await response.json().catch(() => ({})) as { error?: string }

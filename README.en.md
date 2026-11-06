@@ -10,11 +10,16 @@
 ## Join the group
 
 <p align="center">
-  <img src="assets/community-qr.png" width="300" alt="WeChat group code: XD community group">
+  <img src="assets/community-qr-wechat.jpg" width="240" alt="WeChat bot code: scan to add the bot, then send XD to be pulled into the group">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="assets/community-qr-qq.jpg" width="240" alt="QQ group code: scan it to join the XD community group">
   <br>
-  <sub>Scan with WeChat to join the <b>XD community group</b>. The code is valid for 7 days; if it has expired, say so in <a href="https://github.com/XDTrees/dsh-xdpool/issues">issues</a> and it will be refreshed.</sub>
+  <b>Left: WeChat (bot)</b> — scanning only adds the bot. <b>Send “XD”</b> and it pulls you into the group; scanning alone does nothing.<br>
+  <b>Right: QQ group</b> — scan and you are in. Group number 1103463688.
   <br>
-  <sub>The 交流群 button next to “Star” in the card's top-right corner opens this same code — no need to come back to the README.</sub>
+  <sub>Both groups are live; use whichever you prefer. If a code stops working, say so in <a href="https://github.com/XDTrees/dsh-xdpool/issues">issues</a> and it will be refreshed.</sub>
+  <br>
+  <sub>The 交流群 button next to “Star” in the card's top-right corner opens these same two codes — no need to come back to the README.</sub>
 </p>
 
 <p align="center">

@@ -131,30 +131,40 @@ describe('the community-group button', () => {
     expect(shell).toContain('event.stopPropagation()')
   })
 
-  it('carries the code itself, not a path the bundle could not resolve', () => {
+  it('carries BOTH codes itself, not a path the bundle could not resolve', () => {
     // The client half is one script the host loads; nothing in it can resolve a
     // package-relative path, and a broken <img> here fails SILENTLY — the dialog
     // opens and shows nothing, which reads as "the group does not exist".
-    expect(qr).toContain('data:image/png;base64,')
-    expect(shell).toContain('COMMUNITY_QR_DATA_URI')
+    expect(qr.match(/data:image\/png;base64,/gu) ?? []).toHaveLength(2)
+    expect(shell).toContain('COMMUNITY_QR_WECHAT')
+    expect(shell).toContain('COMMUNITY_QR_QQ')
     // A square, in both the data and the <img>: a squashed QR is unscannable and
     // looks merely slightly-off in a screenshot.
-    const width = qr.match(/COMMUNITY_QR_WIDTH = (\d+)/u)
-    const height = qr.match(/COMMUNITY_QR_HEIGHT = (\d+)/u)
-    expect(width?.[1]).toBeDefined()
-    expect(width?.[1]).toBe(height?.[1])
-    expect(shell).toMatch(/width=\{260\}\s+height=\{260\}/u)
+    expect(qr).toMatch(/COMMUNITY_QR_WECHAT_SIZE = (\d+)/u)
+    expect(qr).toMatch(/COMMUNITY_QR_QQ_SIZE = (\d+)/u)
+    expect(shell).toMatch(/width=\{220\}\s+height=\{220\}/u)
   })
 
-  it('says what the code is for and that it expires', () => {
-    // A group code that silently stopped working would otherwise be reported as
-    // "the button is broken". The caption carries the expiry so the failure has
-    // an explanation on screen before anyone asks.
-    expect(enHas(locales, 'shell.groupNote'), 'shell.groupNote missing from en').toBe(true)
-    expect(enHas(locales, 'shell.groupAlt'), 'shell.groupAlt missing from en').toBe(true)
-    expect(locales).toContain('7 天内有效')
-    // The alt text carries the instruction, because a screen reader cannot scan.
-    expect(locales).toMatch(/'shell\.groupAlt': '[^']*扫[^']*'/u)
+  it('says what each code is for, and how the bot one differs from the group one', () => {
+    // The two codes are joined DIFFERENTLY and that difference is the whole
+    // reason both are shown:
+    //   - the WeChat one only adds a bot, so "send XD" is part of the code;
+    //   - the QQ one is a group code, so scanning IS joining.
+    // A reader who scans the bot code and waits sees nothing happen and reports
+    // a broken button, which is why the step is asserted rather than trusted.
+    for (const key of ['shell.groupNote', 'shell.groupWechatAlt', 'shell.groupQqAlt',
+      'shell.groupWechatStep', 'shell.groupQqStep']) {
+      expect(enHas(locales, key), `${key} missing from en`).toBe(true)
+    }
+    // The WeChat step must name the message to send.
+    expect(locales).toMatch(/'shell\.groupWechatStep': '[^']*XD/u)
+    // The QQ step must say there is nothing to send, or the reader waits anyway.
+    expect(locales).toMatch(/'shell\.groupQqStep': '[^']*直接扫码/u)
+    // Both alts carry an instruction, because a screen reader cannot scan.
+    expect(locales).toMatch(/'shell\.groupWechatAlt': '[^']*XD[^']*'/u)
+    expect(locales).toMatch(/'shell\.groupQqAlt': '[^']*扫码[^']*'/u)
+    // And the expiry escape hatch, now that neither code claims a fixed window.
+    expect(locales).toMatch(/'shell\.groupNote': '[^']*issue[^']*'/u)
   })
 })
 

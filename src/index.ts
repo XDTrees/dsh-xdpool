@@ -72,6 +72,7 @@ import type {
   PoolWebRelayStatus,
 } from './status-paths.ts'
 import { describeError, recordStartupNote } from './diagnostics.ts'
+import { applyLaneSelection, laneSelectionFrom } from './model-switch-bridge.ts'
 import { probeModelConnectivity } from './model-probe.ts'
 /**
  * One aggregate catalog row as the card renders it.
@@ -554,7 +555,12 @@ export const Config: z<Config> = z.object({
   modelSelectionCn: asVolatile(modelSelectionSchema.description('Model selection for the domestic gateway')),
   modelSelectionGlobal: asVolatile(modelSelectionSchema.description('Model selection for the international gateway')),
   automation: asVolatile(automationSchema.description('Daily points automation (activity report, task claiming, check-in)')),
-  automationEarnings: asVolatile(z.any().description('Automation earnings ledger (written by the scheduler)'))
+  automationEarnings: asVolatile(z.any().description('Automation earnings ledger (written by the scheduler)')),
+  // Issue #70. Read by the client bundle (which owns the sidebar registration)
+  // as well as stored here, so it must be a plain schema field rather than a
+  // scheduler-shaped blob: the settings mirror is the only channel both sides
+  // share, and an undeclared key would be stripped on the way in.
+  sidebarRow: asVolatile(z.boolean().default(true).description('Show the XD Pool entry in the left sidebar (the Settings page keeps working either way)'))
 })
 /** Everything the CLI needs from a live plugin instance. */
 export interface WorkBuddyPoolApi {
@@ -826,6 +832,27 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
     core.catalogs.cn.applySelection(modelSelectionCn ?? fallbackSelection('cn'))
     core.catalogs.global.applySelection(modelSelectionGlobal ?? fallbackSelection('global'))
+    // Publish the same allow-lists where the vendored pack can read them (#121).
+    //
+    // The card's selection and the pack's `disabledModels` were two switches that
+    // never talked: the pool's own catalog honoured `modelSelectionCn`, while the
+    // HOST's model picker rendered whatever `listModels()` returned — and for
+    // `buddy`/`workbuddy` that was always everything, because those two lanes are
+    // exempt from the startup silence pass that fills `disabledModels` for the
+    // other eleven channels. A user who ticked one model and saved saw all sixteen
+    // in the picker.
+    //
+    // The bridge lives here because this is the one place both documents are
+    // already resolved: publishing after `applySelection` means the pack sees
+    // exactly what the gateway serves.
+    //
+    // `undefined` is passed through on purpose — it means "no restriction", and
+    // collapsing it to `[]` would blank the picker for anyone who never touched
+    // the card.
+    applyLaneSelection(laneSelectionFrom(
+      core.catalogs.cn.currentSelection().enabledModelIds,
+      core.catalogs.global.currentSelection().enabledModelIds,
+    ))
     // The automation reads the same settings document, so a save on the card
     // re-arms it without a host restart. An absent block means off, which is why
     // this passes `enabled: false` explicitly rather than leaving it undefined.
@@ -1639,7 +1666,13 @@ function canonicalJson(value: unknown): string {
         // service first owns it. So the wiring is attempted either way, and a
         // loss is not an error: it is just another reader of the same object.
         if (stopped) return
-        void adoptChannelPackAccounts(ctx, core.pool, ctx.logger)
+        // `scoped`, not `ctx`: the pack runs on this injected fiber and
+        // `ctx.provide('accountPool', …)` publishes into THAT fiber's service
+        // store. Cordis scopes the store per isolate, so reading it from the
+        // outer apply ctx finds nothing — and the pool then silently keeps
+        // serving only the desktop credentials, which is exactly how the scanned
+        // accounts went missing while the channel cards still rendered.
+        void adoptChannelPackAccounts(scoped, core.pool, ctx.logger)
       })
   })
   // Register once BOTH loopback listeners hold a port: each adapter reads its

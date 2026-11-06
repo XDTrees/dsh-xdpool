@@ -10,11 +10,16 @@
 ## 先加群
 
 <p align="center">
-  <img src="assets/community-qr.png" width="300" alt="微信群二维码：XD 交流群">
+  <img src="assets/community-qr-wechat.jpg" width="240" alt="微信机器人二维码：扫码添加后发送 XD 拉你进群">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="assets/community-qr-qq.jpg" width="240" alt="QQ 群二维码：直接扫码加入 XD 交流群">
   <br>
-  <sub>微信扫一扫加入 <b>XD 交流群</b>。二维码 7 天内有效；过期了在 <a href="https://github.com/XDTrees/dsh-xdpool/issues">issues</a> 说一声会换新。</sub>
+  <b>左：微信（机器人）</b> —— 扫码添加机器人后<b>发送「XD」</b>，它才会拉你进群；只扫码不加不发是不会有反应的。<br>
+  <b>右：QQ 群</b> —— 直接扫码即可加入，群号 1103463688。
   <br>
-  <sub>卡片右上角「点Star」旁边的「交流群」按钮打开的也是这个码 —— 不用回头找 README。</sub>
+  <sub>两个群都在，哪个方便用哪个。二维码失效了在 <a href="https://github.com/XDTrees/dsh-xdpool/issues">issues</a> 说一声会换新。</sub>
+  <br>
+  <sub>卡片右上角「点Star」旁边的「交流群」按钮打开的是同样这两张码 —— 不用回头找 README。</sub>
 </p>
 
 <p align="center">

@@ -1521,8 +1521,25 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
         }
         try {
           const body = await readJsonBody(req)
-          const raw = body['combos']
-          json(res, 200, await deps.saveCombos(Array.isArray(raw) ? raw : []))
+          // Two shapes, because one of them shipped. The card now posts
+          // `{ combos: […] }`; the build that predates that fix posted a BARE
+          // ARRAY. Reading only `body['combos']` made the bare-array body
+          // `undefined`, which fell into a `?? []` fallback and saved an EMPTY
+          // table — answering 200, so the panel said "Saved" while every chain
+          // was gone. That is the "保存了没法用" report.
+          //
+          // Both shapes are accepted so an already-installed card cannot wipe a
+          // table. What is NOT accepted is a body that names no table at all:
+          // that is a caller bug, and answering 200 with an empty replacement is
+          // the one response that destroys data without saying so.
+          const raw = Array.isArray(body) ? body : body['combos']
+          if (!Array.isArray(raw)) {
+            return json(res, 400, {
+              error: 'expected {combos: [...]} (or a bare array from older clients); '
+                + 'refusing to replace the chain table with an empty one',
+            })
+          }
+          json(res, 200, await deps.saveCombos(raw))
         } catch (error: unknown) {
           json(res, 500, { error: safeMessage(error) })
         }

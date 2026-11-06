@@ -116,6 +116,13 @@ function resolvePackRpcBridge(): PackRpcBridge | undefined {
  * message.
  */
 export async function callPack(method: string, payload: Record<string, unknown>): Promise<ChannelRpcEnvelope> {
+  // Re-resolve on every call, not just at install time. The comment above
+  // *claimed* this was lazy but only `installPackRpc` ever assigned the bridge,
+  // so a `connection` service that settled after `apply()` left it undefined for
+  // the whole session: every call fell through to the bare fetch, the host
+  // answered 401, and the pool rendered blank without ever saying why. Assigning
+  // here is what actually delivers the behaviour the comment promises.
+  if (packRpcBridge === undefined) packRpcBridge = resolvePackRpcBridge()
   if (packRpcBridge !== undefined) {
     try {
       // The connection layer hands back `result.value` with one shell already

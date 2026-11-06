@@ -250,13 +250,37 @@ function isAbortError(error: unknown): boolean {
 /** Cap on the reassembled compaction reply, guarding against a runaway stream. */
 const COMPLETION_TEXT_LIMIT = 64 * 1024
 
-/** Insufficient-credit markers, ASCII lowercase plus the original Chinese. */
+/**
+ * Insufficient-credit markers, ASCII lowercase plus the original Chinese.
+ *
+ * The PLURAL forms are listed separately on purpose: this table is matched with
+ * `includes`, so `'credits exhausted'.includes('credit exhausted')` is false.
+ * The gateway's own 14018 message is `Credits exhausted.` — plural — which
+ * therefore matched nothing, fell through to `soft_rate`, and cooled the account
+ * and rotated instead of parking it. A rate-limit cooldown on a drained account
+ * means every model on it keeps being retried and keeps failing (#from the
+ * connect-workbuddy cross-check).
+ */
 const HARD_CREDIT_MARKERS = [
-  'insufficient credit', 'no credit', 'credit exhausted', 'out of credit',
-  'quota exceeded', 'quota exhaust', 'payment required', 'credit not enough',
-  'not enough credit',
-  '积分不足', '额度不足', '余额不足', '积分用完', '额度用尽', '没有积分',
+  'insufficient credit', 'insufficient credits',
+  'no credit', 'no credits',
+  'credit exhausted', 'credits exhausted', 'credit exhausted.',
+  'out of credit', 'out of credits',
+  'quota exceeded', 'quota exhaust', 'quota exhausted',
+  'payment required',
+  'credit not enough', 'credits not enough', 'not enough credit', 'not enough credits',
+  '积分不足', '额度不足', '余额不足', '积分用完', '额度用尽', '没有积分', '额度耗尽', '积分耗尽',
 ]
+
+/**
+ * Business codes that mean "this account cannot pay", independent of wording.
+ *
+ * `14018` is the gateway's credits-exhausted code; the number survived several
+ * rewordings of the sentence around it, so matching it is steadier than matching
+ * prose. Read from the body rather than from the HTTP status because the gateway
+ * answers these inside a 200 or a 4xx envelope.
+ */
+const HARD_CREDIT_CODES = ['14018', '14003']
 
 /** Session-invalidation markers that mean "this credential is dead; use another".
  *  Kept alongside the HTTP-status rule in `classifyUpstreamError`: the status is
@@ -511,6 +535,22 @@ const BANNED_SYSTEM_PHRASES: readonly (readonly [RegExp, string])[] = Object.fre
   [/powered by DeepSeek Harness/gi, 'running on DeepSeek Harness'],
   [/DeepSeek Harness Web GUI/gi, 'DeepSeek Harness web interface'],
   [/Relative paths resolve from the workspace root/gi, 'Relative paths are resolved against the workspace root'],
+  // The Codex CLI banner (#112). The reporter's bisection: the first 184 chars
+  // of Codex's opening developer message pass, 185 (the same text plus its
+  // newline) fail with 11128, and the same sentences split across three
+  // messages all pass. So the gate compares the first PARAGRAPH as a unit — not
+  // a keyword list, not a length — and rewriting the opening clause suffices.
+  //
+  // Only the clause is touched on purpose: the remaining ~20 KB is ordinary
+  // prompt text the model still reads, and the rewrite preserves meaning ("in
+  // the Codex CLI" → "in this environment") rather than mangling the text to
+  // dodge a filter, which trades a loud failure for a quiet one.
+  [
+    /You are a coding agent running in the Codex CLI, a terminal-based coding assistant/gi,
+    'You are a coding agent running in this environment, a terminal-based coding assistant',
+  ],
+  [/You are a coding agent running in the Codex CLI/gi, 'You are a coding agent running in this environment'],
+  [/Codex CLI is an open source project led by OpenAI/gi, 'This coding agent is an open source project'],
 ] as const)
 
 /**
@@ -886,6 +926,15 @@ export function classifyUpstreamError(status: number, body: string): UpstreamErr
   // "api密钥无效" / "invalid api key" / "unauthorized" slip through.
   if (status === 401 || status === 403) return 'session_dead'
   const lower = body.toLowerCase()
+  // Business codes BEFORE prose. `14018` is what the gateway actually sends for
+  // a drained account, and the number outlives the sentence around it — matching
+  // the code cannot be defeated by a rewording the way a marker list can (#from
+  // the connect-workbuddy cross-check, where the plural form matched nothing).
+  for (const code of HARD_CREDIT_CODES) {
+    if (body.includes(`"code":${code}`) || body.includes(`"code": ${code}`) || body.includes(`"code":"${code}"`)) {
+      return 'hard_credit'
+    }
+  }
   for (const marker of HARD_CREDIT_MARKERS) {
     if (lower.includes(marker.toLowerCase()) || body.includes(marker)) return 'hard_credit'
   }
@@ -1761,14 +1810,38 @@ export class WorkBuddyUpstreamClient {
       if (typeof raw !== 'object' || raw === null) continue
       const account = raw as Record<string, unknown>
       const num = (key: string): number => (typeof account[key] === 'number' ? account[key] as number : 0)
-      const monthly = num('CapacityType') === 4
-      const size = monthly ? num('CycleCapacitySize') : num('CapacitySize')
-      const remain = monthly ? num('CycleCapacityRemain') : num('CapacityRemain')
+      // CapacityType has three values, not two: 1 is a one-off package, 2 is a
+      // subscription (N cycles of M credits) and 4 is a monthly package. For the
+      // two periodic kinds `CapacitySize`/`CapacityRemain` describe the WHOLE
+      // period while the Cycle pair describes the current one, so reading the
+      // non-Cycle pair as a balance reported 102,396 where the official page
+      // said 3,399.8 — a 30x overstatement on any account holding a
+      // subscription. Only type 2 was affected, which is why it went unnoticed:
+      // accounts with monthly packages already took the Cycle branch.
+      const capacityType = num('CapacityType')
+      const monthly = capacityType === 4
+      const periodic = monthly || capacityType === 2
+      const size = periodic ? num('CycleCapacitySize') : num('CapacitySize')
+      const remain = periodic ? num('CycleCapacityRemain') : num('CapacityRemain')
       const capped = remain < 0 ? 0 : remain
       const cycleEndMs = parseDate(account['CycleEndTime'])
-      const expiresAtMs = monthly ? undefined : parseDate(account['ExpiredTime']) ?? cycleEndMs
+      // A monthly package refills on its cycle boundary, so it never expires. A
+      // subscription expires when its deduction period ends — deliberately NOT
+      // `CycleEndTime`, which lands every month and would keep the "expires
+      // soon" warning firing forever.
+      const expiresAtMs = monthly
+        ? undefined
+        : capacityType === 2
+          ? parseDate(account['DeductionEndTime'])
+          : parseDate(account['ExpiredTime']) ?? cycleEndMs
       const refreshAtMs = monthly ? (cycleEndMs === undefined ? undefined : cycleEndMs + 1000) : undefined
-      if (!monthly && (capped <= 0 || (expiresAtMs !== undefined && expiresAtMs <= Date.now()))) continue
+      // Expired packages are gone whatever their kind. But an EMPTY package is
+      // only worth hiding when it is a one-off: a monthly or subscription cycle
+      // that has been drained is normal, and the card has to keep rendering it
+      // to say "0 of 500, refills on the 1st" instead of silently dropping the
+      // only evidence that the account still has an allowance coming.
+      if (expiresAtMs !== undefined && expiresAtMs <= Date.now()) continue
+      if (!periodic && capped <= 0) continue
       total += capped
       if (expiresAtMs !== undefined) {
         if (nearestExpiryMs === undefined || expiresAtMs < nearestExpiryMs) nearestExpiryMs = expiresAtMs

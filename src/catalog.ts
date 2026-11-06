@@ -146,11 +146,24 @@ export class WorkBuddyCatalog {
 
   /**
    * The models DSH should actually offer, after applying the user's selection:
-   * disabled models are dropped, an explicit image list overrides the upstream
-   * capability flag, and a per-model budget caps the advertised window.
+   * disabled models are dropped, an explicit image list decides image support,
+   * and a per-model budget caps the advertised window.
    *
    * An absent `enabledModelIds` means "everything" — a fresh install with no
    * saved selection must not present an empty picker.
+   *
+   * IMAGE SUPPORT IS THE USER'S SET, NOT AN OR. The upstream flag is `true` for
+   * essentially every model of this vendor (measured: 15 of 16 on CN, 23 of 23
+   * on international), so `supportsImages || imageSet.has(id)` could only ever
+   * turn the flag ON — un-ticking the box in the card changed nothing, and the
+   * adapter kept advertising `['text','image']`. The checkbox existed and did
+   * not work, which is worse than not offering it.
+   *
+   * So when the user HAS saved an image selection, that set is the answer, in
+   * both directions. When they have not (undefined — a fresh install, or a
+   * config written before this fix), the upstream capability stands: silently
+   * disabling image input for everyone who never touched the switch would be a
+   * regression, and the absent case is exactly "no opinion".
    */
   visible(): readonly WorkBuddyModelInfo[] {
     const enabled = this.selection.enabledModelIds
@@ -162,7 +175,7 @@ export class WorkBuddyCatalog {
       .filter(model => allow === undefined || allow.has(model.id))
       .map(model => {
         const next = { ...model }
-        if (imageSet !== undefined) next.supportsImages = next.supportsImages || imageSet.has(model.id)
+        if (imageSet !== undefined) next.supportsImages = imageSet.has(model.id)
         const budget = budgets?.[model.id]
         if (budget !== undefined && budget > 0 && budget < next.contextWindow) next.contextWindow = budget
         return next
