@@ -237,6 +237,68 @@ export function resolveComboMember(modelId: string, sources: ComboSources): Comb
   }
 }
 /**
+ * The same model served by more than one lane, in the order to try them.
+ *
+ * This is the "same model, different route" tier: when a lane rate-limits, the
+ * answer is usually to reach the SAME model through another provider, not to
+ * fall back to a different model. Switching models changes context window, tool
+ * calling, structured-output shape and writing style — a cross-model fallback is
+ * a last resort, not a first one.
+ *
+ * The registry carries 86 model ids under two or more providers (kimi-k2.5 sits
+ * under eight), so the tier is real and not theoretical. What was missing is
+ * that a user had to spell it out: three separate chain members naming the same
+ * model three times, in the right order, and re-edit the chain whenever a
+ * provider was added.
+ *
+ * Derivation, not configuration: for one model id, every aggregate row sharing
+ * `modelName` (or the bare id when the registry names no shared display name) is
+ * a route to it. Pool rows are excluded — `buddy:`/`workbuddy:` are the pool's
+ * own lanes and naming them here would silently spend the user's WorkBuddy
+ * credits as a "fallback".
+ *
+ * The requested provider, when given, comes FIRST: the user chose that lane, so
+ * it stays the primary and the others are the alternates.
+ */
+export function siblingRoutes(
+  modelId: string,
+  sources: ComboSources,
+  preferredProvider?: string,
+): string[] {
+  const id = text(modelId)
+  if (id === '') return []
+  const target = sources.aggregate.find(row => row.id === id)
+  if (target === undefined) return [id]
+  // A shared display name is what identifies "the same model" across vendors;
+  // the registry does not always publish one, so fall back to the bare id.
+  const name = text(target.name)
+  const bare = bareModelIdOf(target)
+  const out: string[] = [id]
+  for (const row of sources.aggregate) {
+    if (row.id === id) continue
+    if (row.providerId === target.providerId) continue
+    const sameName = name !== '' && text(row.name) === name
+    const sameBare = bare !== '' && bareModelIdOf(row) === bare
+    if (!sameName && !sameBare) continue
+    // Different vendors, same model. Context window and capabilities are not
+    // compared here on purpose: a vendor that publishes a narrower window is
+    // still a valid alternate route, and refusing it would drop the very
+    // provider the user is trying to fall back TO.
+    if (!out.includes(row.id)) out.push(row.id)
+  }
+  if (preferredProvider === undefined || out.length <= 1) return out
+  // Stable move-to-front: the user's chosen lane stays primary.
+  const primary = out.filter(candidate => candidate.startsWith(`${preferredProvider}/`))
+  return [...primary, ...out.filter(candidate => !candidate.startsWith(`${preferredProvider}/`))]
+}
+
+/** The model id without its provider prefix, for cross-vendor comparison. */
+function bareModelIdOf(row: AggregateModelRow): string {
+  const parsed = parseProviderModelId(row.id)
+  return parsed === null ? text(row.modelId) : parsed.modelId
+}
+
+/**
  * Every combo row that can currently answer, given the catalogs.
  *
  * Disabled chains are skipped, as are chains whose members have all gone away:

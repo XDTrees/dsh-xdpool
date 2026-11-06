@@ -1425,6 +1425,28 @@ export declare class WorkBuddyAccountPool {
   /** Accounts currently kept out of rotation because their sign-in was rejected. */
   deadCredentials(): readonly WorkBuddyAccount[];
   /**
+   * Try to bring benched accounts back WITHOUT waiting out the cooldown.
+   *
+   * The cooldown is a guess about how long a problem lasts, and the guess is
+   * usually wrong in one direction or the other: a token revoked by a password
+   * change stays dead for the full window even after the user signs in again in
+   * some other client, and a transient upstream hiccup benches a perfectly good
+   * account for half an hour.
+   *
+   * So instead of only waiting, ask. For each benched account, one cheap
+   * authenticated read: if it answers, the credential works and the account goes
+   * back into rotation immediately. Nothing about the failure is trusted — only a
+   * successful call clears it — and a probe that fails keeps the original
+   * cooldown untouched (probing must never EXTEND a bench, or a broken endpoint
+   * would keep every account locked out for as long as it stayed broken).
+   *
+   * `probe` is injected rather than imported so this class stays free of the
+   * upstream client: the pool knows about accounts, not about HTTP.
+   *
+   * Returns the accounts it revived, for logging and for the run summary.
+   */
+  reviveBenched(probe: (credential: WorkBuddyCredential) => Promise<unknown>): Promise<readonly WorkBuddyAccount[]>;
+  /**
    * Refresh the account's access token when it is within the margin (or already
    * expired), in-flight de-duped per account. A failed refresh keeps the
    * existing token when it has not yet expired, so an unreachable refresh
@@ -1697,6 +1719,19 @@ interface PoolWebComboCandidate {
   usable: boolean;
   contextWindow: number;
   supportsImages: boolean;
+  /**
+   * Other lanes that serve the SAME model, best-first, excluding this row.
+   *
+   * The "same model, different route" tier: when one provider rate-limits, the
+   * right move is usually to reach the same model through another provider, not
+   * to fall back to a different model — a different model changes the context
+   * window, tool-calling behaviour and writing style.
+   *
+   * Present so the card can offer "also try this model via …" in one click
+   * instead of making the user find the same name under another vendor and add
+   * it three times. Empty when the model has only one route.
+   */
+  siblings: readonly string[];
 }
 /** One chain, resolved against the live roster. */
 interface PoolWebCombo {
@@ -2147,8 +2182,39 @@ interface PoolWebAutomationJob {
    * what turns a row from "it ran" into "it did the things I care about".
    */
   detail?: readonly string[];
+  /**
+   * Per-item outcome of the last run, one entry per thing the job looked at.
+   *
+   * `detail` is free text and mixes counters with titles ("签到 +12",
+   * "复活 Account A"), so the card can print it but cannot GROUP it. This is the
+   * same information with a status attached, which is what makes "which tasks
+   * are still unclaimed, and why" answerable:
+   *
+   *   claimed  — the reward was collected on this run
+   *   already  — collected earlier today; nothing to do
+   *   skipped  — the board would not let it be claimed (locked, no energy, …)
+   *   failed   — the call came back an error
+   *
+   * Without it, "0 claimed" reads the same whether everything was already done,
+   * the account had no energy, or the endpoint is broken — three situations with
+   * three different fixes.
+   */
+  items?: readonly PoolWebAutomationItem[];
   /** A pending milestone worth naming, e.g. the next streak tier countdown. */
   progress?: string;
+}
+/** How one item of an automation run ended. */
+type PoolWebAutomationItemStatus = 'claimed' | 'already' | 'skipped' | 'failed';
+/** One item an automation job considered, with what happened to it. */
+interface PoolWebAutomationItem {
+  /** The task board's own title, or a short label for a non-task step. */
+  title: string;
+  status: PoolWebAutomationItemStatus;
+  /** Credits/energy collected, when the upstream reported any. */
+  credit?: number;
+  energy?: number;
+  /** Why it was skipped or how it failed, in the upstream's words. */
+  note?: string;
 }
 /**
  * Automation block on the status document.
@@ -2274,8 +2340,23 @@ interface WorkBuddyModelInfo {
  * (`kimi-k3-1`). A stale fallback is worse than a short one — it looks
  * authoritative while being wrong.
  *
- * `multiplier: 0` is the gateways' own spelling of "free" (`credits: "x0.00"`),
- * which is what turns on the free badge.
+ * NO PRICES AND NO PROMO BADGES HERE. This table is what the picker shows when
+ * the startup fetch fails, and a multiplier captured months ago is a price the
+ * user will budget against while it is quietly wrong. Two specific harms:
+ *
+ *   - `multiplier: 0` renders the "free" badge, so a model that was free at
+ *     capture time keeps claiming to be free after the promotion ends;
+ *   - a non-zero multiplier renders next to the model, so a stale figure reads
+ *     as the current rate.
+ *
+ * `undefined` is the honest state: the card prints no rate and no badge, which
+ * is exactly true — this build does not know the price. The live fetch fills
+ * both in within a second of a working startup, and `catalogSource` already
+ * tells the card to say the list is the built-in one.
+ *
+ * Windows, output ceilings and the `craft` capability tag stay: those are
+ * properties of the model, not of a campaign, and they are what makes the list
+ * usable offline at all.
  */
 export declare const FALLBACK_WORKBUDDY_MODELS: readonly WorkBuddyModelInfo[];
 /** Which gateway a catalog describes. Mirrors `WorkBuddyRegion` in `upstream.ts`. */
@@ -3184,6 +3265,16 @@ interface AutomationJobState {
    */
   detail?: readonly string[];
   /**
+   * The same work with a status per item.
+   *
+   * `detail` is a flat list of sentences, so the card can print it but cannot
+   * group it. This carries `claimed` / `already` / `skipped` / `failed` per
+   * thing the job looked at, which is what separates "everything was already
+   * done" from "nothing was claimable" from "the endpoint is down" — three
+   * outcomes that all print as "0 claimed".
+   */
+  items?: readonly PoolWebAutomationItem[];
+  /**
    * A pending milestone worth naming, when there is one.
    *
    * Streak tiers are why this exists: every tier reads `locked` until enough
@@ -3545,6 +3636,10 @@ export declare class WorkBuddyScheduler {
    *
    * Disabled accounts are excluded here rather than filtered by the caller so a
    * card switch takes effect on the next pass without any event plumbing.
+   *
+   * `job` narrows the set by region scope: the growth jobs are CN-only while
+   * check-in runs on both gateways, so eligibility cannot be decided without
+   * knowing which job is about to run.
    */
   private accountsInOrder;
   /**
@@ -3587,6 +3682,25 @@ export declare class WorkBuddyScheduler {
    * logs "could not be built" only for exceptions, and a task shape this code
    * does not understand is information, not a fault.
    */
+  /**
+   * Find the expert a task is about, by matching its title against the
+   * marketplace.
+   *
+   * The marketplace listing is ~500 entries across `agent` and `team`, and this
+   * only runs for a task whose deeplink carried no id — at most a handful per
+   * run — so the cost is acceptable. It is not cached because a freshly
+   * published expert must become findable without a restart.
+   *
+   * Matching rules, all of them strict on purpose:
+   *   - the task's title must appear IN the expert's name or profession, or the
+   *     expert's display name must appear in the title (both directions, since
+   *     the board and the marketplace word things differently);
+   *   - comparison ignores case, whitespace and the punctuation vendors sprinkle
+   *     through names;
+   *   - several matches means NO answer. Summoning the wrong agent scores 0, so a
+   *     guess costs an upstream call and still fails — worse than declining.
+   */
+  private expertIdByKeyword;
   private taskExpertChains;
   /**
    * The summon-and-use chains for the expert tasks.

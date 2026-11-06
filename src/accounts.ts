@@ -1719,6 +1719,51 @@ export class WorkBuddyAccountPool {
   }
 
   /**
+   * Try to bring benched accounts back WITHOUT waiting out the cooldown.
+   *
+   * The cooldown is a guess about how long a problem lasts, and the guess is
+   * usually wrong in one direction or the other: a token revoked by a password
+   * change stays dead for the full window even after the user signs in again in
+   * some other client, and a transient upstream hiccup benches a perfectly good
+   * account for half an hour.
+   *
+   * So instead of only waiting, ask. For each benched account, one cheap
+   * authenticated read: if it answers, the credential works and the account goes
+   * back into rotation immediately. Nothing about the failure is trusted — only a
+   * successful call clears it — and a probe that fails keeps the original
+   * cooldown untouched (probing must never EXTEND a bench, or a broken endpoint
+   * would keep every account locked out for as long as it stayed broken).
+   *
+   * `probe` is injected rather than imported so this class stays free of the
+   * upstream client: the pool knows about accounts, not about HTTP.
+   *
+   * Returns the accounts it revived, for logging and for the run summary.
+   */
+  async reviveBenched(
+    probe: (credential: WorkBuddyCredential) => Promise<unknown>,
+  ): Promise<readonly WorkBuddyAccount[]> {
+    const benched = this.deadCredentials()
+    if (benched.length === 0) return []
+    const revived: WorkBuddyAccount[] = []
+    for (const account of benched) {
+      try {
+        await probe(account.credential)
+      } catch {
+        // Still bad. Leave `credentialDeadUntilMs` exactly as it was: a failed
+        // probe is not evidence of anything new, and shortening or extending the
+        // bench on it would make the cooldown depend on how often we probe.
+        continue
+      }
+      this.clearCredentialDead(account.id)
+      revived.push(account)
+      this.logger?.info?.(
+        `dsh-xdpool: ${account.label} answered a probe; back in rotation without waiting out the cooldown`,
+      )
+    }
+    return revived
+  }
+
+  /**
    * Refresh the account's access token when it is within the margin (or already
    * expired), in-flight de-duped per account. A failed refresh keeps the
    * existing token when it has not yet expired, so an unreachable refresh

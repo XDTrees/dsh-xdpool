@@ -92,17 +92,38 @@ describe('the multiplier reaches the catalog info', () => {
   })
 })
 
-describe('the static fallback keeps rates and free badges', () => {
-  it('carries a multiplier for the ids the gateways price', () => {
-    // Without these, an unreachable upstream silently strips every rate and
-    // badge — the user sees "the rates disappeared", not "the network failed".
+describe('the static fallback refuses to guess at rates', () => {
+  it('carries no multiplier, because a captured rate goes stale', () => {
+    // This used to assert the OPPOSITE — that the fallback carries rates so an
+    // unreachable upstream does not "strip" them. That traded a visible gap for
+    // an invisible lie: the captured 0.79 for glm-5.3 is a price the user budgets
+    // against months later, and `multiplier: 0` on a once-free model keeps
+    // rendering the "free" badge after the promotion ended.
+    //
+    // An absent rate renders as no rate, which is exactly true while the fetch
+    // has failed; `catalogSource` already tells the card the list is the built-in
+    // one, so the gap is explained rather than hidden.
     const byId = new Map(FALLBACK_WORKBUDDY_MODELS.map(m => [m.id, m]))
-    expect(byId.get('glm-5.3')?.multiplier).toBeCloseTo(0.79)
+    for (const model of FALLBACK_WORKBUDDY_MODELS) {
+      expect(model.multiplier, `${model.id} must not claim a rate`).toBeUndefined()
+    }
+    // The IDS stay accurate — that is the part a failed fetch would otherwise
+    // hide, and an id is a fact rather than a price.
+    expect(byId.has('glm-5.3')).toBe(true)
     // The CN gateway names this one `kimi-k3-1`; the table used to carry the
     // stale `kimi-k3`, which no longer resolves to anything upstream.
-    expect(byId.get('kimi-k3-1')?.multiplier).toBeCloseTo(1.62)
-    // hy3 is genuinely free.
-    expect(byId.get('hy3')?.multiplier).toBe(0)
+    expect(byId.has('kimi-k3-1')).toBe(true)
+    expect(byId.has('hy3')).toBe(true)
+  })
+
+  it('no row advertises a campaign badge it cannot keep current', () => {
+    // `badge:限时免费` and friends are campaign claims; offline they advertise a
+    // promotion that may have ended.
+    for (const model of FALLBACK_WORKBUDDY_MODELS) {
+      for (const tag of model.tags ?? []) {
+        expect(tag, `${model.id}: ${tag}`).not.toMatch(/^badge:/u)
+      }
+    }
   })
 
   it('carries the models that only exist upstream, so a failed fetch does not hide them', () => {
@@ -125,9 +146,11 @@ describe('the static fallback keeps rates and free badges', () => {
     expect(ids.has('hy4-preview-f')).toBe(false)
   })
 
-  it('the fallback is what shows before the first live fetch, rates included', () => {
+  it('the fallback is what shows before the first live fetch, with no invented rates', () => {
     const infos = catalogFromUpstream([])
-    const withRate = infos.filter(m => m.multiplier !== undefined)
-    expect(withRate.length).toBeGreaterThan(0)
+    expect(infos.length).toBeGreaterThan(0)
+    // No rate is claimed while the roster is the built-in one. The gap is the
+    // honest answer; a stale number would be indistinguishable from a live one.
+    expect(infos.filter(m => m.multiplier !== undefined)).toHaveLength(0)
   })
 })

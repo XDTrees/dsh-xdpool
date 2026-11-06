@@ -447,6 +447,19 @@ export interface PoolWebComboCandidate {
   usable: boolean
   contextWindow: number
   supportsImages: boolean
+  /**
+   * Other lanes that serve the SAME model, best-first, excluding this row.
+   *
+   * The "same model, different route" tier: when one provider rate-limits, the
+   * right move is usually to reach the same model through another provider, not
+   * to fall back to a different model — a different model changes the context
+   * window, tool-calling behaviour and writing style.
+   *
+   * Present so the card can offer "also try this model via …" in one click
+   * instead of making the user find the same name under another vendor and add
+   * it three times. Empty when the model has only one route.
+   */
+  siblings: readonly string[]
 }
 /** One chain, resolved against the live roster. */
 export interface PoolWebCombo {
@@ -968,8 +981,39 @@ export interface PoolWebAutomationJob {
    * what turns a row from "it ran" into "it did the things I care about".
    */
   detail?: readonly string[]
+  /**
+   * Per-item outcome of the last run, one entry per thing the job looked at.
+   *
+   * `detail` is free text and mixes counters with titles ("签到 +12",
+   * "复活 Account A"), so the card can print it but cannot GROUP it. This is the
+   * same information with a status attached, which is what makes "which tasks
+   * are still unclaimed, and why" answerable:
+   *
+   *   claimed  — the reward was collected on this run
+   *   already  — collected earlier today; nothing to do
+   *   skipped  — the board would not let it be claimed (locked, no energy, …)
+   *   failed   — the call came back an error
+   *
+   * Without it, "0 claimed" reads the same whether everything was already done,
+   * the account had no energy, or the endpoint is broken — three situations with
+   * three different fixes.
+   */
+  items?: readonly PoolWebAutomationItem[]
   /** A pending milestone worth naming, e.g. the next streak tier countdown. */
   progress?: string
+}
+/** How one item of an automation run ended. */
+export type PoolWebAutomationItemStatus = 'claimed' | 'already' | 'skipped' | 'failed'
+/** One item an automation job considered, with what happened to it. */
+export interface PoolWebAutomationItem {
+  /** The task board's own title, or a short label for a non-task step. */
+  title: string
+  status: PoolWebAutomationItemStatus
+  /** Credits/energy collected, when the upstream reported any. */
+  credit?: number
+  energy?: number
+  /** Why it was skipped or how it failed, in the upstream's words. */
+  note?: string
 }
 /**
  * Automation block on the status document.

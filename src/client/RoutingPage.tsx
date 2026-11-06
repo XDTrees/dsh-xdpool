@@ -273,6 +273,25 @@ export function RoutingPage({ t }: RoutingPageProps) {
             patchDraft({ models: [...current.models, picked] })
             setPicked('')
           }}
+          onAddSiblings={() => {
+            // Append every alternate route for the picked model, right after it,
+            // skipping ids the chain already names.
+            //
+            // This is the "same model, different route" tier in one click. A
+            // rate-limited provider should be escaped by reaching the SAME model
+            // elsewhere — switching models changes the context window,
+            // tool-calling behaviour and writing style, so it is a last resort.
+            // Doing it by hand means hunting the same display name under each
+            // vendor, and 86 model ids in the registry sit under two or more
+            // providers, so that hunt is not hypothetical.
+            const siblings = candidateById.get(picked)?.siblings ?? []
+            const additions = siblings.filter(id => id !== picked && !current.models.includes(id))
+            if (picked !== '' && !current.models.includes(picked)) additions.unshift(picked)
+            if (additions.length === 0) return
+            patchDraft({ models: [...current.models, ...additions] })
+            setPicked('')
+          }}
+          siblingCount={candidateById.get(picked)?.siblings.length ?? 0}
           onDropMember={modelId => {
             patchDraft({ models: current.models.filter(id => id !== modelId) })
           }}
@@ -395,6 +414,8 @@ function ChainEditor({
   onPick,
   onChange,
   onAddMember,
+  onAddSiblings,
+  siblingCount,
   onDropMember,
 }: {
   draft: ChainDraft
@@ -406,6 +427,10 @@ function ChainEditor({
   onPick: (value: string) => void
   onChange: (changes: Partial<ChainDraft>) => void
   onAddMember: () => void
+  /** Append the picked model AND every other lane serving it. */
+  onAddSiblings: () => void
+  /** How many alternate routes the picked model has. 0 hides the button. */
+  siblingCount: number
   onDropMember: (modelId: string) => void
 }) {
   /**
@@ -552,6 +577,23 @@ function ChainEditor({
         <button type="button" className="dsm-btn dsm-btn-outline" disabled={busy || picked === ''} onClick={onAddMember}>
           {t?.('route.addMember') ?? 'Add'}
         </button>
+        {/*
+          Second button, only when the picked model has alternates. It adds the
+          model AND every other lane serving it, in order — the "same model,
+          different route" tier without the hunt. Hidden rather than disabled when
+          there is nothing to add: a permanently dead control is noise.
+        */}
+        {siblingCount > 0
+          ? <button
+              type="button"
+              className="dsm-btn dsm-btn-outline"
+              disabled={busy || picked === ''}
+              title={t?.('route.addSiblingsHint') ?? '同模型的其他线路排在后面：某家限流时先换线路，而不是换模型'}
+              onClick={onAddSiblings}
+            >
+              {t?.('route.addSiblings', { count: siblingCount }) ?? `+${String(siblingCount)} 条同模型线路`}
+            </button>
+          : null}
       </div>
     </div>
   )

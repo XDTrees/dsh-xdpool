@@ -108,15 +108,29 @@ describe('the static fallback matches the live CN roster', () => {
     expect(byId.get('hy4-preview')?.contextWindow).toBe(960_000)
   })
 
-  it('prices the models whose rates a refresh failure would otherwise strip', () => {
-    expect(byId.get('space-bunny')?.multiplier).toBeCloseTo(0.08)
-    expect(byId.get('hy4-preview')?.multiplier).toBeCloseTo(0.29)
+  it('carries NO price for any row, because a captured rate goes stale', () => {
+    // A multiplier captured months ago is a number the user budgets against
+    // while it is quietly wrong, and `multiplier: 0` additionally renders the
+    // "free" badge — so a promotion that ended keeps claiming to be free.
+    // `undefined` is the honest state: the card prints no rate at all, which is
+    // exactly true (this build does not know the price). The live fetch fills it
+    // in within a second of a working startup.
+    for (const model of FALLBACK_WORKBUDDY_MODELS) {
+      expect(model.multiplier, `${model.id} must not carry a captured rate`).toBeUndefined()
+    }
   })
 
-  it('keeps the gateway badge tags so a fallback row still advertises the promo', () => {
-    expect(byId.get('hy3')?.tags).toContain('badge:限时免费:#FF0000')
-    expect(byId.get('hy4-preview')?.tags).toContain('badge:夜间免费:#FF0000')
-    expect(byId.get('glm-5.2')?.tags).toContain('badge:夜间折扣:#1E90FF')
+  it('carries no time-bound promo badge either, for the same reason', () => {
+    // `badge:限时免费` / `badge:夜间免费` / `badge:夜间折扣` are campaign claims.
+    // Offline they advertise a promotion that may have ended — the same class of
+    // lie as a stale price.
+    for (const model of FALLBACK_WORKBUDDY_MODELS) {
+      for (const tag of model.tags ?? []) {
+        expect(tag, `${model.id} carries a campaign claim: ${tag}`).not.toMatch(/^badge:/u)
+      }
+    }
+    // The capability tag stays: `craft` describes the model, not a campaign.
+    expect(byId.get('hy3')?.tags).toContain('craft')
   })
 })
 
@@ -177,9 +191,19 @@ describe('each region falls back to its OWN table', () => {
     global.reset()
     expect(cn.currentSource()).toBe('fallback')
     expect(global.currentSource()).toBe('fallback')
-    expect(cn.current().find(m => m.id === 'hy3')?.tags).toContain('badge:限时免费:#FF0000')
-    expect(global.current().find(m => m.id === 'hy3')?.tags ?? [])
-      .not.toContain('badge:限时免费:#FF0000')
+    // The per-region split is still asserted, by table identity rather than by a
+    // promo badge: the badges are gone from BOTH tables now (a campaign claim
+    // cannot be kept current offline), so a badge was never the right witness
+    // for "each region has its own list".
+    expect(cn.current()).not.toBe(global.current())
+    // And neither region invents a campaign claim while offline.
+    for (const catalog of [cn, global]) {
+      for (const model of catalog.current()) {
+        for (const tag of model.tags ?? []) {
+          expect(tag, `${model.id}: ${tag}`).not.toMatch(/^badge:/u)
+        }
+      }
+    }
   })
 
   it('defaults to the domestic table, so every existing call site is unchanged', () => {

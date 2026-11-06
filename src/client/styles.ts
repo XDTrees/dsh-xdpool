@@ -316,6 +316,17 @@ export const POOL_CARD_CSS = `
 /* Automation: run-now button and the per-job progress line. */
 .dsm-xdpool-auto-run{flex:none}
 .dsm-xdpool-auto-job-detail{grid-column:1/-1;color:var(--dsw-alias-label-tertiary,#9aa0a8);font-size:11px;line-height:16px}
+/* Per-item counts, grouped by status. Deliberately quieter than the detail
+   line above: the sentences are the narrative, these are the tally. Colour
+   carries the meaning so four chips stay scannable — grey for a non-event, amber
+   for "not yet" (the only one that implies something may still happen), red only
+   for a real failure. */
+.dsm-xdpool-auto-job-items{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+.dsm-xdpool-auto-job-item{appearance:none;padding:1px 7px;border-radius:999px;border:1px solid transparent;font-size:10px;line-height:15px;font-weight:600;letter-spacing:.01em;cursor:default;background:color-mix(in srgb, var(--dsw-alias-label-tertiary,#9aa0a8) 12%, transparent);color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-xdpool-auto-job-item-claimed{background:color-mix(in srgb, #3ec98a 16%, transparent);border-color:color-mix(in srgb, #3ec98a 38%, transparent);color:color-mix(in srgb, #3ec98a 86%, var(--dsw-alias-label-primary,#e9ebef))}
+.dsm-xdpool-auto-job-item-already{background:color-mix(in srgb, var(--dsw-alias-label-tertiary,#9aa0a8) 10%, transparent);color:var(--dsw-alias-label-tertiary,#9aa0a8)}
+.dsm-xdpool-auto-job-item-skipped{background:color-mix(in srgb, #f0a441 14%, transparent);border-color:color-mix(in srgb, #f0a441 34%, transparent);color:color-mix(in srgb, #f0a441 82%, var(--dsw-alias-label-primary,#e9ebef))}
+.dsm-xdpool-auto-job-item-failed{background:color-mix(in srgb, #ef5f5f 16%, transparent);border-color:color-mix(in srgb, #ef5f5f 40%, transparent);color:color-mix(in srgb, #ef5f5f 86%, var(--dsw-alias-label-primary,#e9ebef))}
 /* Credit packages ride on the figures line above the check-in row. */
 .dsm-xdpool-panel-packages{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
 /* Check-in: the action and its state on ONE line. It was a centred column under

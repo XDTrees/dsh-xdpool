@@ -1086,6 +1086,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
     editable: boolean
     dirty: boolean
     enabled: number
+    missing: readonly string[]
   } => {
     const here = statusOf(region)
     const local = draftByRegion[region]
@@ -2195,6 +2196,37 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                             ? null
                                             : <span className="dsm-xdpool-auto-job-detail">
                                                 {job.detail.join(' · ')}
+                                              </span>}
+                                          {/*
+                                            The per-item breakdown, grouped by
+                                            status. `detail` above says what
+                                            happened in sentences; this says how
+                                            many are in each state, which is the
+                                            part that answers "is anything still
+                                            unclaimed, and why".
+
+                                            Only shown when at least one item
+                                            exists: a job that considered nothing
+                                            (a report pass, say) has no items and
+                                            gaining an empty strip would be noise.
+                                          */}
+                                          {job?.items === undefined || job.items.length === 0
+                                            ? null
+                                            : <span className="dsm-xdpool-auto-job-items">
+                                                {(['claimed', 'already', 'skipped', 'failed'] as const).map(status => {
+                                                  const group = job.items?.filter(item => item.status === status) ?? []
+                                                  if (group.length === 0) return null
+                                                  return <span
+                                                    key={status}
+                                                    className={`dsm-xdpool-auto-job-item dsm-xdpool-auto-job-item-${status}`}
+                                                    title={group.map(item => item.title
+                                                      + (item.note === undefined ? '' : ` (${item.note})`)).join('\n')}
+                                                  >
+                                                    {t?.(`row.autoItem.${status}` as const) ?? status}
+                                                    {' '}
+                                                    {group.length}
+                                                  </span>
+                                                })}
                                               </span>}
                                         </div>
                                       )

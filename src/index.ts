@@ -40,6 +40,7 @@ import {
   buildComboCatalog,
   comboId,
   COMBO_DEFAULT_CONTEXT_WINDOW,
+  siblingRoutes,
   type ComboSetting,
 } from './combos.ts'
 import {
@@ -139,6 +140,10 @@ function combosStatusOf(
       usable: true,
       contextWindow: row.contextWindow,
       supportsImages: row.supportsImages,
+      // A pool model has no sibling routes: the other lanes are other vendors,
+      // and the pool's own two lanes (`buddy`/`workbuddy`) are a region split of
+      // one account pool rather than an alternate supplier.
+      siblings: [] as readonly string[],
     })),
     ...providerRows.map(row => {
       const setting = settings.get(row.providerId)
@@ -152,6 +157,11 @@ function combosStatusOf(
           : providerAuthUsable(provider, setting),
         contextWindow: row.contextWindow,
         supportsImages: row.supportsImages,
+        // Every OTHER lane serving the same model, this row's provider kept
+        // primary. This is what makes "one model, several routes" a chain the card
+        // can build without the user hunting for the same name under each vendor.
+        siblings: siblingRoutes(row.id, { pool: poolRows, aggregate: providerRows }, row.providerId)
+          .filter(candidate => candidate !== row.id),
       }
     }),
   ]

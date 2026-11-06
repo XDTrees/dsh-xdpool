@@ -44,28 +44,43 @@ export interface WorkBuddyModelInfo {
  * (`kimi-k3-1`). A stale fallback is worse than a short one — it looks
  * authoritative while being wrong.
  *
- * `multiplier: 0` is the gateways' own spelling of "free" (`credits: "x0.00"`),
- * which is what turns on the free badge.
+ * NO PRICES AND NO PROMO BADGES HERE. This table is what the picker shows when
+ * the startup fetch fails, and a multiplier captured months ago is a price the
+ * user will budget against while it is quietly wrong. Two specific harms:
+ *
+ *   - `multiplier: 0` renders the "free" badge, so a model that was free at
+ *     capture time keeps claiming to be free after the promotion ends;
+ *   - a non-zero multiplier renders next to the model, so a stale figure reads
+ *     as the current rate.
+ *
+ * `undefined` is the honest state: the card prints no rate and no badge, which
+ * is exactly true — this build does not know the price. The live fetch fills
+ * both in within a second of a working startup, and `catalogSource` already
+ * tells the card to say the list is the built-in one.
+ *
+ * Windows, output ceilings and the `craft` capability tag stay: those are
+ * properties of the model, not of a campaign, and they are what makes the list
+ * usable offline at all.
  */
 export const FALLBACK_WORKBUDDY_MODELS: readonly WorkBuddyModelInfo[] = [
   { id: 'auto', name: 'Auto', contextWindow: 256_000, maxOutputTokens: 32_000, supportsImages: true, tags: ['craft'] },
-  { id: 'hy4-preview', name: 'Hy4 preview', contextWindow: 960_000, maxOutputTokens: 64_000, supportsImages: true, multiplier: 0.29, tags: ['craft', 'badge:夜间免费:#FF0000'] },
-  { id: 'hy3', name: 'Hy3', contextWindow: 192_000, maxOutputTokens: 64_000, supportsImages: true, multiplier: 0, tags: ['craft', 'badge:限时免费:#FF0000'] },
-  { id: 'hy3-x', name: 'Hy3', contextWindow: 192_000, maxOutputTokens: 64_000, supportsImages: true, multiplier: 0.05 },
-  { id: 'space-bunny', name: 'Space-Bunny', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true, multiplier: 0.08 },
-  { id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash', contextWindow: 1_000_000, maxOutputTokens: 128_000, supportsImages: true, multiplier: 0.11 },
-  { id: 'deepseek-v4-pro', name: 'Deepseek-V4-Pro', contextWindow: 1_000_000, maxOutputTokens: 128_000, supportsImages: true, multiplier: 0.51 },
+  { id: 'hy4-preview', name: 'Hy4 preview', contextWindow: 960_000, maxOutputTokens: 64_000, supportsImages: true, tags: ['craft'] },
+  { id: 'hy3', name: 'Hy3', contextWindow: 192_000, maxOutputTokens: 64_000, supportsImages: true, tags: ['craft'] },
+  { id: 'hy3-x', name: 'Hy3', contextWindow: 192_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'space-bunny', name: 'Space-Bunny', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash', contextWindow: 1_000_000, maxOutputTokens: 128_000, supportsImages: true },
+  { id: 'deepseek-v4-pro', name: 'Deepseek-V4-Pro', contextWindow: 1_000_000, maxOutputTokens: 128_000, supportsImages: true },
   { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', contextWindow: 1_000_000, maxOutputTokens: 128_000, supportsImages: true },
-  { id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true, multiplier: 0.79 },
-  { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxOutputTokens: 131_072, supportsImages: true, multiplier: 0.06 },
-  { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true, multiplier: 0.79, tags: ['craft', 'badge:夜间折扣:#1E90FF'] },
-  { id: 'glm-5.1', name: 'GLM-5.1', contextWindow: 200_000, maxOutputTokens: 48_000, supportsImages: false, multiplier: 0.79 },
-  { id: 'glm-5v-turbo', name: 'GLM-5v-Turbo', contextWindow: 200_000, maxOutputTokens: 64_000, supportsImages: true, multiplier: 0.71 },
-  { id: 'kimi-k3-1', name: 'Kimi-K3', contextWindow: 1_000_000, maxOutputTokens: 32_000, supportsImages: true, multiplier: 1.62 },
-  { id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true, multiplier: 0.77 },
-  { id: 'kimi-k2.7', name: 'Kimi-K2.7-Code', contextWindow: 256_000, maxOutputTokens: 32_000, supportsImages: true, multiplier: 0.57 },
-  { id: 'kimi-k2.6', name: 'Kimi-K2.6', contextWindow: 256_000, maxOutputTokens: 32_000, supportsImages: true, multiplier: 0.52 },
-  { id: 'minimax-m3', name: 'MiniMax-M3', contextWindow: 512_000, maxOutputTokens: 64_000, supportsImages: true, multiplier: 0.25 },
+  { id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxOutputTokens: 131_072, supportsImages: true },
+  { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true, tags: ['craft'] },
+  { id: 'glm-5.1', name: 'GLM-5.1', contextWindow: 200_000, maxOutputTokens: 48_000, supportsImages: false },
+  { id: 'glm-5v-turbo', name: 'GLM-5v-Turbo', contextWindow: 200_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'kimi-k3-1', name: 'Kimi-K3', contextWindow: 1_000_000, maxOutputTokens: 32_000, supportsImages: true },
+  { id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'kimi-k2.7', name: 'Kimi-K2.7-Code', contextWindow: 256_000, maxOutputTokens: 32_000, supportsImages: true },
+  { id: 'kimi-k2.6', name: 'Kimi-K2.6', contextWindow: 256_000, maxOutputTokens: 32_000, supportsImages: true },
+  { id: 'minimax-m3', name: 'MiniMax-M3', contextWindow: 512_000, maxOutputTokens: 64_000, supportsImages: true },
 ]
 
 /** Which gateway a catalog describes. Mirrors `WorkBuddyRegion` in `upstream.ts`. */

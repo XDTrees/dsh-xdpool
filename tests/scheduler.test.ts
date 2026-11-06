@@ -186,6 +186,12 @@ function fakeUpstream(): FakeUpstream {
       guard('streak')
       return state.streakDays
     },
+    // The read the scheduler now performs BEFORE claiming. Mirrors the upstream:
+    // it reports whether today is already collected, so a repeat check-in can be
+    // skipped instead of provoked into an error.
+    async fetchCheckinStatus(): Promise<{ todayCheckedIn: boolean }> {
+      return { todayCheckedIn: state.alreadyCheckedIn }
+    },
     async claimDailyCheckin(): Promise<{ credit: number; streakDays: number; isStreakDay: boolean }> {
       guard('checkin')
       // Mirrors the upstream: a repeat check-in answers a business error
@@ -716,7 +722,11 @@ describe('scheduler account gating', () => {
     await (scheduler as unknown as { tick(): Promise<void> }).tick()
   }
 
-  it('never calls upstream for a global account', async () => {
+  it('never calls a growth endpoint for a global account', async () => {
+    // Scope is PER JOB now, not a blanket "global does nothing". The growth jobs
+    // (tasks here) stay CN-only: the international gateway has no task centre, so
+    // calling it produced 404s and noise. Check-in is the deliberate exception
+    // and has its own case below.
     const { pool, upstream } = await harness(1, { domain: 'workbuddy.ai' })
     const when = beijing(2026, 8, 7, 11, 0, 0)
     const scheduler = new WorkBuddyScheduler(pool, upstream.client, {
@@ -729,8 +739,30 @@ describe('scheduler account gating', () => {
       logger: { info() {}, warn() {} },
     })
     await tickAt(scheduler, when)
-    expect(upstream.calls).toEqual([])
+    // Check-in is allowed for a global account (its own case below), so the
+    // assertion is about GROWTH calls, not about "no calls at all" — which was
+    // what the old blanket exclusion made trivially true.
+    expect(upstream.calls.filter(call => call !== 'checkin')).toEqual([])
     expect(scheduler.status().jobs.tasks.ok).toBe(0)
+  })
+
+  it('DOES check a global account in, because that job pays there too', async () => {
+    // The point of per-job scope: check-in is idempotent, one call, and "already
+    // checked in" is already classified as success — so excluding a global
+    // account from it threw credits away for no reason, which the old blanket
+    // rule did.
+    const { pool, upstream } = await harness(1, { domain: 'workbuddy.ai' })
+    const when = beijing(2026, 8, 7, 9, 0, 0)
+    const scheduler = new WorkBuddyScheduler(pool, upstream.client, {
+      enabled: true,
+      checkinHours: [9],
+      accountDelayMs: 0,
+      now: () => when,
+      logger: { info() {}, warn() {} },
+    })
+    await tickAt(scheduler, when)
+    // A claim went out, which means the account was allowed to run at all.
+    expect(upstream.calls.some(call => call.includes('checkin'))).toBe(true)
   })
 
   it('skips an account the user switched off', async () => {

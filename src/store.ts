@@ -20,13 +20,14 @@
  *
  * @module dsh-xdpool/store
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile, rename } from 'node:fs/promises'
 // The sync reader below needs `readFileSync`, and `node:fs/promises` does not
 // export one. A second import from `node:fs` is the honest way to get it.
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { env } from 'node:process'
+import { ensureSecretDir, writeSecretFile } from './file-perms.ts'
 import type { AggregateSettings, ProviderRecord, ProviderSetting } from './providers.ts'
 import { getProvider, listProviderIds, PROVIDERS } from './providers.ts'
 import { normalizeCombos, type ComboSetting } from './combos.ts'
@@ -239,9 +240,12 @@ function normalizeRelayModels(raw: readonly unknown[]): string[] {
 export async function writeAggregateSettings(settings: AggregateStore): Promise<void> {
   const path = aggregateSettingsPath()
   if (path === undefined) throw new Error('no home directory to store the aggregate settings in')
-  await mkdir(dirname(path), { recursive: true })
+  // Owner-only: this document holds every third-party `apiKey` the user pasted.
+  // The mode goes on the TEMP file so the rename carries it across, which is the
+  // whole reason the write is staged.
+  await ensureSecretDir(dirname(path))
   const file: AggregateFile = { version: STORE_VERSION, ...settings }
-  await writeFile(`${path}.tmp`, `${JSON.stringify(file, null, 2)}\n`, 'utf8')
+  await writeSecretFile(`${path}.tmp`, `${JSON.stringify(file, null, 2)}\n`)
   await rename(`${path}.tmp`, path)
 }
 /**
