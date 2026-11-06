@@ -1642,10 +1642,20 @@ function withBareModelId(raw: string, modelId: string): string {
         pool,
         maxAttempts,
         acquireAccount: async () => (await acquireForRequest(modelId, conversationKey, controller.signal)).account,
-        usage: usageContext,
-        contextWindow: modelId === undefined
-          ? undefined
-          : catalog.current().find(m => m.id === modelId)?.contextWindow,
+        // Both optional fields are spread only when known — see the note above:
+        // `usage` and `contextWindow` are `?:`, so an explicit `undefined` is a
+        // different thing from an absent key.
+        ...usageContext === undefined ? {} : { usage: usageContext },
+        // Spread when known: `contextWindow` is an OPTIONAL field, and under
+        // `exactOptionalPropertyTypes` passing an explicit `undefined` is not the
+        // same as leaving it out. A missing window means "not published", which is
+        // exactly what omitting the field says.
+        ...(() => {
+          const window = modelId === undefined
+            ? undefined
+            : catalog.current().find(m => m.id === modelId)?.contextWindow
+          return window === undefined ? {} : { contextWindow: window }
+        })(),
       })
       if (recovered.ok) {
         await serveSuccessfulStream(res, recovered.account, recovered.result, logger, refreshBalance, pool, usageContext)

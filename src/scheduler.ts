@@ -1302,7 +1302,12 @@ export class WorkBuddyScheduler {
     state.message = this.summarise(kind, ok, failed, claimed, credit, energy)
     state.detail = detail
     state.items = items
-    state.progress = progressNote
+    // Cleared explicitly when this run produced no milestone: `progress` is a
+    // `?: string`, which under `exactOptionalPropertyTypes` cannot be assigned
+    // `undefined`. Mutating a state object that may still hold LAST run's note is
+    // why this deletes rather than skips.
+    if (progressNote === undefined) delete state.progress
+    else state.progress = progressNote
     this.logger.info?.(`automation ${accountWord}: ${state.message}`)
     // The rewards above are already recorded; make sure they are ACROSS the
     // process boundary before this run reports itself done. #98 hit the exact

@@ -283,6 +283,15 @@ export function parseWorkBuddyAuth(
   const lastRefreshAtMs = typeof auth['lastRefreshTime'] === 'number'
     ? expiryToMs(auth['lastRefreshTime'])
     : undefined
+  // Resolved ONCE each, then used twice: the identity fields were written as
+  // `optionalString(…) === undefined ? {} : { uin: optionalString(…) }`, which
+  // ran the parse twice AND defeated the type narrowing — TypeScript narrows the
+  // first call but not the second, so the object literal carried `string | undefined`
+  // into a field declared `?: string`. One const fixes both.
+  const nickname = optionalString(decryptableString(identity['nickname'], decrypt).value)
+  const uin = optionalString(identity['uin'])
+  const uid = optionalString(identity['uid'])
+  const enterpriseId = optionalString(identity['enterpriseId'])
 
   return {
     accessToken,
@@ -290,14 +299,10 @@ export function parseWorkBuddyAuth(
     expiresAtMs: typeof auth['expiresAt'] === 'number' ? expiryToMs(auth['expiresAt']) : 0,
     ...refreshExpiresAtMs === undefined ? {} : { refreshExpiresAtMs },
     ...lastRefreshAtMs === undefined ? {} : { lastRefreshAtMs },
-    ...optionalString(decryptableString(identity['nickname'], decrypt).value) === undefined
-      ? {}
-      : { nickname: optionalString(decryptableString(identity['nickname'], decrypt).value) },
-    ...optionalString(identity['uin']) === undefined ? {} : { uin: optionalString(identity['uin']) },
-    ...optionalString(identity['uid']) === undefined ? {} : { uid: optionalString(identity['uid']) },
-    ...optionalString(identity['enterpriseId']) === undefined
-      ? {}
-      : { enterpriseId: optionalString(identity['enterpriseId']) },
+    ...nickname === undefined ? {} : { nickname },
+    ...uin === undefined ? {} : { uin },
+    ...uid === undefined ? {} : { uid },
+    ...enterpriseId === undefined ? {} : { enterpriseId },
     domain: typeof auth['domain'] === 'string' ? auth['domain'] : '',
     sourcePath,
   }
@@ -855,8 +860,13 @@ export class WorkBuddyAccountPool {
    * A function rather than a list because that pool is mounted asynchronously
    * and can be re-read on demand; `undefined` means "no such source", which is
    * the state every test and every pre-mount startup is in.
+   *
+   * The `| undefined` is explicit because `applyExternalSource` CLEARS the field by
+   * assigning `undefined` — under `exactOptionalPropertyTypes` a bare `?:` means
+   * "may be absent, never undefined", which made that documented clearing action
+   * a type error.
    */
-  private externalSource?: () => Promise<readonly WorkBuddyCredential[]>
+  private externalSource?: (() => Promise<readonly WorkBuddyCredential[]>) | undefined
 
   constructor(options: AccountPoolOptions = {}) {
     this.logger = options.logger

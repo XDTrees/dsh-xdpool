@@ -302,7 +302,11 @@ export async function compactWithSummary(
   signal?: AbortSignal,
 ): Promise<SummarizeResult> {
   const first = compactMessages(messages, options)
-  if (!first.changed) return { messages: first.messages, tokens: first.tokens, summary: undefined, skipped: undefined }
+  // Nothing to report, so the fields are ABSENT rather than explicitly
+  // `undefined`: under `exactOptionalPropertyTypes` a field declared `?: string`
+  // means "may be missing, never undefined", and the two are not interchangeable.
+  // Callers test `=== undefined`, which reads both the same way.
+  if (!first.changed) return { messages: first.messages, tokens: first.tokens }
 
   // Give the summariser a bounded slice of the transcript.
   const summaryBudget = Math.max(256, Math.floor(options.budget / 4))
@@ -333,8 +337,14 @@ export async function compactWithSummary(
 
   if (summary === undefined) {
     // No summary: fall back to plain truncation, which is still better than
-    // surfacing a hard 400 to the user.
-    return { messages: first.messages, skipped, tokens: first.tokens }
+    // surfacing a hard 400 to the user. `skipped` is spread in only when there is
+    // a reason to give — `exactOptionalPropertyTypes` distinguishes "absent" from
+    // "present and undefined", and this field declares the former.
+    return {
+      messages: first.messages,
+      tokens: first.tokens,
+      ...skipped === undefined ? {} : { skipped },
+    }
   }
 
   const withSummary = injectSummary(first.messages, summary)

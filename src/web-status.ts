@@ -982,9 +982,14 @@ export async function poolWebStatus(
     // (offline)" note plus a retry when it is the static table, so a failed
     // startup fetch stops looking like the plugin deleted the user's models.
     catalogSource: deps.catalogs[region].currentSource(),
-    ...deps.catalogs[region].catalogUpdatedAt() === undefined
-      ? {}
-      : { catalogUpdatedAt: deps.catalogs[region].catalogUpdatedAt() },
+    // Each read ONCE: the double-call form used here (`…() === undefined ? {} :
+    // { … : …() }`) parsed twice, and TypeScript narrows the first call but not
+    // the second — so the spread carried `string | undefined` into a field
+    // declared `?: string`.
+    ...(() => {
+      const updatedAt = deps.catalogs[region].catalogUpdatedAt()
+      return updatedAt === undefined ? {} : { catalogUpdatedAt: updatedAt }
+    })(),
     ...deps.catalogs[region].lastFetchError() === undefined
       ? {}
       : { catalogError: safeMessage(deps.catalogs[region].lastFetchError()) },

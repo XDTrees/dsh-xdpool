@@ -1153,6 +1153,11 @@ export declare class WorkBuddyAccountPool {
    * A function rather than a list because that pool is mounted asynchronously
    * and can be re-read on demand; `undefined` means "no such source", which is
    * the state every test and every pre-mount startup is in.
+   *
+   * The `| undefined` is explicit because `applyExternalSource` CLEARS the field by
+   * assigning `undefined` — under `exactOptionalPropertyTypes` a bare `?:` means
+   * "may be absent, never undefined", which made that documented clearing action
+   * a type error.
    */
   private externalSource?;
   constructor(options?: AccountPoolOptions);

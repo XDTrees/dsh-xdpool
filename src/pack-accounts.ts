@@ -121,6 +121,10 @@ export function packCredentialToWorkBuddy(
   const expiresAtMs = expiryToMs(document.expires_at) || expiryToMs(entry.expiresAt)
   const nickname = text(document.nickname) ?? text(entry.nickname)
   const uid = text(document.user_id)
+  // Resolved once. Written as `text(…) === undefined ? {} : { enterpriseId: text(…) }`
+  // it parsed the field twice and defeated the narrowing — the second call was
+  // still `string | undefined` against a field declared `?: string`.
+  const enterpriseId = text(document.enterprise_id)
   return {
     accessToken,
     // A non-refreshable sign-in is still a working credential, and the pack
@@ -135,9 +139,7 @@ export function packCredentialToWorkBuddy(
     // The pack has no billing `uin`; `uid` is the fallback identity, and a row
     // with neither still keys on its nickname rather than being dropped.
     ...uid === undefined ? {} : { uid },
-    ...text(document.enterprise_id) === undefined
-      ? {}
-      : { enterpriseId: text(document.enterprise_id) },
+    ...enterpriseId === undefined ? {} : { enterpriseId },
     domain,
     // The pool logs this on an unreadable file, and a scan sign-in has no file:
     // name the credential ref so a duplicate or a 401 points at something real.
