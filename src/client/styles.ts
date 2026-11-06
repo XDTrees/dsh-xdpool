@@ -1221,6 +1221,14 @@ export const SHARED_CARD_CSS = `
 .dsm-xdpool-table td{padding:7px 10px;border-bottom:1px solid color-mix(in srgb, var(--dsw-alias-border-l1,#ffffff14) 62%, transparent);color:var(--dsw-alias-label-secondary,#c6c9d0);font-variant-numeric:tabular-nums}
 .dsm-xdpool-table tbody tr:last-child td{border-bottom:none}
 .dsm-xdpool-table tbody tr[data-ok="false"] td{color:var(--dsw-alias-state-error-primary,#ef4444)}
+/* Numeric columns, header AND cells together.
+   The bare .dsm-xdpool-num rule could never win: .dsm-xdpool-table th is (0,1,1)
+   and .dsm-xdpool-num is (0,1,0), so every numeric HEADER stayed left-aligned
+   while its cells went right — the column read as shifted against its own title.
+   Both selectors below out-specify the th rule, so the pair moves together and
+   the table lines up. */
+.dsm-xdpool-table th.dsm-xdpool-num,
+.dsm-xdpool-table td.dsm-xdpool-num,
 .dsm-xdpool-num{text-align:right;font-variant-numeric:tabular-nums}
 .dsm-xdpool-ellipsis{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 

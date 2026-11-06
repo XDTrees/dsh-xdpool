@@ -88,7 +88,16 @@ function regionLabel(region: string, t?: Translate): string {
  * measurement, and the model table's share column would then divide a total by
  * rows that contributed nothing and quietly shrink it.
  */
-function tokenCells(call: UsageCall): string[] {
+/**
+ * The three numeric cells for one call: input, output, cached.
+ *
+ * A fixed-length TUPLE, not `string[]`, so the header can never drift out of step
+ * with the body. The table renders these through `.map`, which means a fourth
+ * header added without a fourth value here — or a third value dropped — would
+ * silently shift every numeric column against its title. That is precisely the
+ * misalignment this was rebuilt to fix, and a `string[]` type cannot see it.
+ */
+function tokenCells(call: UsageCall): readonly [string, string, string] {
   if (call.usage === undefined) return ['—', '—', '—']
   return [fmtInt(call.usage.inputTokens), fmtInt(call.usage.outputTokens), fmtInt(call.usage.cachedTokens)]
 }
