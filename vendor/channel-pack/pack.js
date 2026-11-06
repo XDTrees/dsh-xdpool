@@ -29861,15 +29861,41 @@ var EMPTY_MODEL_SET = /* @__PURE__ */ new Set();
 //   - an EMPTY array means the user disabled every model, which is a real state
 //     and must be honoured — hence the two are distinguished below rather than
 //     folded with `??`.
-function laneAllowedIds(disabled, laneId) {
+function laneAllowedIds(disabled, laneId, catalogue) {
+  // [xdpool-local] laneAllowedIds returns the DISABLED set.
+  //
+  // The call sites consume the result as a BLACKLIST
+  // (`source.filter(model => !disabled.has(model.id))`), so returning the
+  // allow-list inverted the picker: ticking three of sixteen showed the other
+  // thirteen. Building the complement needs the roster, which is what the third
+  // argument carries.
+  //
+  // It is a THUNK: one adapter declares its roster on the line AFTER this call, so
+  // a value would read it before initialization. The body runs later.
   const table = globalThis.__xdpoolLaneSelection;
   const allow = table === void 0 || table === null ? void 0 : table[laneId];
   if (allow === void 0) return disabled;
-  const allowed = new Set(allow);
   const blocked = disabled === void 0 ? EMPTY_MODEL_SET : disabled;
-  // Return a real Set even when the pack had none: the call sites only test
-  // `size === 0` and `.has`, so both must work.
-  return new Set([...allowed].filter((id) => !blocked.has(id)));
+  const allowed = new Set(allow);
+  let rows;
+  try {
+    rows = typeof catalogue === "function" ? catalogue() : catalogue;
+  } catch {
+    // A roster that cannot be read yet leaves the pack's own blacklist in charge
+    // rather than blanking the picker.
+    return disabled;
+  }
+  if (!Array.isArray(rows) || rows.length === 0) return disabled;
+  const out = new Set();
+  for (const row of rows) {
+    const id = row === null || row === void 0 ? void 0 : row.id;
+    if (typeof id !== "string" || id === "") continue;
+    // Disabled when the lane forbids it, or when the pack already did.
+    if (!allowed.has(id) || blocked.has(id)) out.add(id);
+  }
+  // Everything allowed: hand back the pack's own gate, which is what `size === 0`
+  // means to the caller.
+  return out.size === 0 ? disabled : out;
 }
 
 // [xdpool-local] LANE_DISPLAY_NAME
@@ -35437,7 +35463,7 @@ var BuddyAdapter = class _BuddyAdapter extends LlmAdapter2 {
     if (!await providerCatalogVisible(this.options.accountPool, this.product.id)) return [];
     await this.ensureRemoteModels();
     const source = this.remoteModels ?? this.staticFallbackModels();
-    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id);
+    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id, () => source);
     const listed = disabled === void 0 || disabled.size === 0 ? source : source.filter((model) => !disabled.has(model.id));
     return listed.map((model) => ({
       provider: this.product.id,
@@ -36957,7 +36983,7 @@ var LobsteraiAdapter = class extends LlmAdapter3 {
     if (!await providerCatalogVisible(this.options.accountPool, this.product.id)) return [];
     await this.ensureRemoteModels();
     const source = this.remoteModels ?? this.staticFallbackModels();
-    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id);
+    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id, () => source);
     const listed = disabled === void 0 || disabled.size === 0 ? source : source.filter((model) => !disabled.has(model.id));
     return listed.map((model) => ({
       provider: this.product.id,
@@ -39084,8 +39110,8 @@ var QoderAdapter = class extends LlmAdapter4 {
   }
   async listModels(_provider) {
     if (!await providerCatalogVisible(this.options.accountPool, this.product.id)) return [];
-    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id);
     const source = this.product.fallbackModels;
+    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id, () => source);
     const listed = disabled === void 0 || disabled.size === 0 ? source : source.filter((model) => !disabled.has(model.id));
     return listed.map((model) => ({
       provider: this.product.id,
@@ -40774,7 +40800,7 @@ var TraeAdapter = class extends LlmAdapter5 {
     if (!await providerCatalogVisible(this.options.accountPool, this.product.id)) return [];
     await this.ensureRemoteModels();
     const source = this.listAllModels();
-    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id);
+    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id, () => source);
     const listed = disabled === void 0 || disabled.size === 0 ? source : source.filter((model) => !disabled.has(model.id));
     return listed.map((model) => ({
       provider: this.product.id,
@@ -42203,7 +42229,7 @@ var ClineAdapter = class extends LlmAdapter6 {
     if (!await providerCatalogVisible(this.options.accountPool, this.product.id)) return [];
     await this.ensureRemoteModels();
     const source = this.remoteModels ?? this.fallbackCatalog();
-    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id);
+    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id, () => source);
     const listed = disabled === void 0 || disabled.size === 0 ? source : source.filter((model) => !disabled.has(model.id));
     return listed.map((model) => ({
       provider: this.product.id,
@@ -42799,7 +42825,7 @@ var LoomyAdapter = class extends LlmAdapter7 {
   async listModels(_provider) {
     if (!await providerCatalogVisible(this.options.accountPool, this.product.id)) return [];
     const all = await this.loadModels();
-    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id);
+    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id, () => all);
     const listed = disabled === void 0 || disabled.size === 0 ? all : all.filter((model) => !disabled.has(model.id));
     return listed.map((model) => ({
       provider: this.product.id,
@@ -43255,7 +43281,7 @@ var RaccoonAdapter = class extends LlmAdapter8 {
   async listModels(_provider) {
     if (!await providerCatalogVisible(this.options.accountPool, this.product.id)) return [];
     const all = await this.loadModels();
-    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id);
+    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id, () => all);
     const listed = disabled === void 0 || disabled.size === 0 ? all : all.filter((model) => !disabled.has(model.id));
     return listed.map((model) => ({
       provider: this.product.id,
@@ -55010,7 +55036,7 @@ var ZcodeAdapter = class extends LlmAdapter9 {
     if (!await this.ready()) return [];
     if (!await providerCatalogVisible(this.options.accountPool, this.product.id)) return [];
     const all = await this.loadModels();
-    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id);
+    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id, () => all);
     const listed = disabled === void 0 || disabled.size === 0 ? all : all.filter((model) => !disabled.has(model.id));
     return listed.map((model) => ({
       provider: this.product.id,
@@ -58804,7 +58830,7 @@ var GeminiAdapter = class extends LlmAdapter10 {
   async listModels(_provider) {
     if (!await providerCatalogVisible(this.options.accountPool, this.product.id)) return [];
     const all = this.loadModels();
-    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id);
+    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id, () => all);
     const listed = disabled === void 0 || disabled.size === 0 ? all : all.filter((model) => !disabled.has(model.id));
     return listed.map((model) => ({
       provider: this.product.id,
@@ -66599,7 +66625,7 @@ var MinimaxAdapter = class extends LlmAdapter11 {
   async listModels(_provider) {
     if (!await providerCatalogVisible(this.options.accountPool, this.product.id)) return [];
     const all = await this.loadModels();
-    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id);
+    const disabled = laneAllowedIds(this.options.accountPool?.disabledModelsFor(this.product.id), this.product.id, () => all);
     const listed = disabled === void 0 || disabled.size === 0 ? all : all.filter((model) => !disabled.has(model.id));
     return listed.map((model) => ({
       provider: this.product.id,
