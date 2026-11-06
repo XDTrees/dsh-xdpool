@@ -378,6 +378,15 @@ export interface Config {
    * does not wipe what the automation already earned.
    */
   automationEarnings?: AutomationLedger
+  /**
+   * Whether the shared 免密 free lane contributes models.
+   *
+   * Absent reads as OFF. It is the only lane that defaults off: it is a shared
+   * third-party endpoint with no credential of the user's own, so leaving it on
+   * dropped a group into the model picker that nothing in the UI could remove
+   * (the aggregate switch does not govern it — it is not an aggregate provider).
+   */
+  freeLane?: boolean
 }
 /** One region's saved model selection. */
 export interface ModelSelectionConfig {
@@ -560,7 +569,21 @@ export const Config: z<Config> = z.object({
   // as well as stored here, so it must be a plain schema field rather than a
   // scheduler-shaped blob: the settings mirror is the only channel both sides
   // share, and an undeclared key would be stripped on the way in.
-  sidebarRow: asVolatile(z.boolean().default(true).description('Show the XD Pool entry in the left sidebar (the Settings page keeps working either way)'))
+  sidebarRow: asVolatile(z.boolean().default(true).description('Show the XD Pool entry in the left sidebar (the Settings page keeps working either way)')),
+  /**
+   * The 免密 free lane (`free:` models).
+   *
+   * OFF unless set, and it is the only lane that works that way. It is a shared
+   * third-party endpoint with no credential of its own, so there is nothing for
+   * a user to "configure" — it simply appears in the picker or does not. On by
+   * default it added a group nobody asked for that the aggregate switch does not
+   * govern (it is not an aggregate provider), leaving no way to remove it
+   * without editing a file. Reported as "关不掉，应该默认是关闭的".
+   */
+  freeLane: asVolatile(
+    z.boolean().default(false)
+      .description('Offer the shared 免密 free models (the "XD Pool · 免费模型" group). Off by default: it is a third-party endpoint with no key of your own.'),
+  )
 })
 /** Everything the CLI needs from a live plugin instance. */
 export interface WorkBuddyPoolApi {
@@ -641,6 +664,16 @@ function warnOnPiAiGenerationMismatch(ctx: Context): void {
     // mismatch it looks for.
   }
 }
+/**
+ * Late-bound switch for the 免密 lane, set once the catalog exists.
+ *
+ * `applyConfigFromSource` is defined before the catalog is built and can be
+ * called at any point after, so it cannot close over the object directly without
+ * a declaration-order dance. A one-line indirection states the ordering instead
+ * of leaving it to be inferred: before the catalog exists this is a no-op, and
+ * the catalog applies the current value itself the moment it is built.
+ */
+let freeLaneSwitch: (enabled: boolean) => void = () => {}
 /**
  * Start the loopback endpoint, register the `xdpool` provider, and
  * discover accounts. The provider registers only after `shim.ready` resolves,
@@ -783,8 +816,17 @@ export function apply(ctx: Context, config: Config = {}): void {
     setSource(source: () => Config) { rawCurrent = source },
     onChange() { applyConfigFromSource() },
   }
-  const applyConfigFromSource = (): void => {
-    const { authFile, cooldownMs, distribution, disabledAccountIds, creditReserves, enabledModelIds, imageModelIds, contextBudgets, modelSelectionCn, modelSelectionGlobal, automation } = current()
+  const applyConfigFromSource = (): void => {    const { authFile, cooldownMs, distribution, disabledAccountIds, creditReserves, enabledModelIds, imageModelIds, contextBudgets, modelSelectionCn, modelSelectionGlobal, automation, freeLane: freeLaneEnabled } = current()
+    // The 免密 lane's switch, applied here with everything else so a save takes
+    // effect without a restart. Absent reads as OFF: the lane is a shared
+    // third-party endpoint with no key of the user's own, and it used to appear
+    // in the picker before anyone asked for it (the "关不掉" report).
+    //
+    // Read through a module-scope holder rather than the local `freeCatalog`:
+    // this closure is defined before that catalog exists (it is built with the
+    // shims further down), and the holder makes the ordering explicit instead of
+    // relying on the call never happening early.
+    freeLaneSwitch(freeLaneEnabled === true)
     core.pool.applyConfig({
       ...authFile === undefined
         ? {}
@@ -1084,6 +1126,11 @@ function canonicalJson(value: unknown): string {
   // listing has not landed must still answer the picker, because an empty group
   // is the one thing a user reads as "the plugin is broken".
   const freeCatalog = new FreeCatalog()
+  // Bind the switch now that the catalog exists. `applyConfigFromSource` runs
+  // before this line (the settings source is installed earlier), so the setter
+  // is applied once here with whatever the config already said.
+  freeLaneSwitch = (enabled: boolean): void => { freeCatalog.setEnabled(enabled) }
+  freeLaneSwitch(current().freeLane === true)
   const freeLane = createFreeLaneSource(freeCatalog, ctx.logger, usageRecorder)
   /**
    * The login channels, for the LAN gateway.

@@ -253,6 +253,14 @@ export const POOL_CARD_CSS = `
 .dsm-xdpool-models-title{margin:0;color:var(--dsw-alias-label-primary,#e6e6e6);font-size:14px;font-weight:600;line-height:20px}
 .dsm-xdpool-models-summary{margin:2px 0 0;color:var(--dsw-alias-label-tertiary,#999);font-size:12px;line-height:18px}
 .dsm-xdpool-model-list{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:10px;overflow:hidden}
+/* The expander under a collapsed model list. A full-width quiet strip rather
+   than a floating link: it belongs to the list above it, and a centred pill
+   would read as a separate action. */
+.dsm-xdpool-model-more{margin-top:8px;width:100%;appearance:none;padding:8px 12px;border-radius:10px;border:1px dashed color-mix(in srgb, var(--dsw-alias-border-l2,#36373b) 92%, transparent);background:transparent;color:var(--dsw-alias-label-secondary,#c6c9d0);font:inherit;font-size:12px;line-height:17px;font-weight:600;cursor:pointer;transition:color .18s ease, border-color .18s ease, background .18s ease}
+.dsm-xdpool-model-more:hover{color:var(--dsw-alias-state-business-primary,#5686fe);border-color:color-mix(in srgb, var(--dsw-alias-state-business-primary,#5686fe) 48%, transparent);background:color-mix(in srgb, var(--dsw-alias-state-business-primary,#5686fe) 7%, transparent)}
+/* "N saved models not offered right now": the one line that stops a roster
+   change from reading as lost settings. Amber, not red — nothing is broken. */
+.dsm-xdpool-region-pane-warn{font-size:11px;line-height:15px;color:color-mix(in srgb, #f0a441 78%, var(--dsw-alias-label-secondary,#c6c9d0));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px;cursor:help}
 .dsm-xdpool-model{display:grid;grid-template-columns:minmax(0,1fr);gap:7px;padding:10px 12px;background:var(--dsw-alias-bg-layer-2,#232529);transition:opacity .16s}
 .dsm-xdpool-model+.dsm-xdpool-model{border-top:1px solid var(--dsw-alias-border-l2,#36373b)}
 .dsm-xdpool-model-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}

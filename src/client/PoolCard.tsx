@@ -269,6 +269,15 @@ interface RegionCardModel {
     readonly editable: boolean
     readonly dirty: boolean
     readonly enabled: number
+    /**
+     * Ids the SAVED selection names that the current catalog no longer lists.
+     *
+     * Non-empty is normal after a roster refresh (the gateway's list changes),
+     * and it is the one fact that explains "my selection reset to 1 of 14": the
+     * saved list is intact, the roster shrank. Shown so the count stops looking
+     * like data loss.
+     */
+    readonly missing: readonly string[]
   }
   readonly activeAccount: PoolWebAccount | undefined
   /**
@@ -497,9 +506,44 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
    * already expanded is a wall of text where the user asked for a summary, and
    * the disclosure is one click away.
    */
+  /**
+   * Which disclosure pane is open, keyed by pane id.
+   *
+   * ACCORDION WITHIN A CARD: opening one pane closes the others of the SAME
+   * card. The panes are tall — the account list is one row per account and the
+   * model list is one card per model — so two open at once means the second one
+   * is off-screen below the first, and the user who just clicked "Models"
+   * sees nothing happen (reported as "点了咋没起作用，实际都续在后面").
+   *
+   * Cross-CARD independence is kept: the pane ids carry the region, so opening
+   * the domestic model list must not close the international one. Collapsing is
+   * scoped to the prefix before the last separator.
+   *
+   * All panes start closed: a card that arrives with a 200-row account list
+   * already expanded is a wall of text where the user asked for a summary.
+   */
   const [openedPanes, setOpenedPanes] = useState<Record<string, boolean>>({})
   const setPane = (paneId: string, open: boolean): void => {
-    setOpenedPanes(prev => (prev[paneId] === open ? prev : { ...prev, [paneId]: open }))
+    setOpenedPanes(prev => {
+      // Closing: only this pane changes.
+      if (open === false) {
+        return prev[paneId] === false ? prev : { ...prev, [paneId]: false }
+      }
+      // Opening: this pane opens and its SIBLINGS on the same card close.
+      //
+      // The card a pane belongs to is everything up to the LAST "-": the ids are
+      // `dsm-xdpool-${region}-${pane}`. Derived from the id rather than passed in
+      // so a new pane cannot forget to declare its card and end up closing
+      // nothing — or, worse, closing the other lane's.
+      const cardPrefix = paneId.slice(0, paneId.lastIndexOf('-'))
+      const next: Record<string, boolean> = {}
+      for (const [id, value] of Object.entries(prev)) {
+        if (id !== paneId && value === true && id.startsWith(`${cardPrefix}-`)) continue
+        next[id] = value
+      }
+      next[paneId] = true
+      return next
+    })
   }
   const [error, setError] = useState<string | undefined>(undefined)
   /**
@@ -581,6 +625,16 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
    * drops it back to the copy the server last reported.
    */
   const [draftByRegion, setDraftByRegion] = useState<Partial<Record<PoolRegion, Record<string, ModelDraftEntry>>>>({})
+  /**
+   * Whether a region's model pane is showing the WHOLE roster.
+   *
+   * Per region, and default off, because the pane opens on a card the user
+   * scrolled to reach: fourteen full rows of mostly-disabled models pushed
+   * everything else a screen and a half further down (the reported "无限往下
+   * 续"). The enabled rows are what "my models" means; the rest are one click
+   * away and the button says how many there are.
+   */
+  const [showAllModels, setShowAllModels] = useState<Partial<Record<PoolRegion, boolean>>>({})
   /**
    * The draft one region card is holding, if it holds any.
    *
@@ -1036,11 +1090,24 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
     const here = statusOf(region)
     const local = draftByRegion[region]
     const rows = local ?? (here === undefined ? {} : draftFromStatus(here))
+    // Count what the CATALOG can show, and separately note anything the saved
+    // selection names that the catalog no longer lists.
+    //
+    // The two numbers disagreeing is what a user reads as "it reset to 1 of 14"
+    // after a restart: the saved list still holds five ids, but the roster that
+    // came back from the gateway that time held only one of them. Neither number
+    // is wrong — the disagreement itself is the information, and it used to be
+    // invisible. `missing` names those ids so the card can say "still saved but
+    // not offered right now" instead of letting the count look like a reset.
+    const listed = new Set(Object.keys(rows))
+    const saved = here?.selection.enabledModelIds ?? []
+    const missing = saved.filter(id => !listed.has(id))
     return {
       draft: rows,
       editable: settingsWritable,
       dirty: local !== undefined && here !== undefined && draftIsDirty(here, local),
       enabled: Object.values(rows).filter(entry => entry.enabled).length,
+      missing,
     }
   }
   /**
@@ -1863,6 +1930,23 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                     total: models.length,
                                   }) ?? `${card.modelState.enabled} / ${models.length} enabled`}
                                 </span>
+                                {/*
+                                  The saved selection is intact; this roster is
+                                  shorter. Saying so is the difference between
+                                  "the plugin lost my choices" and "the gateway
+                                  is not offering those three right now" — the
+                                  same numbers, read two very different ways.
+                                */}
+                                {card.modelState.missing.length === 0 ? null : (
+                                  <span
+                                    className="dsm-xdpool-region-pane-warn"
+                                    title={card.modelState.missing.join(', ')}
+                                  >
+                                    {t?.('row.modelsMissingSaved', {
+                                      count: card.modelState.missing.length,
+                                    }) ?? `${card.modelState.missing.length} saved model(s) not offered right now`}
+                                  </span>
+                                )}
                                 <div className="dsm-xdpool-models-actions">
                                   {card.status?.catalogSource !== 'fallback'
                                     ? null
@@ -1893,7 +1977,25 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                 </div>
                               </div>
                               <div className="dsm-xdpool-model-list">
-                                {[...models]
+                                {/*
+                                  Collapsed to the ENABLED rows by default.
+                                  
+                                  The roster is 14–16 models per region and every
+                                  row is a full card, so opening "Models" used to
+                                  add a screen and a half of scroll to a panel the
+                                  user had just scrolled to reach — the reported
+                                  "无限往下续". The rows that matter when you open
+                                  this pane are the ones you turned on; the rest
+                                  are what you came to browse, and one click away
+                                  is close enough for them.
+                                  
+                                  Ordering is preserved, so collapsing cannot
+                                  reorder what the user sees when they expand.
+                                */}
+                                {(showAllModels[region] === true
+                                  ? [...models]
+                                  : models.filter(model => card.modelState.draft[model.id]?.enabled ?? model.enabled)
+                                )
                                   .sort((a, b) => Number(isFreeNow(b, now, region)) - Number(isFreeNow(a, now, region)))
                                   .map(model => (
                                     <ModelRow
@@ -1913,6 +2015,25 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                     />
                                   ))}
                               </div>
+                              {/*
+                                One control for the rest. The count is the point:
+                                "show the other 9" tells the reader how much is
+                                hidden, which is what makes the collapse safe
+                                rather than something that looks like lost rows.
+                              */}
+                              {models.length > models.filter(model => card.modelState.draft[model.id]?.enabled ?? model.enabled).length
+                                ? <button
+                                    type="button"
+                                    className="dsm-xdpool-model-more"
+                                    onClick={() => { setShowAllModels(prev => ({ ...prev, [region]: !(prev[region] === true) })) }}
+                                  >
+                                    {showAllModels[region] === true
+                                      ? (t?.('row.modelsShowLess') ?? '只显示已启用')
+                                      : (t?.('row.modelsShowAll', {
+                                          count: models.length - models.filter(model => card.modelState.draft[model.id]?.enabled ?? model.enabled).length,
+                                        }) ?? `显示其余 ${models.length} 个`)}
+                                  </button>
+                                : null}
                             </>}
                       </RegionCardPane>
                       <RegionCardPane id={distPaneId} open={distOpen}>
