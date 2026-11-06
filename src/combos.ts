@@ -44,19 +44,111 @@ export const COMBO_CHANNEL = 'combo'
 /** Chain strategies. Anything else on disk falls back to `fallback`. */
 export const COMBO_STRATEGIES = ['fallback', 'round-robin'] as const
 export type ComboStrategy = (typeof COMBO_STRATEGIES)[number]
+/** The owner id the pool lane uses in a platform group. */
+export const POOL_OWNER = 'workbuddy'
+/**
+ * One platform's contribution to a chain: which lane, and which of its models.
+ *
+ * Chains are edited as a TWO-LEVEL list — platform order, then model order inside
+ * each platform — because that is the order the router actually walks and the
+ * order a reader thinks in ("try the bytes one, then Qoder; if both fail, go to
+ * CodeBuddy"). A flat member list expresses the same sequence but cannot show the
+ * grouping, so re-ordering "all of WorkBuddy's models together" meant moving them
+ * one at a time and hoping none was missed.
+ *
+ * `owner` is `workbuddy` for a pool model, or an aggregate provider id. Model ids
+ * are BARE here (no `provider/` prefix): the prefix is derived from the owner when
+ * the chain is flattened, so storing it twice would let the two disagree.
+ */
+export interface ComboPlatform {
+  owner: string
+  models: readonly string[]
+}
 /** A chain as the user configured it, before the catalogs are consulted. */
 export interface ComboSetting {
   /** `combo:<slug>`; derived from the name when absent or malformed. */
   id?: string
   name: string
-  /** Member model ids, in the order the user put them. */
+  /**
+   * Member model ids in the order the user put them — the FLATTENED, authoritative
+   * sequence the router walks.
+   *
+   * Kept as the single source of truth so every resolver, the picker row and the
+   * shim keep reading one field. A chain saved with `platforms` also carries this,
+   * derived from them, so an older build and an older config file both keep working.
+   */
   models: readonly string[]
+  /**
+   * The same chain as platform groups, when it was edited that way.
+   *
+   * Absent for a chain written before this existed, or saved flat. The editor
+   * groups such a chain by owner on the fly, so it opens correctly either way.
+   */
+  platforms?: readonly ComboPlatform[]
   /** How the chain advances; `fallback` restarts from the top each turn. */
   strategy?: ComboStrategy
   /** Consecutive turns one member serves before `round-robin` advances. */
   stickyLimit?: number
   /** Absent is treated as on; an explicit false hides the row. */
   enabled?: boolean
+}
+/**
+ * Flatten platform groups into the member ids the router walks.
+ *
+ * Platform order first, then model order inside each platform — the documented
+ * semantics ("same platform: try the next model; platform exhausted: the next
+ * platform"). A pool model is its bare id; anything else carries its owner as the
+ * `provider/` prefix, the same composite id the aggregate catalog and the picker
+ * use.
+ *
+ * Duplicates are dropped: the same pair twice would spend two attempts on one
+ * endpoint and report a fallback that never happened.
+ */
+export function flattenPlatforms(platforms: readonly ComboPlatform[]): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const platform of platforms) {
+    const owner = text(platform.owner)
+    if (owner === '') continue
+    for (const raw of platform.models) {
+      const model = text(raw)
+      if (model === '' || isComboId(model)) continue
+      // Derived here rather than stored, so a platform's models never carry a
+      // prefix that could disagree with its owner.
+      const id = owner === POOL_OWNER ? model : `${owner}/${model}`
+      if (seen.has(id)) continue
+      seen.add(id)
+      out.push(id)
+    }
+  }
+  return out
+}
+/**
+ * Group a flat member list back into platforms.
+ *
+ * For a chain saved flat, so the two-level editor can still open it: each id's
+ * owner is read from its shape (`workbuddy` for a bare id, the prefix otherwise)
+ * and groups come out in first-seen order — which is the order the members were
+ * in, so re-flattening reproduces exactly what was stored.
+ */
+export function splitPlatforms(models: readonly string[]): ComboPlatform[] {
+  const groups = new Map<string, string[]>()
+  const order: string[] = []
+  for (const raw of models) {
+    const id = text(raw)
+    if (id === '') continue
+    const parsed = parseProviderModelId(id)
+    const owner = parsed === null ? POOL_OWNER : parsed.providerId
+    const model = parsed === null ? id : parsed.modelId
+    let bucket = groups.get(owner)
+    if (bucket === undefined) {
+      bucket = []
+      groups.set(owner, bucket)
+      order.push(owner)
+    }
+    if (!bucket.includes(model)) bucket.push(model)
+  }
+  return order.map(owner => ({ owner, models: groups.get(owner) ?? [] }))
 }
 /** One picker row standing for a chain. */
 export interface ComboModelRow {
@@ -173,7 +265,18 @@ export function normalizeCombos(raw: unknown): ComboSetting[] {
     const name = text(value.name) || text(value.id)
     if (name === '') continue
     const id = text(value.id)
-    const models = stringList(value.models).filter(model => model !== id && !isComboId(model))
+    // TWO SHAPES: `platforms` (the two-level editor) and `models` (the flat list
+    // every earlier version wrote, and what the resolvers read).
+    //
+    // When `platforms` is present it WINS and `models` is derived from it, so the
+    // two can never disagree: the editor sends groups, and the stored flat list is
+    // whatever those groups flatten to. An empty or entirely malformed `platforms`
+    // therefore yields no chain rather than silently falling back to a stale
+    // `models` field the user just replaced.
+    const platforms = Array.isArray(value.platforms) ? normalizePlatforms(value.platforms) : undefined
+    const models = platforms === undefined
+      ? stringList(value.models).filter(model => model !== id && !isComboId(model))
+      : flattenPlatforms(platforms)
     if (models.length === 0) continue
     const chainId = isComboId(id) ? id : comboId(name)
     if (chainId === '' || seen.has(chainId)) continue
@@ -188,10 +291,32 @@ export function normalizeCombos(raw: unknown): ComboSetting[] {
       id: chainId,
       name,
       models,
+      ...platforms === undefined ? {} : { platforms },
       strategy,
       stickyLimit: limit > 0 ? limit : 1,
       enabled: value.enabled !== false,
     })
+  }
+  return out
+}
+/**
+ * Normalise the `platforms` array from an untrusted document.
+ *
+ * Drops a group with no owner or no models rather than keeping it: an empty group
+ * renders as a platform card the user cannot act on, and it contributes no members,
+ * so keeping it would make the editor disagree with the router about what the chain
+ * contains.
+ */
+function normalizePlatforms(raw: readonly unknown[]): ComboPlatform[] {
+  const out: ComboPlatform[] = []
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const value = entry as Record<string, unknown>
+    const owner = text(value.owner)
+    if (owner === '') continue
+    const models = stringList(value.models).filter(model => !isComboId(model))
+    if (models.length === 0) continue
+    out.push({ owner, models })
   }
   return out
 }

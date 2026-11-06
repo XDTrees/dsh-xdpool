@@ -41,6 +41,7 @@ import {
   comboId,
   COMBO_DEFAULT_CONTEXT_WINDOW,
   siblingRoutes,
+  splitPlatforms,
   type ComboSetting,
 } from './combos.ts'
 import {
@@ -173,6 +174,11 @@ function combosStatusOf(
         id: resolved?.id ?? comboId(chain.name),
         name: chain.name,
         models: resolved?.models ?? [],
+        // Grouped from what the ROUTER can actually serve, not from the stored
+        // groups: a platform whose every model disappeared would otherwise render
+        // as a card with nothing in it, and the editor would offer to reorder
+        // members that no longer exist.
+        platforms: splitPlatforms(resolved?.models ?? []),
         missing: chain.models.filter(modelId => !known.has(modelId)),
         strategy: resolved?.strategy ?? chain.strategy ?? 'fallback',
         stickyLimit: resolved?.stickyLimit ?? chain.stickyLimit ?? 1,

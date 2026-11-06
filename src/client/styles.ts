@@ -1016,6 +1016,22 @@ export const ROUTING_CARD_CSS = `
 /* Members render as an ordered, numbered list: order IS the semantics of a
    chain, so a two-column tag cloud would throw away the thing that matters. */
 .dsm-xdpool-rt-members{display:flex;flex-direction:column;gap:5px;margin:0;padding:0;list-style:none}
+/* Collapsed chain: one capsule per platform, numbered by priority.
+   A wrapping row, not a list — these are labels to scan, not rows to operate, and
+   the count after the dot is what makes "tries TRAE first, one model there" legible
+   without opening the editor. */
+.dsm-xdpool-rt-lanes{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 0;padding:0;list-style:none}
+.dsm-xdpool-rt-lane{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 62%, transparent);font-size:12px;line-height:18px}
+.dsm-xdpool-rt-lanename{color:var(--dsw-alias-label-primary,#e9ebef);font-weight:560;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsm-xdpool-rt-lanecount{color:var(--dsw-alias-label-tertiary,#9aa0a8);font-variant-numeric:tabular-nums}
+/* Editor: one box per platform, visually nested so "these models belong to that
+   platform" is spatial rather than something the reader has to infer from ids. */
+.dsm-xdpool-rt-laneboxes{display:flex;flex-direction:column;gap:10px}
+.dsm-xdpool-rt-lanebox{display:flex;flex-direction:column;gap:8px;padding:11px 12px;border-radius:12px;border:1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary,#5686fe) 26%, var(--dsw-alias-border-l2,#36373b));background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 58%, transparent)}
+.dsm-xdpool-rt-lanebox-head{display:flex;align-items:center;gap:8px;min-width:0}
+.dsm-xdpool-rt-lanebox-name{font-size:13px;line-height:19px;font-weight:640;color:var(--dsw-alias-label-primary,#e9ebef);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsm-xdpool-rt-laneacts{display:flex;flex-wrap:wrap;gap:6px}
+.dsm-xdpool-rt-laneacts .dsm-xdpool-rt-drop{min-width:0}
 .dsm-xdpool-rt-member{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:9px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 72%, transparent)}
 .dsm-xdpool-rt-ord{flex:none;width:19px;height:19px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px;line-height:19px;color:var(--dsw-alias-label-tertiary,#8a90a0);border:1px solid var(--dsw-alias-border-l2,#36373b);font-variant-numeric:tabular-nums}
 .dsm-xdpool-rt-mid{flex:1 1 auto;min-width:0;font-family:var(--dsw-alias-font-mono,ui-monospace,Menlo,Consolas,monospace);font-size:11px;line-height:17px;color:var(--dsw-alias-label-primary,#e8e8ea);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

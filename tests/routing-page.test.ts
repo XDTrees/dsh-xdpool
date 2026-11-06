@@ -112,10 +112,22 @@ describe('a chain id is something only this plugin can have minted', () => {
 })
 describe('the page keeps the chain the user typed', () => {
   it('carries missing ids into the draft so the editor shows the real chain', () => {
-    // The draft merges `models` and `missing` back together. If that merge were
-    // dropped, the editor would show a chain that never included the member the
+    // The draft merges the served groups and `missing` back together. If that merge
+    // were dropped, the editor would show a chain that never included the member the
     // user typed — and saving it would delete that member for good.
-    expect(page).toMatch(/models:\s*\[\.\.\.combo\.models,\s*\.\.\.combo\.missing\]/u)
+    //
+    // The MERGE moved: `models` is no longer one flat array in the draft (the editor
+    // works in platform groups), so `missing` ids are appended to the group they
+    // belong to. Same contract, different shape — assert the contract: every missing
+    // id is walked, and each lands in a group rather than being discarded.
+    expect(page).toMatch(/for \(const modelId of combo\.missing\)/u)
+    expect(page).toMatch(/platforms\.push\(\{ owner, models: \[model\] \}\)/u)
+  })
+  it('derives the owner of a missing id from its shape', () => {
+    // A bare id is a pool model; anything else carries `provider/model`. Getting this
+    // wrong would file a vanished third-party member under the pool and show it on
+    // the wrong platform card.
+    expect(page).toContain("const owner = slash === -1 ? 'workbuddy' : modelId.slice(0, slash)")
   })
   it('reports an unresolved member rather than hiding it', () => {
     expect(page).toContain('route.missing')

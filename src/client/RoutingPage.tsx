@@ -52,26 +52,101 @@ interface ChainDraft {
   key: string
   id?: string | undefined
   name: string
-  models: string[]
+  /**
+   * The chain as PLATFORM GROUPS — the edit model.
+   *
+   * Two levels, because that is the order the router walks: platform order, then
+   * model order inside each platform. A flat member list can express the same
+   * sequence but cannot show the grouping, so moving "all of WorkBuddy's models
+   * together" meant moving them one at a time and hoping none was missed.
+   *
+   * Model ids inside a group are BARE; the `provider/` prefix is derived from
+   * `owner` when the draft is flattened for saving.
+   */
+  platforms: Array<{ owner: string; models: string[] }>
+  /**
+   * The member sequence to SAVE, in the order it will actually be walked.
+   *
+   * Kept beside `platforms` rather than always derived from them, because grouping
+   * is LOSSY for an interleaved chain: `hy3 → opencode/x → glm-5.3` collapses to
+   * `hy3 → glm-5.3 → opencode/x` once both pool models share a group. That is the
+   * right shape for the two-level model, but re-deriving it on every render would
+   * silently rewrite the routing priority of a chain the user never touched — a save
+   * that reorders their fallbacks without asking.
+   *
+   * So: `flat` starts as exactly what the server sent, and only an EDIT of the
+   * platform structure recomputes it. Opening a chain and pressing Save therefore
+   * preserves its order.
+   */
+  flat: string[]
   strategy: 'fallback' | 'round-robin'
   stickyLimit: number
   enabled: boolean
 }
+/**
+ * Flatten a draft into the member ids the server stores.
+ *
+ * Platform order first, then model order within each platform. Duplicates are
+ * dropped: the same pair twice would spend two attempts on one endpoint and report
+ * a fallback that never happened. A pool model is its bare id; anything else is
+ * `owner/model`, the same composite id the aggregate catalog publishes.
+ */
+function flattenDraft(platforms: ChainDraft['platforms']): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const platform of platforms) {
+    for (const model of platform.models) {
+      const id = platform.owner === 'workbuddy' ? model : `${platform.owner}/${model}`
+      if (seen.has(id)) continue
+      seen.add(id)
+      out.push(id)
+    }
+  }
+  return out
+}
 function draftOf(combo: PoolWebCombo): ChainDraft {
+  /**
+   * `missing` members are kept, grouped under their own owner, so the editor shows
+   * the chain the user actually configured rather than the shorter one the roster
+   * can serve right now. Dropping them would make a save silently delete members
+   * the user never asked to remove — the "保存了没法用" class of data loss.
+   */
+  const platforms = combo.platforms.map(group => ({ owner: group.owner, models: [...group.models] }))
+  const known = new Set(combo.models)
+  for (const modelId of combo.missing) {
+    if (known.has(modelId)) continue
+    const slash = modelId.indexOf('/')
+    const owner = slash === -1 ? 'workbuddy' : modelId.slice(0, slash)
+    const model = slash === -1 ? modelId : modelId.slice(slash + 1)
+    const group = platforms.find(entry => entry.owner === owner)
+    if (group === undefined) platforms.push({ owner, models: [model] })
+    else if (!group.models.includes(model)) group.models.push(model)
+  }
   return {
     key: combo.id,
     id: combo.id,
     name: combo.name,
-    // `missing` ids are carried into the draft so the editor shows the chain the
-    // user actually typed, not the shorter one the roster can currently serve.
-    models: [...combo.models, ...combo.missing],
+    platforms,
+    // EXACTLY what the server says the chain is, in its order. Not
+    // `flattenDraft(platforms)`: grouping is lossy for an interleaved chain, so
+    // deriving it here would reorder the user's fallbacks the moment the page
+    // rendered, and the next Save would write that new order back.
+    flat: [...combo.models, ...combo.missing.filter(id => !combo.models.includes(id))],
     strategy: combo.strategy,
     stickyLimit: combo.stickyLimit,
     enabled: combo.enabled,
   }
 }
 function blankDraft(): ChainDraft {
-  return { key: `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, name: '', models: [], strategy: 'fallback', stickyLimit: 1, enabled: true }
+  return {
+    key: `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: '',
+    platforms: [],
+    flat: [],
+    strategy: 'fallback',
+    stickyLimit: 1,
+    enabled: true,
+  }
 }
 /** Compact counts: 1_260_000 -> "1.3M". Chains quote context windows, so this is load-bearing. */
 function compact(value: number): string {
@@ -182,7 +257,12 @@ export function RoutingPage({ t }: RoutingPageProps) {
           combos: drafts.map(draft => ({
             ...draft.id === undefined ? {} : { id: draft.id },
             name: draft.name,
-            models: draft.models,
+            // BOTH shapes: `platforms` is what the editor works in, `models` is the
+            // flattened sequence every resolver reads. The server derives `models`
+            // from `platforms`, so sending both costs nothing and keeps a build
+            // that predates the two-level editor from seeing an empty chain.
+            platforms: draft.platforms.map(group => ({ owner: group.owner, models: group.models })),
+            models: draft.flat,
             strategy: draft.strategy,
             stickyLimit: draft.stickyLimit,
             enabled: draft.enabled,
@@ -262,39 +342,10 @@ export function RoutingPage({ t }: RoutingPageProps) {
         ? <ChainEditor
           draft={current}
           roster={roster}
-          picked={picked}
           busy={saving}
           candidateById={candidateById}
           t={t}
-          onPick={setPicked}
           onChange={patchDraft}
-          onAddMember={() => {
-            if (picked === '' || current.models.includes(picked)) return
-            patchDraft({ models: [...current.models, picked] })
-            setPicked('')
-          }}
-          onAddSiblings={() => {
-            // Append every alternate route for the picked model, right after it,
-            // skipping ids the chain already names.
-            //
-            // This is the "same model, different route" tier in one click. A
-            // rate-limited provider should be escaped by reaching the SAME model
-            // elsewhere — switching models changes the context window,
-            // tool-calling behaviour and writing style, so it is a last resort.
-            // Doing it by hand means hunting the same display name under each
-            // vendor, and 86 model ids in the registry sit under two or more
-            // providers, so that hunt is not hypothetical.
-            const siblings = candidateById.get(picked)?.siblings ?? []
-            const additions = siblings.filter(id => id !== picked && !current.models.includes(id))
-            if (picked !== '' && !current.models.includes(picked)) additions.unshift(picked)
-            if (additions.length === 0) return
-            patchDraft({ models: [...current.models, ...additions] })
-            setPicked('')
-          }}
-          siblingCount={candidateById.get(picked)?.siblings.length ?? 0}
-          onDropMember={modelId => {
-            patchDraft({ models: current.models.filter(id => id !== modelId) })
-          }}
         />
         : null}
       {status === undefined
@@ -360,7 +411,15 @@ function ChainRow({
   onEdit: () => void
   onDelete: () => void
 }) {
-  const missing = draft.models.filter(model => candidateById.has(model) === false)
+  /**
+   * Members the roster cannot serve right now, computed from the FLATTENED draft.
+   *
+   * Flattened rather than read off the groups, so the check matches what would be
+   * saved: a group holds bare ids and the roster holds composite ones, and
+   * comparing the two shapes directly would mark every aggregate member missing.
+   */
+  const flat = draft.flat
+  const missing = flat.filter(model => candidateById.has(model) === false)
   return (
     <div className="dsm-xdpool-rt-row" data-off={draft.enabled ? 'false' : 'true'}>
       <div className="dsm-xdpool-rt-rowhead">
@@ -373,12 +432,10 @@ function ChainRow({
         </span>
         <span className="dsm-xdpool-pills">
           <span className="dsm-xdpool-pill" data-tone="off">
-            {t?.('route.strategyLabel', {
-              strategy: draft.strategy === 'round-robin'
-                ? (t?.('route.strategyRoundRobin') ?? 'Round robin')
-                : (t?.('route.strategyFallback') ?? 'Fallback'),
-              members: t?.('route.memberCount', { count: draft.models.length }) ?? `${draft.models.length}`,
-            }) ?? draft.strategy}
+            {t?.('route.platformCount', { count: draft.platforms.length }) ?? `${draft.platforms.length} platform(s)`}
+          </span>
+          <span className="dsm-xdpool-pill" data-tone="off">
+            {t?.('route.memberCount', { count: flat.length }) ?? `${flat.length} model(s)`}
           </span>
         </span>
         <span className="dsm-xdpool-pageactions">
@@ -395,6 +452,29 @@ function ChainRow({
           </button>
         </span>
       </div>
+      {/*
+        The chain as PLATFORM CAPSULES, numbered in the order the router walks
+        them: `1. TRAE（字节）· 1`. The number is the priority, the trailing figure
+        is how many of that platform's models are in the chain — which together say
+        "tries TRAE first, one model there" without opening the editor.
+
+        This replaced a flat list of model ids, which stated the same sequence but
+        made the reader work out the platform boundaries themselves. That is the
+        part the two-level editor is for, and it should be visible collapsed too.
+      */}
+      {draft.platforms.length === 0
+        ? <p className="dsm-xdpool-rt-warn">{t?.('route.noMembers') ?? 'Add at least one member.'}</p>
+        : <ol className="dsm-xdpool-rt-lanes">
+            {draft.platforms.map((platform, index) => (
+              <li className="dsm-xdpool-rt-lane" key={`${platform.owner}-${index}`}>
+                <span className="dsm-xdpool-rt-ord">{index + 1}</span>
+                <span className="dsm-xdpool-rt-lanename" title={platform.owner}>
+                  {ownerName(platform.owner, t)}
+                </span>
+                <span className="dsm-xdpool-rt-lanecount">· {platform.models.length}</span>
+              </li>
+            ))}
+          </ol>}
       {missing.length > 0
         ? <p className="dsm-xdpool-rt-warn">
             {t?.('route.missing', { models: missing.join(', ') }) ?? missing.join(', ')}
@@ -403,68 +483,130 @@ function ChainRow({
     </div>
   )
 }
-/** The editor for exactly one chain, rendered full width above the list. */
+/**
+ * A readable name for one platform.
+ *
+ * `workbuddy` is this plugin's own pool lane, so it gets the product name the cards
+ * use. Every other owner IS a provider id, and it is printed as-is: the aggregate
+ * page, the model picker and this page then show one spelling for one channel, and
+ * inventing a second one here would make the same vendor look like two.
+ */
+function ownerName(owner: string, t?: Translate | undefined): string {
+  if (owner === 'workbuddy') return t?.('route.ownerPool') ?? 'XD Pool（WorkBuddy）'
+  return owner
+}
+/**
+ * The model id WITHOUT its provider prefix.
+ *
+ * A candidate's id is the composite the picker and the aggregate catalog use
+ * (`provider/model`), while a platform group stores bare ids — the owner sits in the
+ * field beside them, so carrying the prefix in both would let the two disagree. A
+ * pool candidate's id is already bare (`hy3`), which is why this checks the prefix
+ * instead of always slicing.
+ */
+function bareModelOf(candidate: PoolWebComboCandidate): string {
+  const prefix = `${candidate.owner}/`
+  return candidate.id.startsWith(prefix) ? candidate.id.slice(prefix.length) : candidate.id
+}
+/**
+ * The editor for exactly one chain — TWO LEVELS, like the router walks it.
+ *
+ * Platform order first, then model order inside each platform. That is the
+ * documented fallback semantics ("same platform: try the next model; platform
+ * exhausted: the next platform"), and it is the shape a reader thinks in. The
+ * previous editor was a single flat list of model ids, which could express the same
+ * sequence but could not SHOW the grouping — so moving "all of WorkBuddy's models
+ * together" meant clicking one at a time and hoping none was missed, and the
+ * platform boundaries had to be re-derived by eye from the ids.
+ *
+ * Each platform card carries its own controls (up / down / remove, and the same for
+ * every model inside it), which is why the pickers are local state: a chain can have
+ * a dozen platforms open at once and one shared "picked" slot would make selecting a
+ * model in one card silently change what another card was about to add.
+ */
 function ChainEditor({
   draft,
   roster,
-  picked,
   busy,
   candidateById,
   t,
-  onPick,
   onChange,
-  onAddMember,
-  onAddSiblings,
-  siblingCount,
-  onDropMember,
 }: {
   draft: ChainDraft
   roster: readonly PoolWebComboCandidate[]
-  picked: string
   busy: boolean
   candidateById: Map<string, PoolWebComboCandidate>
   t?: Translate | undefined
-  onPick: (value: string) => void
   onChange: (changes: Partial<ChainDraft>) => void
-  onAddMember: () => void
-  /** Append the picked model AND every other lane serving it. */
-  onAddSiblings: () => void
-  /** How many alternate routes the picked model has. 0 hides the button. */
-  siblingCount: number
-  onDropMember: (modelId: string) => void
 }) {
   /**
-   * The distinct owners in the roster, in first-seen order.
-   *
-   * First-seen rather than alphabetical so the groups follow the order the
-   * catalog itself reports — the pool lane first, as it is the one this plugin
-   * owns, then the scan channels, then the aggregate lane. Sorting by id would
-   * put "aggregate" at the top, which is the lane a reader is least likely to
-   * reach for first.
+   * One pending selection per platform, keyed by owner, plus one for the
+   * "add platform" row. Local because it is transient editor state: it must not
+   * travel into the draft, or an unsaved picker value would be saved as part of the
+   * chain and reappear on the next open.
    */
-  const owners = useMemo(() => {
-    const seen: string[] = []
-    for (const candidate of roster) {
-      if (!seen.includes(candidate.owner)) seen.push(candidate.owner)
-    }
-    return seen
-  }, [roster])
+  const [pickByLane, setPickByLane] = useState<Record<string, string>>({})
+  const [pickLane, setPickLane] = useState('')
+
+  /** Owners already in the chain — a platform appears at most once. */
+  const used = draft.platforms.map(platform => platform.owner)
   /**
-   * The group heading for one owner id.
+   * Platforms still available to add, with how many models each could offer.
    *
-   * `workbuddy` is this plugin's own pool lane and gets the product name the
-   * cards use; every other owner IS a provider id, so it is printed as-is — the
-   * aggregate page and the picker already show those same spellings, and
-   * translating them here would create a third name for the same channel.
+   * Counted from the roster so the dropdown says what it is worth adding: an empty
+   * platform would produce a card with nothing to put in it.
    */
-  const ownerLabel = (owner: string): string =>
-    owner === 'workbuddy' ? (t?.('route.ownerPool') ?? 'XD Pool（WorkBuddy）') : owner
+  const addable = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const candidate of roster) {
+      if (used.includes(candidate.owner)) continue
+      counts.set(candidate.owner, (counts.get(candidate.owner) ?? 0) + 1)
+    }
+    return [...counts.entries()].map(([owner, count]) => ({ owner, count }))
+  }, [roster, used.join('\u0000')])
+
+  /**
+   * Apply one platform edit and RECOMPUTE `flat` from the new structure.
+   *
+   * Every path that changes the platform shape goes through here, so `flat` is only
+   * ever re-derived as the direct result of a user action — never on render. That is
+   * the difference between "the editor reorders what I asked it to" and "saving an
+   * untouched chain silently rewrote my fallback order".
+   */
+  const commit = (platforms: ChainDraft['platforms']): void => {
+    onChange({ platforms, flat: flattenDraft(platforms) })
+  }
+  const patchLane = (index: number, update: { models?: string[]; owner?: string }): void => {
+    commit(draft.platforms.map((platform, at) => (at === index ? { ...platform, ...update } : platform)))
+  }
+  const moveLane = (index: number, delta: number): void => {
+    const next = [...draft.platforms]
+    const target = index + delta
+    if (target < 0 || target >= next.length) return
+    const [moved] = next.splice(index, 1)
+    if (moved === undefined) return
+    next.splice(target, 0, moved)
+    commit(next)
+  }
+  const dropLane = (index: number): void => {
+    commit(draft.platforms.filter((_, at) => at !== index))
+  }
+  /** Models of one owner that are not in this platform's group yet. */
+  const candidatesFor = (owner: string, group: { models: readonly string[] }): readonly PoolWebComboCandidate[] =>
+    roster.filter(candidate => candidate.owner === owner && !group.models.includes(bareModelOf(candidate)))
+
   return (
     <div className="dsm-xdpool-rt-editor">
       <div className="dsm-xdpool-rt-editorhead">
-        <span className="dsm-xdpool-rt-edname">{draft.name === '' ? (t?.('route.newChain') ?? 'New chain') : draft.name}</span>
+        <span className="dsm-xdpool-rt-edname">
+          {draft.name === '' ? (t?.('route.newChain') ?? 'New chain') : draft.name}
+        </span>
         <label className="dsm-xdpool-switch">
-          <input type="checkbox" checked={draft.enabled} onChange={event => { onChange({ enabled: event.target.checked }) }} />
+          <input
+            type="checkbox"
+            checked={draft.enabled}
+            onChange={event => { onChange({ enabled: event.target.checked }) }}
+          />
           <span>{t?.('route.enabled') ?? 'Enabled'}</span>
         </label>
       </div>
@@ -496,105 +638,162 @@ function ChainEditor({
             value={draft.stickyLimit}
             onChange={event => {
               const parsed = Number.parseInt(event.target.value, 10)
-              // A non-finite or non-positive value would be normalised away by
-              // the server, so the field would visibly snap back after a save.
-              // Rejecting it here keeps the editor and the stored chain in step.
+              // A non-finite or non-positive value would be normalised away by the
+              // server, so the field would visibly snap back after a save.
               onChange({ stickyLimit: Number.isFinite(parsed) && parsed > 0 ? parsed : 1 })
             }}
           />
         </label>
       </div>
       <p className="dsm-xdpool-rt-hint">{t?.('route.stickyHint') ?? ''}</p>
-      <div>
-        <span className="dsm-xdpool-rt-hint">{t?.('route.members') ?? 'Members'}</span>
-        {draft.models.length === 0
-          ? <p className="dsm-xdpool-rt-warn">{t?.('route.noMembers') ?? ''}</p>
-          : <ol className="dsm-xdpool-rt-members">
-              {draft.models.map((modelId, index) => {
-                const candidate = candidateById.get(modelId)
-                return (
-                  <li className="dsm-xdpool-rt-member" key={`${modelId}-${index}`}>
+
+      <p className="dsm-xdpool-rt-hint">{t?.('route.platformOrder') ?? 'Platform order (higher is tried first)'}</p>
+      {draft.platforms.length === 0
+        ? <p className="dsm-xdpool-rt-warn">{t?.('route.noMembers') ?? 'Add at least one member.'}</p>
+        : <div className="dsm-xdpool-rt-laneboxes">
+            {draft.platforms.map((platform, index) => {
+              const group = { models: platform.models }
+              const choices = candidatesFor(platform.owner, group)
+              const picked = pickByLane[platform.owner] ?? ''
+              return (
+                <div className="dsm-xdpool-rt-lanebox" key={`${platform.owner}-${index}`}>
+                  <div className="dsm-xdpool-rt-lanebox-head">
                     <span className="dsm-xdpool-rt-ord">{index + 1}</span>
-                    <span className="dsm-xdpool-rt-mid" title={modelId}>{modelId}</span>
-                    {candidate === undefined
-                      ? <span className="dsm-xdpool-agg-tag dsm-xdpool-rt-mtag" data-tone="busy">
-                          {t?.('route.unusable') ?? 'needs a key'}
-                        </span>
-                      : <span className="dsm-xdpool-agg-tag dsm-xdpool-rt-mtag" data-tone="ok">
-                          {compact(candidate.contextWindow)}
-                        </span>}
-                    <button type="button" className="dsm-xdpool-rt-drop" onClick={() => { onDropMember(modelId) }}>
-                      {t?.('route.removeMember') ?? 'Remove'}
+                    <span className="dsm-xdpool-rt-lanebox-name">{ownerName(platform.owner, t)}</span>
+                    <span className="dsm-xdpool-rt-cid">{platform.owner}</span>
+                  </div>
+                  <div className="dsm-xdpool-rt-laneacts">
+                    <button type="button" className="dsm-xdpool-rt-drop" disabled={index === 0} onClick={() => { moveLane(index, -1) }}>
+                      {t?.('route.moveUp') ?? 'Up'}
                     </button>
-                  </li>
-                )
-              })}
-            </ol>}
-      </div>
-      {/* One control commits one member: the picker lists the roster, the button
-          puts the chosen id into the chain. The search box that used to sit
-          here repeated the hero pill verbatim and duplicated what the select's
-          own type-ahead already does — the user called the row meaningless. The
-          picker keeps its own recessed-strip chrome (`.rt-pick`) because the
-          label-field selector's rules only match `.rt-field input, .rt-field
-          select`, and this control IS the `.rt-field`; borrowing it left a bare
-          browser dropdown in the middle of a restyled row. */}
-      <div className="dsm-xdpool-rt-addrow">
-        <select
-          className="dsm-xdpool-rt-pick"
-          value={picked}
-          onChange={event => { onPick(event.target.value) }}
-        >
-          <option value="">{t?.('route.id') ?? 'Model id'}</option>
-          {/*
-            Grouped by CHANNEL, not a flat list.
-            
-            A pool with eleven scan channels plus the aggregate lane has well over
-            a hundred candidate ids, and a flat select makes the reader hunt for
-            "the Qoder one" by reading every row. The owner is already on each
-            candidate (`workbuddy` for a pool model, the provider id otherwise),
-            so the grouping costs nothing and the chooser becomes "which channel,
-            then which model" — the order the question is actually asked in.
-            
-            `optgroup` rather than nested selects: it is the native way to label a
-            group inside one dropdown, it needs no JS, and it degrades to a plain
-            list where the label is unsupported.
-          */}
-          {owners.map(owner => (
-            <optgroup key={owner} label={ownerLabel(owner)}>
-              {roster.filter(candidate => candidate.owner === owner).map(candidate => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.id} — {candidate.name}
+                    <button type="button" className="dsm-xdpool-rt-drop" disabled={index === draft.platforms.length - 1} onClick={() => { moveLane(index, 1) }}>
+                      {t?.('route.moveDown') ?? 'Down'}
+                    </button>
+                    <button type="button" className="dsm-xdpool-rt-drop" onClick={() => { dropLane(index) }}>
+                      {t?.('route.removePlatform') ?? 'Remove'}
+                    </button>
+                  </div>
+                  {platform.models.length === 0
+                    ? <p className="dsm-xdpool-rt-hint">{t?.('route.platformNoModels') ?? 'No model added to this platform yet.'}</p>
+                    : <ol className="dsm-xdpool-rt-members">
+                        {platform.models.map((model, modelIndex) => {
+                          const fullId = platform.owner === 'workbuddy' ? model : `${platform.owner}/${model}`
+                          const candidate = candidateById.get(fullId)
+                          return (
+                            <li className="dsm-xdpool-rt-member" key={`${model}-${modelIndex}`}>
+                              <span className="dsm-xdpool-rt-ord">{modelIndex + 1}</span>
+                              <span className="dsm-xdpool-rt-mid" title={fullId}>{model}</span>
+                              {candidate === undefined
+                                ? <span className="dsm-xdpool-agg-tag dsm-xdpool-rt-mtag" data-tone="busy">
+                                    {t?.('route.unusable') ?? 'needs a key'}
+                                  </span>
+                                : <span className="dsm-xdpool-agg-tag dsm-xdpool-rt-mtag" data-tone="ok">
+                                    {compact(candidate.contextWindow)}
+                                  </span>}
+                              <button
+                                type="button"
+                                className="dsm-xdpool-rt-drop"
+                                disabled={modelIndex === 0}
+                                onClick={() => {
+                                  const next = [...platform.models]
+                                  const [moved] = next.splice(modelIndex, 1)
+                                  if (moved === undefined) return
+                                  next.splice(modelIndex - 1, 0, moved)
+                                  patchLane(index, { models: next })
+                                }}
+                              >
+                                {t?.('route.moveUp') ?? 'Up'}
+                              </button>
+                              <button
+                                type="button"
+                                className="dsm-xdpool-rt-drop"
+                                disabled={modelIndex === platform.models.length - 1}
+                                onClick={() => {
+                                  const next = [...platform.models]
+                                  const [moved] = next.splice(modelIndex, 1)
+                                  if (moved === undefined) return
+                                  next.splice(modelIndex + 1, 0, moved)
+                                  patchLane(index, { models: next })
+                                }}
+                              >
+                                {t?.('route.moveDown') ?? 'Down'}
+                              </button>
+                              <button
+                                type="button"
+                                className="dsm-xdpool-rt-drop"
+                                onClick={() => { patchLane(index, { models: platform.models.filter(entry => entry !== model) }) }}
+                              >
+                                {t?.('route.removeMember') ?? 'Remove'}
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ol>}
+                  {/* One picker per platform, and it lists only THAT platform's
+                      models — the grouping is now structural, so a grouped
+                      dropdown would repeat what the card already says. */}
+                  {choices.length === 0
+                    ? null
+                    : <div className="dsm-xdpool-rt-addrow">
+                        <select
+                          className="dsm-xdpool-rt-pick"
+                          value={picked}
+                          disabled={busy}
+                          onChange={event => { setPickByLane(prev => ({ ...prev, [platform.owner]: event.target.value })) }}
+                        >
+                          <option value="">{t?.('route.pickModel') ?? 'Pick a model…'}</option>
+                          {choices.map(choice => (
+                            <option key={choice.id} value={bareModelOf(choice)}>{choice.name} — {bareModelOf(choice)}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="dsm-btn dsm-btn-outline"
+                          disabled={busy || picked === ''}
+                          onClick={() => {
+                            if (picked === '' || platform.models.includes(picked)) return
+                            patchLane(index, { models: [...platform.models, picked] })
+                            setPickByLane(prev => ({ ...prev, [platform.owner]: '' }))
+                          }}
+                        >
+                          {t?.('route.addModel') ?? 'Add model'}
+                        </button>
+                      </div>}
+                </div>
+              )
+            })}
+          </div>}
+
+      {addable.length === 0
+        ? null
+        : <div className="dsm-xdpool-rt-addrow">
+            <select
+              className="dsm-xdpool-rt-pick"
+              value={pickLane}
+              disabled={busy}
+              onChange={event => { setPickLane(event.target.value) }}
+            >
+              <option value="">{t?.('route.pickPlatform') ?? 'Pick a platform…'}</option>
+              {addable.map(entry => (
+                <option key={entry.owner} value={entry.owner}>
+                  {ownerName(entry.owner, t)}（{entry.count}）
                 </option>
               ))}
-            </optgroup>
-          ))}
-        </select>
-        {/* An action, so it wears the action button. It used to borrow
-            `.agg-cat`, which is a filter chip — it renders now that the chip
-            lives in the shared sheet, but a chip that commits an edit reads as
-            a toggle, and the user cannot tell whether it is now on. */}
-        <button type="button" className="dsm-btn dsm-btn-outline" disabled={busy || picked === ''} onClick={onAddMember}>
-          {t?.('route.addMember') ?? 'Add'}
-        </button>
-        {/*
-          Second button, only when the picked model has alternates. It adds the
-          model AND every other lane serving it, in order — the "same model,
-          different route" tier without the hunt. Hidden rather than disabled when
-          there is nothing to add: a permanently dead control is noise.
-        */}
-        {siblingCount > 0
-          ? <button
+            </select>
+            <button
               type="button"
               className="dsm-btn dsm-btn-outline"
-              disabled={busy || picked === ''}
-              title={t?.('route.addSiblingsHint') ?? '同模型的其他线路排在后面：某家限流时先换线路，而不是换模型'}
-              onClick={onAddSiblings}
+              disabled={busy || pickLane === ''}
+              onClick={() => {
+                if (pickLane === '' || used.includes(pickLane)) return
+                commit([...draft.platforms, { owner: pickLane, models: [] }])
+                setPickLane('')
+              }}
             >
-              {t?.('route.addSiblings', { count: siblingCount }) ?? `+${String(siblingCount)} 条同模型线路`}
+              {t?.('route.addPlatform') ?? 'Add platform'}
             </button>
-          : null}
-      </div>
+          </div>}
+      <p className="dsm-xdpool-rt-hint">{t?.('route.platformHint') ?? 'Higher is tried first; the same applies to models inside one platform.'}</p>
     </div>
   )
 }

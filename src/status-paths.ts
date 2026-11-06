@@ -514,6 +514,18 @@ export interface PoolWebCombo {
   name: string
   /** Members that exist right now, in order. Empty means the chain is dead. */
   models: readonly string[]
+  /**
+   * The chain as PLATFORM GROUPS, for the two-level editor.
+   *
+   * Always present — grouping `models` when the chain was saved flat — so the
+   * editor never has to branch on which shape reached it. `models` stays the flat,
+   * authoritative sequence; this is the same content arranged the way the router
+   * walks it (platform order, then model order within each platform).
+   *
+   * Model ids here are BARE (no `provider/` prefix): the owner is the field beside
+   * them, and carrying the prefix in both invites the two to disagree.
+   */
+  platforms: readonly { owner: string; models: readonly string[] }[]
   /** Members the user configured but which the roster no longer serves. */
   missing: readonly string[]
   strategy: 'fallback' | 'round-robin'

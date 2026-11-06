@@ -1791,6 +1791,21 @@ interface PoolWebCombo {
   name: string;
   /** Members that exist right now, in order. Empty means the chain is dead. */
   models: readonly string[];
+  /**
+   * The chain as PLATFORM GROUPS, for the two-level editor.
+   *
+   * Always present — grouping `models` when the chain was saved flat — so the
+   * editor never has to branch on which shape reached it. `models` stays the flat,
+   * authoritative sequence; this is the same content arranged the way the router
+   * walks it (platform order, then model order within each platform).
+   *
+   * Model ids here are BARE (no `provider/` prefix): the owner is the field beside
+   * them, and carrying the prefix in both invites the two to disagree.
+   */
+  platforms: readonly {
+    owner: string;
+    models: readonly string[];
+  }[];
   /** Members the user configured but which the roster no longer serves. */
   missing: readonly string[];
   strategy: 'fallback' | 'round-robin';
@@ -2600,13 +2615,45 @@ interface AggregateSettings {
 /** Chain strategies. Anything else on disk falls back to `fallback`. */
 declare const COMBO_STRATEGIES: readonly ['fallback', 'round-robin'];
 type ComboStrategy = (typeof COMBO_STRATEGIES)[number];
+/**
+ * One platform's contribution to a chain: which lane, and which of its models.
+ *
+ * Chains are edited as a TWO-LEVEL list — platform order, then model order inside
+ * each platform — because that is the order the router actually walks and the
+ * order a reader thinks in ("try the bytes one, then Qoder; if both fail, go to
+ * CodeBuddy"). A flat member list expresses the same sequence but cannot show the
+ * grouping, so re-ordering "all of WorkBuddy's models together" meant moving them
+ * one at a time and hoping none was missed.
+ *
+ * `owner` is `workbuddy` for a pool model, or an aggregate provider id. Model ids
+ * are BARE here (no `provider/` prefix): the prefix is derived from the owner when
+ * the chain is flattened, so storing it twice would let the two disagree.
+ */
+interface ComboPlatform {
+  owner: string;
+  models: readonly string[];
+}
 /** A chain as the user configured it, before the catalogs are consulted. */
 interface ComboSetting {
   /** `combo:<slug>`; derived from the name when absent or malformed. */
   id?: string;
   name: string;
-  /** Member model ids, in the order the user put them. */
+  /**
+   * Member model ids in the order the user put them — the FLATTENED, authoritative
+   * sequence the router walks.
+   *
+   * Kept as the single source of truth so every resolver, the picker row and the
+   * shim keep reading one field. A chain saved with `platforms` also carries this,
+   * derived from them, so an older build and an older config file both keep working.
+   */
   models: readonly string[];
+  /**
+   * The same chain as platform groups, when it was edited that way.
+   *
+   * Absent for a chain written before this existed, or saved flat. The editor
+   * groups such a chain by owner on the fly, so it opens correctly either way.
+   */
+  platforms?: readonly ComboPlatform[];
   /** How the chain advances; `fallback` restarts from the top each turn. */
   strategy?: ComboStrategy;
   /** Consecutive turns one member serves before `round-robin` advances. */
