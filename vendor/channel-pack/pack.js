@@ -42603,6 +42603,10 @@ var LOOMY_ACCOUNT_BASE = "https://account.xfinfr.com";
 var LOOMY_OK_CODE = "000000";
 var LOOMY_AUTH_ERROR_CODE = "100002";
 var LOOMY_REQUEST_TIMEOUT_MS = 6e4;
+// [loomy-failover 2026-10-31] 单次请求内 402 换号重试上限。正常流程下
+// getAvailableAccount 会排除已试账号，循环自然终止；上限只是兜底，防止
+// 异常数据（如池内多条目解析成同一账号）把请求吊死。
+var LOOMY_QUOTA_SWITCH_LIMIT = 8;
 function parseLoomyEnvelope(payload) {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
     return { ok: false, code: "", message: "\u54CD\u5E94\u4E0D\u662F JSON \u5BF9\u8C61", data: void 0 };
@@ -42969,6 +42973,24 @@ var LoomyAdapter = class extends LlmAdapter7 {
         throw error;
       }
     };
+    // [loomy-failover 2026-10-31] 反查「本次实际使用的账号」：resolveCredential 由
+    // 账号池 + 余额选择器决定用哪个号，适配器侧从实际凭据反查账号 id（Buddy 同款
+    // findAccountIdByCredential）—— 402 换号时才知道该把限流标记落在谁头上。
+    // 反查不到（例如凭据来自手工配置的默认凭据、或账号刚被停用）只影响「标记」，
+    // 不影响请求本身；换号逻辑对空 activeAccountId 依然成立（改为把池内账号
+    // 逐个试过去）。
+    const triedAccounts = /* @__PURE__ */ new Set();
+    const resolveActiveAccount = async (cred) => {
+      if (this.options.accountPool === void 0) return "";
+      try {
+        return await this.options.accountPool.findAccountIdByCredential(this.product.id, cred.access_token);
+      } catch (error) {
+        console.warn(`[loomy] 账号匹配失败（不影响本次请求）:`, error);
+        return "";
+      }
+    };
+    let activeAccountId = await resolveActiveAccount(credential);
+    if (activeAccountId !== "") reportLedgerAccount(this.product.id, activeAccountId);
     let response = await send(credential.access_token);
     if (response.status === 401 || response.status === 403) {
       await this.options.refresh();
@@ -42976,10 +42998,40 @@ var LoomyAdapter = class extends LlmAdapter7 {
       if (refreshed === void 0 || refreshed.access_token.length === 0) {
         throw new LlmError10("loomy: credential expired and refresh failed", "AUTH", { status: response.status });
       }
-      response = await send(refreshed.access_token);
+      // [loomy-failover] 401 刷新后可能切到另一个账号，重新反查。
+      credential = refreshed;
+      activeAccountId = await resolveActiveAccount(credential);
+      response = await send(credential.access_token);
+    }
+    // [loomy-failover 2026-10-31] 额度不足（HTTP 402「积分余额不足，请获取积分后
+    // 再试」）：标记当前账号**该模型**受限至 UTC+8 当日 24:00（loomy 赠送额度按
+    // 自然日刷新，402 响应不带重置时间 —— 沿用 Qoder/Zcode 的 nextUtc8DayStartMs()
+    // 语义），然后切到账号池下一个可用账号重试。用户需求 2026-10-31：配置了
+    // 2 个账号、一个余额不足时自动切另一个，而不是整轮失败。全部账号用尽才抛错。
+    let quotaRetries = 0;
+    while (response.status === 402 && quotaRetries < LOOMY_QUOTA_SWITCH_LIMIT) {
+      quotaRetries += 1;
+      const switched = await this.switchAccountOnQuota(options, triedAccounts, activeAccountId);
+      if (switched === void 0) break;
+      // 防御：凭据反查账号失败时（activeAccountId 为空），池可能再次选中同一
+      // 凭据 —— 402 的响应不会因为重发同一 token 而改变，直接断开避免空转。
+      if (switched.credential?.access_token === credential.access_token) break;
+      credential = switched.credential;
+      activeAccountId = switched.accountId;
+      response = await send(credential.access_token);
     }
     if (!response.ok) {
       const errorText = await response.text().catch(() => "");
+      if (response.status === 402) {
+        // 走到这里 = switchAccountOnQuota 已无号可换，如实上报，并把错误码
+        // 归为 QUOTA_EXCEEDED（原来的 HTTP_402 让调度层当成普通失败重试，
+        // 不会停用该模型/账号，下一轮还会撞同一堵墙）。
+        throw new LlmError10(
+          `loomy: ${errorDetail4(errorText)}（账号池内已无其他可用账号可切换）`,
+          "QUOTA_EXCEEDED",
+          { status: response.status }
+        );
+      }
       throw new LlmError10(`loomy: ${errorDetail4(errorText)}`, httpErrorCode4(response.status), { status: response.status });
     }
     yield* consumeOpenAiSse(response, { signal: options.signal }, {
@@ -42988,6 +43040,40 @@ var LoomyAdapter = class extends LlmAdapter7 {
       chunkTimeoutMs: resolveChunkTimeoutMs7(),
       ...options.maxTokens === void 0 ? {} : { maxTokens: options.maxTokens }
     });
+  }
+  /**
+   * [loomy-failover 2026-10-31] 额度不足（HTTP 402「积分余额不足」）时：
+   * ① 把当前账号在**该模型**上标记受限到 UTC+8 当日 24:00 —— loomy 的赠送
+   *   额度按自然日刷新，402 响应又不带重置时间，故沿用 Qoder/Zcode 的
+   *   `nextUtc8DayStartMs()`（与 QoderAdapter.switchAccountOnQuota 同型）；
+   *   ⚠ 402 是上游如实返回的额度证据，即便账号池里没有下一个账号（单账号
+   *   池）也照常标记 —— 与 zcode「空流无证据→短冷却」的保守策略不同，这里
+   *   不存在误判空间。
+   * ② 从账号池取下一个可用账号（排除已试过的），把凭据交回 stream() 重发。
+   *
+   * ⚠ 只标记「该账号 + 该模型」（`updateModelRateLimit` 既有语义）：额度是
+   * 账号 + 模型维度的，同一账号在别的模型上仍可能可用。
+   *
+   * @returns 下一个账号的凭据与 id；账号池缺失或无可用账号时返回 undefined
+   *   （调用方如实抛出上游 402）。
+   */
+  async switchAccountOnQuota(options, tried, activeAccountId) {
+    const pool = this.options.accountPool;
+    if (pool === void 0) return void 0;
+    if (activeAccountId !== void 0 && activeAccountId.length > 0) {
+      await pool.updateModelRateLimit(activeAccountId, options.model, nextUtc8DayStartMs());
+      tried.add(activeAccountId);
+    }
+    const next = await pool.getAvailableAccount(this.product.id, options.model, tried);
+    if (next === null || next === void 0 || tried.has(next.entry.id)) return void 0;
+    tried.add(next.entry.id);
+    reportLedgerAccount(this.product.id, next.entry.id);
+    return {
+      // 池的凭据类型是历史遗留的联合类型；运行时安全性由 provider 过滤保证
+      // （查询用 `this.product.id`，取到的必是 loomy 凭据）。
+      credential: next.credential,
+      accountId: next.entry.id
+    };
   }
 };
 function resolveFirstTokenTimeoutMs7() {
@@ -54796,12 +54882,65 @@ var ModelGate = class {
   depth = 0;
   /** 每个模型上次**发车**时刻。 */
   lastDispatchAt = /* @__PURE__ */ new Map();
+  /** [empty-fix] 跨进程串行锁文件路径；为空 = 退回纯进程内串行。 */
+  lockPath;
   constructor(options = {}) {
     this.serialize = options.serialize ?? true;
     this.gaps = options.gaps ?? {};
     this.defaultGapMs = options.defaultGapMs ?? 0;
     this.now = options.now ?? (() => Date.now());
     this.sleep = options.sleep ?? defaultSleep;
+    this.lockPath = options.lockPath;
+  }
+  /**
+   * [empty-fix 2026-10-30] 跨进程串行：tail 链只在**本进程**内有效，而本机
+   * 多个 DSH 进程共用同一个 zcode 账号 —— 两进程同时在飞时上游按
+   * 「模型+账号」计量并发（3009），也更容易吐 200 空流。用 O_EXCL 锁文件
+   * 把「同一时刻至多一个在飞」补足到跨进程。锁只包 task()（= fetch 到响应头），
+   * 与进程内闸门的语义一致；锁陈旧（120s，正常远短于此）可被抢占，
+   * 等锁超 30s 则放行退化回旧行为 —— 宁可偶发并发，不可卡死请求。
+   */
+  async withCrossProcessLock(task, signal) {
+    const lockPath = this.lockPath;
+    if (!lockPath) return await task();
+    const fs = __require("node:fs");
+    const LOCK_STALE_MS = 12e4;
+    const LOCK_WAIT_MS = 3e4;
+    const startedAt = Date.now();
+    let held = false;
+    for (;;) {
+      if (signal?.aborted === true) break;
+      try {
+        const fd = fs.openSync(lockPath, "wx");
+        try { fs.writeSync(fd, String(process.pid)); } catch {
+        }
+        fs.closeSync(fd);
+        held = true;
+        break;
+      } catch {
+        let stale = false;
+        try {
+          const st = fs.statSync(lockPath);
+          stale = Date.now() - st.mtimeMs > LOCK_STALE_MS;
+        } catch {
+        }
+        if (stale) {
+          try { fs.unlinkSync(lockPath); } catch {
+          }
+          continue;
+        }
+        if (Date.now() - startedAt > LOCK_WAIT_MS) break;
+        await this.sleep(120 + Math.floor(Math.random() * 180), signal);
+      }
+    }
+    try {
+      return await task();
+    } finally {
+      if (held) {
+        try { fs.unlinkSync(lockPath); } catch {
+        }
+      }
+    }
   }
   /** 当前排队中的任务数（诊断用）。 */
   queueDepth() {
@@ -54818,7 +54957,7 @@ var ModelGate = class {
     if (!this.serialize) {
       await this.waitGap(modelKey, options.signal);
       this.markDispatch(modelKey);
-      return await task();
+      return await this.withCrossProcessLock(task, options.signal);
     }
     const key = modelKey.toLowerCase();
     this.depth += 1;
@@ -54831,7 +54970,7 @@ var ModelGate = class {
       await this.awaitWithSignal(previous, options.signal);
       await this.waitGap(key, options.signal);
       this.markDispatch(key);
-      return await task();
+      return await this.withCrossProcessLock(task, options.signal);
     } finally {
       this.depth -= 1;
       release();
@@ -54941,7 +55080,19 @@ var ZcodeAdapter = class extends LlmAdapter9 {
     this.fallbackIndex = new Map(this.product.fallbackModels.map((model) => [model.id, model]));
     this.gate = options.gate ?? new ModelGate({
       serialize: this.product.serializeUpstream,
-      gaps: this.product.modelGapMs
+      gaps: this.product.modelGapMs,
+      // [empty-fix] 跨进程锁：落在 channel-pack 状态目录（与 state.json 同目录）。
+      lockPath: options.gateLockPath ?? (() => {
+        try {
+          const os2 = __require("node:os");
+          const fs2 = __require("node:fs");
+          const dir = os2.homedir() + "/.dsh/channel-pack";
+          fs2.mkdirSync(dir, { recursive: true });
+          return dir + "/zcode-model-gate.lock";
+        } catch {
+          return void 0;
+        }
+      })()
     });
     this.sleepImpl = options.sleep ?? defaultAdapterSleep;
     this.nowImpl = options.now ?? (() => Date.now());
@@ -55263,6 +55414,7 @@ var ZcodeAdapter = class extends LlmAdapter9 {
       "TIMEOUT",
       cause === void 0 ? void 0 : { cause }
     );
+    let emptyRetries = 0; // [empty-fix] 空流/空响应体的同账号重试计数（换号成功后清零）
     for (let quotaRound = 0; ; quotaRound += 1) {
       let response;
       let switchedAccount = false;
@@ -55408,17 +55560,26 @@ var ZcodeAdapter = class extends LlmAdapter9 {
         throw new LlmError13("zcode: \u4E0A\u6E38\u8BF7\u6C42\u672A\u53D1\u51FA\uFF08\u5185\u90E8\u72B6\u6001\u5F02\u5E38\uFF09", "SERVER");
       }
       if (response.body === null) {
+        // [empty-fix] HTTP 200 但无响应体：无任何额度证据（1113/1005/余额不足均未出现），
+        // 不再按「无权益」归因。先同账号重试一次；仍空则换号（短冷却标记）；
+        // 都不行按 SERVER 抛出 —— 上游异常应当可重试，而不是锁账号一整天。
+        if (emptyRetries < 1) {
+          emptyRetries += 1;
+          await this.sleepImpl(ZCODE_EMPTY_RETRY_DELAY_MS, controller.signal);
+          continue;
+        }
         if (quotaRound < this.product.quotaSwitchMax) {
-          const switched = await this.switchAccountOnQuota(options, tried, activeAccountId);
+          const switched = await this.switchAccountOnQuota(options, tried, activeAccountId, ZCODE_EMPTY_COOLDOWN_MS);
           if (switched !== void 0) {
             credential = switched.credential;
             activeAccountId = switched.accountId;
+            emptyRetries = 0;
             continue;
           }
         }
         throw new LlmError13(
-          zcodeEntitlementErrorMessage(options.model, tried.size),
-          "QUOTA_EXCEEDED"
+          "zcode: 上游返回了空响应体（HTTP 200 且无 body，重试后仍为空）—— 按上游异常处理，请稍后重试；未标记账号额度（无额度证据）",
+          "SERVER"
         );
       }
       let emitted = false;
@@ -55435,18 +55596,28 @@ var ZcodeAdapter = class extends LlmAdapter9 {
         }
       } catch (error) {
         if (timedOut()) throw timeoutError(error);
-        if (!emitted && isFastEntitlementMiss(error, Date.now() - consumeStartedAt)) {
+        if (!emitted && error instanceof LlmError13 && error.code === EMPTY_RESPONSE_CODE2) {
+          // [empty-fix] 空流 = 上游异常（典型成因：多进程共用账号时并发撞车、上游瞬断），
+          // 流里没有任何 text/thinking/tool，也没有额度证据，不得归因「无权益」。
+          // 2026-10-29 23:22 事故：2.564s 的空流被 isFastEntitlementMiss 判成额度用尽，
+          // 把唯一账号标记到当日 24:00。现改为：同账号重试 1 次 → 换号（短冷却）→ SERVER。
+          if (emptyRetries < 1) {
+            emptyRetries += 1;
+            await this.sleepImpl(ZCODE_EMPTY_RETRY_DELAY_MS, controller.signal);
+            continue;
+          }
           if (quotaRound < this.product.quotaSwitchMax) {
-            const switched = await this.switchAccountOnQuota(options, tried, activeAccountId);
+            const switched = await this.switchAccountOnQuota(options, tried, activeAccountId, ZCODE_EMPTY_COOLDOWN_MS);
             if (switched !== void 0) {
               credential = switched.credential;
               activeAccountId = switched.accountId;
+              emptyRetries = 0;
               continue;
             }
           }
           throw new LlmError13(
-            zcodeEntitlementErrorMessage(options.model, tried.size),
-            "QUOTA_EXCEEDED",
+            "zcode: 上游连续返回空流（同账号已重试 1 次）—— 按上游异常处理，请稍后重试；未标记账号额度（无额度证据）",
+            "SERVER",
             { cause: error }
           );
         }
@@ -55547,15 +55718,29 @@ var ZcodeAdapter = class extends LlmAdapter9 {
    * ⚠ 只标记**该账号 + 该模型**（`updateModelRateLimit` 的既有语义）：
    * 额度是「账号 + 模型」维度的，同一账号在别的模型上仍可能可用。
    */
-  async switchAccountOnQuota(options, tried, activeAccountId) {
+  async switchAccountOnQuota(options, tried, activeAccountId, cooldownMs) {
     const pool = this.options.accountPool;
     if (pool === void 0) return void 0;
+    // [empty-fix] 先探「有没有下一个账号」，再决定怎么标记当前账号：
+    // • 有下一个账号 → 按调用方语义标记（cooldownMs 缺省 = 当日 24:00，真额度证据路径沿用）；
+    // • 没有（单账号池）→ 只写**短冷却**（缺省 60s），绝不把唯一账号锁到当日 24:00 ——
+    //   2026-10-29 23:22 的「200 空流被判无权益」曾把唯一账号锁了一整晚（次日 00:00 才解）。
+    const exclude = new Set(tried);
+    if (activeAccountId !== void 0 && activeAccountId.length > 0) exclude.add(activeAccountId);
+    const next = await pool.getAvailableAccount(this.product.id, options.model, exclude);
+    const hasOther = next !== null && next !== void 0 && !exclude.has(next.entry.id);
+    const markUntil = cooldownMs !== void 0 && cooldownMs > 0 ? Date.now() + cooldownMs : nextUtc8DayStartMs();
+    if (!hasOther) {
+      if (activeAccountId !== void 0 && activeAccountId.length > 0) {
+        await pool.updateModelRateLimit(activeAccountId, options.model, markUntil);
+      }
+      return void 0;
+    }
     if (activeAccountId !== void 0 && activeAccountId.length > 0) {
-      await pool.updateModelRateLimit(activeAccountId, options.model, nextUtc8DayStartMs());
+      await pool.updateModelRateLimit(activeAccountId, options.model, markUntil);
       tried.add(activeAccountId);
     }
-    const next = await pool.getAvailableAccount(this.product.id, options.model, tried);
-    if (next === null || next === void 0 || tried.has(next.entry.id)) return void 0;
+    if (tried.has(next.entry.id)) return void 0;
     tried.add(next.entry.id);
     return {
       // 池的凭据类型是历史遗留的联合类型；运行时安全性由 provider 过滤保证
@@ -55618,6 +55803,11 @@ async function defaultAdapterSleep(ms, signal) {
 }
 var ZCODE_CONCURRENCY_CODE = "3009";
 var ZCODE_FAST_EMPTY_MS = 3e3;
+// [empty-fix 2026-10-30] 空流处理常量：同账号重试退避 / 无证据空流的账号短冷却。
+// 依据：《Zcode-额度误判-排查与修复记录.md》§5 —— 200 空流无额度证据时
+// 不得按「无权益」归因，更不得把账号标记到当日 24:00。
+var ZCODE_EMPTY_RETRY_DELAY_MS = 1500;
+var ZCODE_EMPTY_COOLDOWN_MS = 6e4;
 function isZcodeConcurrencyLimited(status, body) {
   if (status !== 429) {
     if (!body.includes(ZCODE_CONCURRENCY_CODE)) return false;
@@ -68946,6 +69136,12 @@ function apply(ctx, config = {}) {
           );
         }
       }
+      // [loomy-failover 2026-10-31] 落到 legacy 默认凭据兜底前，先检查是否
+      // 「所有启用账号都在该模型上限流中」。是则如实报 QUOTA_EXCEEDED（含最早
+      // 解禁时刻），而不是落到大概率不存在的 LOOMY_ACCESS_TOKEN 后抛出误导性
+      // 的「no usable credential; log in first」—— 2026-10-31 事故里换号功能
+      // 缺失 + 这个兜底，让「额度用尽」看起来像「没登录」。
+      throwIfAllAccountsRateLimited(LOOMY, modelId);
       const resolved = await ctx.credentials.resolve(credentialRef16(LOOMY.defaultCredentialRef));
       if (!resolved) return void 0;
       try {
