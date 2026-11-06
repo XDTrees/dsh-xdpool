@@ -121,14 +121,32 @@ describe('the community-group button', () => {
     expect(styles).toMatch(/\.dsm-xdpool-group\{grid-column:3;grid-row:1/u)
   })
 
-  it('opens an in-place dialog that Escape and the backdrop both close', () => {
+  it('opens an in-place panel that Escape and the close button both dismiss', () => {
     expect(shell).toContain('role="dialog"')
-    expect(shell).toContain('aria-modal="true"')
-    // Escape: a modal opened from the keyboard must be closable from it too.
+    // Escape: a panel opened from the keyboard must be closable from it too.
     expect(shell).toMatch(/event\.key === 'Escape'/u)
-    // The backdrop closes; the panel does not. Without the stopPropagation a
-    // click anywhere on the card dismisses the dialog the reader is looking at.
-    expect(shell).toContain('event.stopPropagation()')
+    // And an explicit close control, since there is no backdrop to click any more.
+    expect(shell).toContain('dsm-xdpool-groupclose')
+  })
+
+  it('expands IN THE FLOW under the tab strip, where the button is', () => {
+    // Two wrong versions preceded this one:
+    //   `position:absolute; inset:0` against `.dsm-xdpool-shell` — the shell is a
+    //   column of every panel, so the overlay spanned the page's whole scroll height
+    //   and centred the dialog half-way down it;
+    //   `position:fixed` — a correct modal, but not what was asked for.
+    // The ask was "show the codes HERE", next to the button, so it is a disclosure:
+    // normal flow, directly under the nav, pushing the panels below it down.
+    expect(styles).toMatch(/\.dsm-xdpool-groupinline\{display:flex;justify-content:center\}/u)
+    // No overlay left behind, and no centring against the page.
+    expect(styles).not.toContain('dsm-xdpool-groupmask')
+    // Rendered between the nav and the page body, not appended at the end.
+    const navEnd = shell.indexOf('</nav>')
+    const inline = shell.indexOf('dsm-xdpool-groupinline')
+    const body = shell.indexOf('dsm-xdpool-body')
+    expect(navEnd).toBeGreaterThan(-1)
+    expect(inline).toBeGreaterThan(navEnd)
+    expect(body).toBeGreaterThan(inline)
   })
 
   it('carries BOTH codes itself, not a path the bundle could not resolve', () => {

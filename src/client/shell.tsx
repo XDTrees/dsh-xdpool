@@ -301,26 +301,31 @@ export function PoolShell({
           ))}
         </div>
       </nav>
-      {hero === undefined ? null : hero}
-      <div className="dsm-xdpool-body">{children}</div>
       {/*
-        The group invite, as a dialog over the card rather than a new tab.
+        The group invite, expanded IN PLACE under the tab strip.
 
-        Rendered last and inside the shell so it is positioned against the card
-        (`.dsm-xdpool-shell` is the containing block), which keeps it off the
-        host dialog's own chrome. The overlay swallows clicks on itself only —
-        the panel stops propagation — so clicking the dim area closes and
-        clicking the code does not.
+        History of getting this wrong twice:
+
+        1. `position:absolute; inset:0` against `.dsm-xdpool-shell` — but the shell is
+           a column of every panel on the page, so the overlay spanned the page's whole
+           scroll height and `align-items:center` put the dialog half-way down it.
+        2. `position:fixed` centred in the viewport — technically a correct modal, but
+           not what was asked for: the reader wanted the codes to appear WHERE the
+           button sits, not as a scrim over everything.
+
+        So it is now a normal flow element directly under the nav: no overlay, no
+        centring, nothing to scroll past. Opening it pushes the panels below down by
+        its own height, which is the behaviour of every other disclosure on this card
+        and the only one that puts the answer next to the question.
       */}
       {!groupOpen ? null : (
         <div
-          className="dsm-xdpool-groupmask"
+          className="dsm-xdpool-groupinline"
           role="dialog"
-          aria-modal="true"
+          aria-modal="false"
           aria-label={t?.('shell.groupTitle') ?? 'XD 交流群'}
-          onClick={() => { setGroupOpen(false) }}
         >
-          <div className="dsm-xdpool-groupcard" onClick={(event) => { event.stopPropagation() }}>
+          <div className="dsm-xdpool-groupcard">
             <div className="dsm-xdpool-groupcardhead">
               <b>{t?.('shell.groupTitle') ?? 'XD 交流群'}</b>
               <button
@@ -386,6 +391,8 @@ export function PoolShell({
           </div>
         </div>
       )}
+      {hero === undefined ? null : hero}
+      <div className="dsm-xdpool-body">{children}</div>
     </div>
   )
 }

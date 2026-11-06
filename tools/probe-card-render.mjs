@@ -159,10 +159,12 @@ harness.clear()
 tree = render()
 all = walk(tree)
 
-const mask = all.find(el => classOf(el).includes('dsm-xdpool-groupmask'))
-if (mask === undefined) throw new Error('clicking the group button did not open the dialog')
-if (mask.props.role !== 'dialog') throw new Error('the dialog does not declare role="dialog"')
-if (mask.props['aria-modal'] !== 'true') throw new Error('the dialog is not marked modal')
+const panel = all.find(el => classOf(el).includes('dsm-xdpool-groupinline'))
+if (panel === undefined) throw new Error('clicking the group button did not open the panel')
+if (panel.props.role !== 'dialog') throw new Error('the panel does not declare role="dialog"')
+// NOT modal any more: it expands in the flow under the tab strip rather than
+// covering the page, so there is no scrim to trap interaction behind.
+if (panel.props['aria-modal'] === 'true') throw new Error('an in-flow disclosure must not claim to be modal')
 
 // TWO codes now — a WeChat bot and a QQ group — each with its own caption. The
 // probe checks both, because a dialog that renders one image and drops the other
@@ -185,19 +187,20 @@ if (String(images[0].props.src) === String(images[1].props.src)) {
 }
 const src = String(images[0].props.src ?? '')
 
-const closers = all.filter(el => typeof el.props?.onClick === 'function'
-  && (classOf(el).includes('dsm-xdpool-groupclose') || classOf(el).includes('dsm-xdpool-groupmask')))
-if (closers.length < 2) throw new Error('the dialog has no close control besides Escape')
-console.log(`open: dialog rendered, QR ${String(src.length)} chars, ${String(closers.length)} closers`)
+const close = all.find(el => typeof el.props?.onClick === 'function'
+  && classOf(el).includes('dsm-xdpool-groupclose'))
+if (close === undefined) throw new Error('the panel has no close control besides Escape')
+console.log(`open: panel rendered, QR ${String(src.length)} chars`)
 
-// Close from the backdrop and confirm it goes away.
-mask.props.onClick({ stopPropagation() {} })
+// Close from the button and confirm it goes away. There is no backdrop any more:
+// the panel sits in the flow, so dismissing it is the button's job (and Escape's).
+close.props.onClick({ stopPropagation() {} })
 harness.clear()
 all = walk(render())
-if (all.some(el => classOf(el).includes('dsm-xdpool-groupmask'))) {
-  throw new Error('the dialog did not close')
+if (all.some(el => classOf(el).includes('dsm-xdpool-groupinline'))) {
+  throw new Error('the panel did not close')
 }
-console.log('closed again from the backdrop')
+console.log('closed again from the close button')
 
 rmSync(TMP, { recursive: true, force: true })
 console.log('OK')
