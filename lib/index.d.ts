@@ -4257,7 +4257,16 @@ interface PoolStatusRouteOptions {
    * a chain name, and does what it names still exist" — and answering them from
    * two snapshots could show a member that the chains no longer resolve.
    */
-  combosDocument?: () => PoolWebCombosStatus;
+  /**
+   * The routing document.
+   *
+   * May return a PROMISE: login-channel rows come from the host's
+   * `llm.listModels`, which is asynchronous, and a chain that cannot name TRAE or
+   * Qoder is precisely the defect this document had. A synchronous build keeps
+   * returning the object directly, so both shapes are accepted rather than forcing
+   * every caller to become async.
+   */
+  combosDocument?: () => PoolWebCombosStatus | Promise<PoolWebCombosStatus>;
   /**
    * Replace the chain table and refresh the running catalog, then re-answer the
    * document. The catalog refresh is what makes a new chain pickable at once.

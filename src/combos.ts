@@ -169,14 +169,27 @@ export interface ComboModelRow {
    */
   combo: true
 }
-/** What a member id turned out to name, once both catalogs were consulted. */
+/** What a member id turned out to name, once every catalog was consulted. */
 export interface ComboMember {
   /** The id to send downstream, verbatim. */
   modelId: string
   /** True when it is an aggregate `providerId/modelId` row. */
   aggregate: boolean
+  /**
+   * True when it is a 扫码登录 channel row (`<channel>:<model>`).
+   *
+   * A THIRD lane, not a flavour of `aggregate`: an aggregate member is served by
+   * this plugin's own endpoint with a key from the aggregate store, while a channel
+   * member is served by the HOST's adapter registry through `ctx.llm`. Different
+   * credentials, different error vocabularies, different code path in the shim — so
+   * a boolean that conflated them would send channel members down a lane that would
+   * 401 on a key that does not exist.
+   */
+  host?: boolean
   /** Set only for aggregate members. */
   providerId?: string
+  /** Set only for channel members: which channel serves it. */
+  channel?: string
   /** Display name for the chain editor. */
   name: string
   contextWindow: number
@@ -320,12 +333,37 @@ function normalizePlatforms(raw: readonly unknown[]): ComboPlatform[] {
   }
   return out
 }
-/** The two catalogs a combo chain is resolved against. */
+/**
+ * One model served by a 扫码登录 channel, as the route editor sees it.
+ *
+ * These are the channels the vendored pack registers with the HOST (`trae`,
+ * `qoder`, `codebuddy`…). They are in neither catalog above: the pool catalog
+ * describes the WorkBuddy account lanes, and the aggregate catalog describes the
+ * vendors in this plugin's own registry. A chain could not name them at all, which
+ * is why the routing page offered exactly ONE platform — the pool — while the login
+ * page happily showed thirteen.
+ */
+export interface HostModelRow {
+  /** `<channel>:<modelId>` — the id the shim already resolves to its fifth lane. */
+  id: string
+  channel: string
+  modelId: string
+  name: string
+}
+/** The catalogs a combo chain is resolved against. */
 export interface ComboSources {
   /** Pool rows, by id. */
   pool: readonly WorkBuddyModelInfo[]
   /** Aggregate rows, by composite id. */
   aggregate: readonly AggregateModelRow[]
+  /**
+   * Login-channel rows, by `<channel>:<model>`.
+   *
+   * Optional so every existing caller keeps compiling: an absent list means "no
+   * channel member can be resolved", which is exactly the behaviour before this
+   * existed.
+   */
+  host?: readonly HostModelRow[]
 }
 /**
  * Classify one member id against both catalogs.
@@ -348,6 +386,33 @@ export function resolveComboMember(modelId: string, sources: ComboSources): Comb
       contextWindow: aggregateRow.contextWindow,
       maxOutputTokens: aggregateRow.maxOutputTokens,
       supportsImages: aggregateRow.supportsImages,
+    }
+  }
+  /**
+   * A 扫码登录 channel row, checked BEFORE the pool.
+   *
+   * Channel ids are `<channel>:<model>`, and the channel set is closed (it comes
+   * from the pack's own registered list), so a match here is unambiguous. Order
+   * still matters: a pool model id is bare and can never contain `:`, so trying the
+   * channel first cannot shadow one — and doing it first keeps a channel named after
+   * a pool id from being swallowed.
+   *
+   * The window and image flag are not known for a channel row (the host's listing
+   * publishes neither), so the chain's intersection falls back to the documented
+   * defaults. That is the honest answer: an unknown window must not be treated as a
+   * large one, or the host would size a compaction against a limit nobody promised.
+   */
+  const hostRow = sources.host?.find(row => row.id === id)
+  if (hostRow !== undefined) {
+    return {
+      modelId: id,
+      aggregate: false,
+      host: true,
+      channel: hostRow.channel,
+      name: hostRow.name,
+      contextWindow: COMBO_DEFAULT_CONTEXT_WINDOW,
+      maxOutputTokens: COMBO_DEFAULT_MAX_OUTPUT,
+      supportsImages: false,
     }
   }
   const poolRow = sources.pool.find(row => row.id === id)

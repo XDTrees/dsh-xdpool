@@ -43,6 +43,7 @@ import {
   siblingRoutes,
   splitPlatforms,
   type ComboSetting,
+  type HostModelRow,
 } from './combos.ts'
 import {
   clearProviderSetting,
@@ -127,6 +128,14 @@ function combosStatusOf(
   store: AggregateStore,
   catalog: AggregateCatalog,
   poolRows: readonly WorkBuddyModelInfo[],
+  /**
+   * Models served by the 扫码登录 channels, from the host's own registry.
+   *
+   * Passed in rather than fetched here because this function is synchronous and the
+   * host's listing is not. Omitted or empty simply means "no channel member is
+   * offered", which is the behaviour before this parameter existed.
+   */
+  hostRows: readonly HostModelRow[] = [],
 ): PoolWebCombosStatus {
   const chains = combosOf(store)
   const providerRows = catalog.providerRows()
@@ -165,11 +174,34 @@ function combosStatusOf(
           .filter(candidate => candidate !== row.id),
       }
     }),
+    /**
+     * The 扫码登录 channels.
+     *
+     * This is the block whose ABSENCE made the routing page offer exactly one
+     * platform while the login page showed thirteen. Their ids are
+     * `<channel>:<model>`, which the shim already resolves to its fifth lane, so a
+     * chain naming one runs through the host's own adapter registry — the same
+     * credential and endpoint the model picker uses.
+     *
+     * `usable: true` because a row only appears in this list once the host has
+     * already listed it for that channel, i.e. the account exists. The window and
+     * image flag are unknown (the host's listing publishes neither), so they are
+     * left at the documented defaults rather than invented.
+     */
+    ...hostRows.map(row => ({
+      id: row.id,
+      name: row.name,
+      owner: row.channel,
+      usable: true,
+      contextWindow: COMBO_DEFAULT_CONTEXT_WINDOW,
+      supportsImages: false,
+      siblings: [] as readonly string[],
+    })),
   ]
   const known = new Set(candidates.map(candidate => candidate.id))
   return {
     combos: chains.map(chain => {
-      const resolved = buildComboCatalog([chain], { pool: poolRows, aggregate: providerRows })[0]
+      const resolved = buildComboCatalog([chain], { pool: poolRows, aggregate: providerRows, host: hostRows })[0]
       return {
         id: resolved?.id ?? comboId(chain.name),
         name: chain.name,
@@ -1185,6 +1217,36 @@ function canonicalJson(value: unknown): string {
    * object has no reason to carry a list it never consults.
    */
   const lanModelsOf = (): readonly string[] | undefined => readAggregateSettingsSync().relay?.models
+  /**
+   * The login channels' models, as the route editor needs them.
+   *
+   * `channelLane.rows()` already caches per channel (60s TTL) and de-duplicates
+   * concurrent requests, so calling it per routing-document request is cheap — but
+   * it is ASYNC, and the chain table is built synchronously. Hence this helper: the
+   * callers that can await do, and a failed listing degrades to the previous answer
+   * rather than emptying the platform list (a channel that cannot be listed right
+   * now must not make its models disappear from every chain).
+   *
+   * The two pool-owned channels are excluded by `channelLane` itself, so the same
+   * model cannot appear once as a pool row and again as a channel row.
+   */
+  let hostRosterCache: readonly HostModelRow[] = []
+  const hostRoster = async (): Promise<readonly HostModelRow[]> => {
+    try {
+      const rows = await channelLane.rows()
+      hostRosterCache = rows.map(row => ({
+        id: row.id,
+        channel: row.channel,
+        modelId: row.modelId,
+        name: row.name,
+      }))
+    } catch (error: unknown) {
+      // Keep whatever the last successful listing produced. An empty list here
+      // would silently drop every channel member from every chain on screen.
+      ctx.logger?.warn?.('dsh-xdpool: could not list login-channel models:', error)
+    }
+    return hostRosterCache
+  }
   const shims = {
     cn: createWorkBuddyShim({
       pool: core.pool,
@@ -1596,15 +1658,25 @@ function canonicalJson(value: unknown): string {
     // two sources for the same list could disagree, and a chain that resolved
     // against a different roster than the one displayed is exactly the kind of
     // self-contradiction this panel must not have.
-    combosDocument: (): PoolWebCombosStatus =>
-      combosStatusOf(readAggregateSettingsSync(), aggregateCatalog, core.catalogs.cn.current()),
+    combosDocument: async (): Promise<PoolWebCombosStatus> =>
+      combosStatusOf(
+        readAggregateSettingsSync(),
+        aggregateCatalog,
+        core.catalogs.cn.current(),
+        await hostRoster(),
+      ),
     saveCombos: async (raw: unknown): Promise<PoolWebCombosStatus> => {
       await writeCombos(raw)
       // Refresh before answering, so a chain written here is pickable in the
       // same breath instead of after a restart. `writeCombos` normalises on the
       // way in, so what comes back out is what will actually be served.
       await aggregateCatalog.refresh()
-      return combosStatusOf(readAggregateSettingsSync(), aggregateCatalog, core.catalogs.cn.current())
+      return combosStatusOf(
+        readAggregateSettingsSync(),
+        aggregateCatalog,
+        core.catalogs.cn.current(),
+        await hostRoster(),
+      )
     },
       /**
      * Relay state plus the gateway's model picker.

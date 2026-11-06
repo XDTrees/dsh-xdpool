@@ -82,6 +82,19 @@ interface ChannelPoolSnapshot {
   error?: string | undefined
 }
 let poolSnapshot: ChannelPoolSnapshot | undefined
+/**
+ * `provider.status` answered recently, kept across unmounts.
+ *
+ * One request counts EVERY named provider's accounts, so its cost is the sum of
+ * thirteen pool walks. Re-running that on the next visit, for numbers that cannot
+ * have moved, is what made this section feel slow on every open while the login page
+ * (static metadata, no counting) appeared instantly.
+ *
+ * Module-level rather than component state on purpose: switching settings tabs
+ * unmounts the section, and the whole point is that coming back is cheap.
+ */
+let providerStatusCache: { at: number; key: string; answer: ChannelRpcEnvelope } | undefined
+const PROVIDER_STATUS_TTL_MS = 30_000
 
 /**
  * Drop the snapshot after anything that changes the data behind it.
@@ -90,9 +103,13 @@ let poolSnapshot: ChannelPoolSnapshot | undefined
  * stale in a way a silent revalidation cannot hide: showing yesterday's account
  * list for a card the user just added an account to is worse than showing the
  * "reading" line for a moment.
+ *
+ * The provider-status cache is dropped with it, or a rescan that just found an
+ * account would be invisible behind a 30-second-old count.
  */
 export function invalidatePoolSnapshot(): void {
   poolSnapshot = undefined
+  providerStatusCache = undefined
 }
 
 /** Which of the two lists a card has open. At most one, like the reference. */
@@ -246,6 +263,19 @@ function creditUnitLabel(channel: PoolWebChannel, t: Translate | undefined): str
 function amount(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2)
 }
+async function cachedProviderStatus(providers: readonly string[]): Promise<ChannelRpcEnvelope> {
+  // The key is the provider SET, not just a timestamp: a channel list that changed
+  // (a new pack row, a removed channel) must not be answered from a cache built for
+  // the old one.
+  const key = [...providers].sort().join('\u0000')
+  const hit = providerStatusCache
+  if (hit !== undefined && hit.key === key && Date.now() - hit.at < PROVIDER_STATUS_TTL_MS) {
+    return hit.answer
+  }
+  const answer = await callPack('provider.status', { providers: [...providers] })
+  providerStatusCache = { at: Date.now(), key, answer }
+  return answer
+}
 
 export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }): ReactElement {
   // Seeded from the cross-mount snapshot: a remount paints the last good cards
@@ -305,9 +335,14 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
       // *which* providers hold accounts is one `provider.status` round trip:
       // it counts every named provider in a single answer, so the pool pays
       // two extra calls only for channels that actually have an account.
-      const statusAnswer = await callPack('provider.status', {
-        providers: channels.map(channel => channel.id),
-      })
+      //
+      // CACHED, because it is the single most expensive call on this page: the
+      // pack walks every named provider's account pool to count them, so one
+      // request is the sum of thirteen. Opening this section again a minute later
+      // pays that cost again for numbers that cannot have moved — which is why it
+      // "loads slowly every time" while the login page (static metadata, no
+      // counting) appears instantly.
+      const statusAnswer = await cachedProviderStatus(channels.map(channel => channel.id))
       const statuses = providerStatusesFrom(statusAnswer)
       const scanProviders = channels
         .map(channel => channel.id)

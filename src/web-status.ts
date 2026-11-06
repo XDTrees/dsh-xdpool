@@ -261,7 +261,16 @@ export interface PoolStatusRouteOptions {
    * a chain name, and does what it names still exist" — and answering them from
    * two snapshots could show a member that the chains no longer resolve.
    */
-  combosDocument?: () => PoolWebCombosStatus
+  /**
+   * The routing document.
+   *
+   * May return a PROMISE: login-channel rows come from the host's
+   * `llm.listModels`, which is asynchronous, and a chain that cannot name TRAE or
+   * Qoder is precisely the defect this document had. A synchronous build keeps
+   * returning the object directly, so both shapes are accepted rather than forcing
+   * every caller to become async.
+   */
+  combosDocument?: () => PoolWebCombosStatus | Promise<PoolWebCombosStatus>
   /**
    * Replace the chain table and refresh the running catalog, then re-answer the
    * document. The catalog refresh is what makes a new chain pickable at once.
@@ -1531,14 +1540,15 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
     const disposeCombos = ctx.webServer.register({
       kind: 'exact',
       path: POOL_COMBOS_PATH,
-      handler: (req: IncomingMessage, res: ServerResponse) => {
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
         if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
         if (deps.combosDocument === undefined) {
           return json(res, 503, { error: 'the routing chains are not available in this build' })
         }
         try {
-          json(res, 200, deps.combosDocument())
+          // `await` is safe for both shapes: awaiting a non-promise yields it.
+          json(res, 200, await deps.combosDocument())
         } catch (error: unknown) {
           json(res, 500, { error: safeMessage(error) })
         }

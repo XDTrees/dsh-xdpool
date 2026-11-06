@@ -1135,6 +1135,114 @@ function withBareModelId(raw: string, modelId: string): string {
       // `resolveAggregateProvider` below names it as such — so it is not
       // pre-judged here, where the only available answer would be a guess.
       try {
+      /**
+       * A 扫码登录 channel member, served by the HOST's adapter registry.
+       *
+       * This is the branch that makes a chain able to name TRAE / Qoder /
+       * CodeBuddy at all. It goes through `channels.turn`, the same seam the
+       * single-model path uses, so the credential, endpoint and wire dialect are
+       * the host's problem rather than ours — and the model a chain reaches is
+       * literally the one the picker shows.
+       *
+       * Frames are BUFFERED like every other member (`frames.push`, written only on
+       * success): "retry only before any visible content" is what the chain
+       * promises, and streaming straight to the socket here would leave two models'
+       * text spliced together on screen when a later member answered.
+       */
+      if (member.host === true) {
+        if (channels === undefined) {
+          last = { kind: 'combo_config', status: 503, message: `member ${member.modelId} needs the login-channel lane, which this build does not mount` }
+          noteSwitch(member.modelId, 'combo_config', 503)
+          continue
+        }
+        const channelTarget = channels.resolve(member.modelId)
+        if (channelTarget === undefined) {
+          last = { kind: 'combo_config', status: 400, message: `member ${member.modelId} is not a resolvable channel model id` }
+          noteSwitch(member.modelId, 'combo_config', 400)
+          continue
+        }
+        // One id and one timestamp per member attempt, so the frames of a member
+        // that answered describe ONE completion. Reusing a chain-wide id would make
+        // a client that groups by id merge two attempts.
+        const memberCreated = Math.floor(Date.now() / 1000)
+        const memberCompletionId = `chatcmpl-xdpool-${randomBytes(6).toString('base64url')}`
+        const hostFrames: string[] = []
+        const frameOf = (delta: Record<string, unknown>, reason: string | null): string => JSON.stringify({
+          id: memberCompletionId,
+          object: 'chat.completion.chunk',
+          created: memberCreated,
+          // The BARE model id, as the single-model channel path does: echoing
+          // `qoder:Foo` would make a client that keys off `model` treat every turn
+          // as a different model.
+          model: channelTarget.modelId,
+          choices: [{ index: 0, delta, finish_reason: reason }],
+          usage: null,
+        })
+        try {
+          let finishReason = 'stop'
+          let sawVisible = false
+          for await (const event of channels.turn({
+            channel: channelTarget.channel,
+            modelId: channelTarget.modelId,
+            // The caller's body with the id rewritten to the bare model: the
+            // channel adapter's own `model` field must not carry our composite id.
+            body: JSON.parse(withBareModelId(raw, channelTarget.modelId)) as Record<string, unknown>,
+            signal: memberSignal,
+          })) {
+            // `continue` is deliberately NOT used inside this event loop: the
+            // chain's diagnostic test counts every `continue` in this function as
+            // "a member was skipped and must be recorded", and a loop-local skip
+            // would make that count wrong. if/else keeps the two meanings apart.
+            if (event.kind === 'usage') {
+              // Usage is reported by the lane but the chain's wire contract carries
+              // no per-member usage block, so it is dropped rather than invented.
+            } else if (event.kind === 'done') {
+              if (typeof event.finishReason === 'string' && event.finishReason !== '') finishReason = event.finishReason
+            } else {
+              // `channels.turn` yields a structured delta (OpenAI-shaped already),
+              // so it is passed through untouched rather than re-mapped.
+              const delta = event.delta
+              if (delta['content'] !== undefined || delta['reasoning_content'] !== undefined
+                || Array.isArray(delta['tool_calls'])) {
+                sawVisible = true
+              }
+              hostFrames.push(frameOf(delta, null))
+            }
+          }
+          /**
+           * An empty answer is still an ANSWER.
+           *
+           * The reference router settled this and it is right: a model that replied
+           * with nothing visible has responded, so falling through to the next
+           * member would silently substitute a different model over a legitimate
+           * (if unhelpful) result. The terminal frame is therefore always emitted,
+           * whether or not anything preceded it.
+           */
+          hostFrames.push(frameOf({}, finishReason))
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error)
+          const kind = error instanceof ChannelRequestError ? 'client' : 'server'
+          last = {
+            kind,
+            status: kind === 'client' ? 400 : 502,
+            message: `channel ${channelTarget.channel}: ${message}`,
+          }
+          noteSwitch(member.modelId, kind, last.status)
+          continue
+        }
+        // Buffered payloads become the response, exactly as the aggregate branch
+        // does below.
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        })
+        for (const payload of hostFrames) res.write(`data: ${payload}\n\n`)
+        res.write('data: [DONE]\n\n')
+        res.end()
+        return
+      }
       if (!member.aggregate) {
         // Pool member: one account, one attempt. Account rotation inside a chain
         // member would double the attempts and could consume the whole budget on
