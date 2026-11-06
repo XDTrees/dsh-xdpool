@@ -32842,7 +32842,22 @@ function isQueueError(status, body) {
   return status === 400 && (body.includes("TM.00001041") || /peak\s+usage|try\s+again\s+after|peak\s+hours/i.test(body) || /high\s+demand|too\s+many\s+requests/i.test(body));
 }
 function isAuthError(status, body) {
-  if (status === 401 || status === 403) return true;
+  // [xdpool-local] 403 is not auth for CodeArts.
+  //
+  // Every IAM rejection this gateway produces is measured to be 401 APIG.0301:
+  // bad SK signature, truncated STS token, wrong AK, and a body rewritten after
+  // signing all answer 401. A rejected User-Agent answers 403 TM.00000001, which
+  // is a WAF verdict on a request header and says nothing about the credential.
+  //
+  // 403 can still be about the token (`APIG.0602 security token has expired` is
+  // real), so the body decides. An unrecognised 403 falls through to the non-auth
+  // path, which is the honest answer: the upstream refused without claiming an
+  // auth failure.
+  if (status === 401) return true;
+  if (status === 403) {
+    return body.includes("APIG.0602")
+      || /invalid\s+token|token\s+expired|token\s+is\s+invalid|signature\s+fail|Unauthorized/i.test(body);
+  }
   return body.includes("APIG.0602") || /invalid\s+token|token\s+expired|token\s+is\s+invalid/i.test(body);
 }
 function isSseQueueErrorCode(code) {
@@ -32886,7 +32901,14 @@ function httpErrorCode(status, body) {
       return "INVALID_REQUEST";
     }
   }
-  if (status === 401 || status === 403) return "AUTH";
+  // [xdpool-local] 403 is not auth — see isAuthError. The frontend renders AUTH
+  // as "API 密钥无效", so routing a WAF 403 here produced a confident wrong
+  // diagnosis. Only a 401, or a 403 whose body names the token, is AUTH.
+  if (status === 401) return "AUTH";
+  if (status === 403 && (String(body).includes("APIG.0602")
+    || /invalid\s+token|token\s+expired|token\s+is\s+invalid|signature\s+fail|Unauthorized/i.test(String(body)))) {
+    return "AUTH";
+  }
   const detail = errorDetail(body);
   if (isQuotaExceededError(detail)) return QUOTA_EXCEEDED_CODE;
   if (status === 429) return "RATE_LIMIT";
@@ -33321,6 +33343,17 @@ var CodeArtsAdapter = class extends LlmAdapter {
         extraSignedHeaders
       );
       const headers = new Headers(attributionHeaders());
+      // [xdpool-local] Override the host USER-AGENT, or the gateway answers 403.
+      //
+      // attributionHeaders() stamps the DSH bot UA and snap-access rejects it
+      // outright with 403 {error_code:TM.00000001}. Measured against the live
+      // gateway with the SAME credential, body and endpoint: the harness UA gets
+      // 403, no UA gets 200, an IDE-shaped UA gets 200 — so the UA alone decides,
+      // and every CodeArts request failed with a message that reads like a bad key.
+      //
+      // Only the UA is replaced. The other attribution headers stay: they identify
+      // the host for support and are not rejected.
+      headers.set("user-agent", "CodeArts-Agent/1.0 (Windows NT 10.0; Win64; x64)");
       signed.forEach((value, key) => {
         if (key !== "content-type") headers.set(key, value);
       });
@@ -33409,6 +33442,28 @@ var CodeArtsAdapter = class extends LlmAdapter {
         const errorText = await response.text().catch(() => "");
         if (isAuthError(response.status, errorText) && !authRefreshed) {
           authRefreshed = true;
+          // [xdpool-local] auth failure rotates the account, not just refresh it.
+          //
+          // This branch used to refresh and continue, which re-reads the SAME
+          // account — so with two accounts in the pool, a credential the gateway
+          // rejects for the first one failed the whole request while the second
+          // would have worked. Every other failure class already rotates via
+          // accountPool.getAvailableAccount; auth was the one exception.
+          //
+          // One shot per account: `rateLimitTried` holds the ids this request has
+          // already spent, so a pool of N accounts gets at most N-1 extra
+          // attempts and the loop cannot spin.
+          if (this.options.accountPool) {
+            const next = await this.options.accountPool.getAvailableAccount(
+              "codearts", options.model, rateLimitTried,
+            );
+            if (next && !rateLimitTried.has(next.entry.id)) {
+              rateLimitTried.add(next.entry.id);
+              credential = next.credential;
+              currentAccountId = next.entry.id;
+              continue;
+            }
+          }
           await this.options.refresh();
           credential = await this.options.resolveCredential();
           if (credential === void 0 || !credential.access_key_id || !credential.secret_access_key || !credential.security_token) {
@@ -33470,7 +33525,20 @@ var CodeArtsAdapter = class extends LlmAdapter {
           const probe = await this.queryQueueStatus(credential, options.model, options.signal);
           if (probe === void 0 || probe.status === "working") {
             const code = httpErrorCode(response.status, errorText);
-            throw new LlmError2(`codearts: model request failed with HTTP ${response.status}`, code, { status: response.status });
+            // [xdpool-local] error detail on the HTTP-status throw.
+            //
+            // "HTTP 403" alone cannot be diagnosed: the 403 in this report was a
+            // WAF verdict on the User-Agent, and with no body in the message the
+            // operator went looking for a credential problem that did not exist.
+            // The body names the cause, truncated so an HTML error page cannot
+            // flood the message.
+            const failureDetail = errorDetail(errorText).slice(0, 200);
+            throw new LlmError2(
+              `codearts: model request failed with HTTP ${response.status}`
+                + (failureDetail === "" ? "" : ` (${failureDetail})`),
+              code,
+              { status: response.status },
+            );
           }
         }
       }

@@ -249,6 +249,19 @@ const REQUEST_BODY_LIMIT = 64 * 1024 * 1024
  */
 export const RELAY_HOP_HEADER = 'x-xdpool-relay-hop'
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]'])
+/**
+ * How long one chain member may hold the request before it is given up on.
+ *
+ * The caller's own signal covers "the user cancelled", not "this provider decided
+ * to keep the socket open". Without a per-member deadline a single non-answering
+ * upstream blocks the request forever, and the chain's whole purpose — try the
+ * next member — never runs.
+ *
+ * 180s is the value the reference router settled on: long enough for a slow
+ * reasoning model to emit its first token, short enough to give up inside one
+ * turn rather than leaving the user staring at a spinner.
+ */
+const MEMBER_TIMEOUT_MS = 180_000
 /** HTTP status each upstream failure class surfaces as. */
 const KIND_STATUS: Readonly<Record<UpstreamErrorKind, number>> = {
   hard_credit: 402,
@@ -1080,14 +1093,40 @@ function withBareModelId(raw: string, modelId: string): string {
     for (const member of members) {
       if (signal.aborted) return
       attempts.push(member.modelId)
+      // A per-member deadline, so one hung upstream cannot hold the whole chain.
+      //
+      // The caller's signal covers "the user cancelled", not "this provider
+      // decided to hold the socket open". Without a deadline of its own, a single
+      // non-answering member blocks the request forever and the chain's whole
+      // purpose — try the next one — never happens. The reference router settled
+      // on 180s: long enough for a slow reasoning model to emit its first token,
+      // short enough to give up inside one turn.
+      //
+      // The member controller is DERIVED from the caller's, so a real
+      // cancellation still propagates immediately; this only adds a way to stop.
+      const memberController = new AbortController()
+      const memberSignal = memberController.signal
+      const relayAbort = (): void => { memberController.abort() }
+      if (signal.aborted) relayAbort()
+      else signal.addEventListener('abort', relayAbort, { once: true })
+      const memberTimer = setTimeout(() => { memberController.abort() }, MEMBER_TIMEOUT_MS)
+      // A finished request must not hold the process open for the remainder of a
+      // deadline nothing is waiting on any more.
+      memberTimer.unref?.()
+      /** Release this member's timer and listener. Every exit path calls it. */
+      const releaseMember = (): void => {
+        clearTimeout(memberTimer)
+        signal.removeEventListener('abort', relayAbort)
+      }
       // A member with no key is a settings problem the user can fix, and
       // `resolveAggregateProvider` below names it as such — so it is not
       // pre-judged here, where the only available answer would be a guess.
+      try {
       if (!member.aggregate) {
         // Pool member: one account, one attempt. Account rotation inside a chain
         // member would double the attempts and could consume the whole budget on
         // one member, which defeats the chain's reason to exist.
-        const { account, reserveExempt } = await acquireForRequest(member.modelId, conversationKey, signal)
+        const { account, reserveExempt } = await acquireForRequest(member.modelId, conversationKey, memberSignal)
         if (account === undefined) {
           const why = pool.unavailableReason(member.modelId, region, reserveExempt)
           last = {
@@ -1111,7 +1150,7 @@ function withBareModelId(raw: string, modelId: string): string {
         // `off` effort everywhere) can be applied here.
         const memberRaw = JSON.stringify({ ...(JSON.parse(raw) as Record<string, unknown>), model: member.modelId })
         const prepared = client.prepareChatBodyFor(memberRaw, region ?? 'cn')
-        const result = await client.chatStream(account.credential, prepared, signal, conversationKey)
+        const result = await client.chatStream(account.credential, prepared, memberSignal, conversationKey)
         if (result.ok) {
           const turnId = randomBytes(8).toString('hex')
           await serveSuccessfulStream(
@@ -1160,7 +1199,7 @@ function withBareModelId(raw: string, modelId: string): string {
       const frames: string[] = []
       try {
         await forwardAggregateStreamed(resolved, parsed.modelId, withBareModelId(raw, parsed.modelId), {
-          signal,
+          signal: memberSignal,
           onData: payload => frames.push(payload),
         })
       } catch (error: unknown) {
@@ -1192,6 +1231,9 @@ function withBareModelId(raw: string, modelId: string): string {
       res.write('data: [DONE]\n\n')
       res.end()
       return
+      } finally {
+        releaseMember()
+      }
     }
     // Every member declined. The honest report is the LAST member's class plus
     // the whole attempt list: a chain of one rate-limited member must not read
