@@ -39,8 +39,17 @@ const SECRET_FILE_MODE = 0o600
 /** Owner-only, for the directory that holds them. */
 const SECRET_DIR_MODE = 0o700
 
-/** True on a platform where POSIX modes are meaningful. */
-const POSIX = process.platform !== 'win32'
+/**
+ * True on a platform where POSIX modes are meaningful.
+ *
+ * Computed through a `typeof process` guard rather than read straight off the
+ * global: this module is host-only in intent, but `store.ts` imports it and the
+ * browser bundle imports `store.ts` for its row types, so the module body DOES
+ * get bundled for the browser. A bare `process.platform` there throws
+ * `ReferenceError: process is not defined` at first render — and it is the kind
+ * of failure that only shows up in the packaged app.
+ */
+const POSIX = typeof process === 'undefined' ? false : process.platform !== 'win32'
 
 /**
  * Create the directory a secret lives in, owner-only.
