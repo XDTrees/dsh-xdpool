@@ -408,6 +408,32 @@ function ChainEditor({
   onAddMember: () => void
   onDropMember: (modelId: string) => void
 }) {
+  /**
+   * The distinct owners in the roster, in first-seen order.
+   *
+   * First-seen rather than alphabetical so the groups follow the order the
+   * catalog itself reports — the pool lane first, as it is the one this plugin
+   * owns, then the scan channels, then the aggregate lane. Sorting by id would
+   * put "aggregate" at the top, which is the lane a reader is least likely to
+   * reach for first.
+   */
+  const owners = useMemo(() => {
+    const seen: string[] = []
+    for (const candidate of roster) {
+      if (!seen.includes(candidate.owner)) seen.push(candidate.owner)
+    }
+    return seen
+  }, [roster])
+  /**
+   * The group heading for one owner id.
+   *
+   * `workbuddy` is this plugin's own pool lane and gets the product name the
+   * cards use; every other owner IS a provider id, so it is printed as-is — the
+   * aggregate page and the picker already show those same spellings, and
+   * translating them here would create a third name for the same channel.
+   */
+  const ownerLabel = (owner: string): string =>
+    owner === 'workbuddy' ? (t?.('route.ownerPool') ?? 'XD Pool（WorkBuddy）') : owner
   return (
     <div className="dsm-xdpool-rt-editor">
       <div className="dsm-xdpool-rt-editorhead">
@@ -495,10 +521,28 @@ function ChainEditor({
           onChange={event => { onPick(event.target.value) }}
         >
           <option value="">{t?.('route.id') ?? 'Model id'}</option>
-          {roster.map(candidate => (
-            <option key={candidate.id} value={candidate.id}>
-              {candidate.id} — {candidate.name}
-            </option>
+          {/*
+            Grouped by CHANNEL, not a flat list.
+            
+            A pool with eleven scan channels plus the aggregate lane has well over
+            a hundred candidate ids, and a flat select makes the reader hunt for
+            "the Qoder one" by reading every row. The owner is already on each
+            candidate (`workbuddy` for a pool model, the provider id otherwise),
+            so the grouping costs nothing and the chooser becomes "which channel,
+            then which model" — the order the question is actually asked in.
+            
+            `optgroup` rather than nested selects: it is the native way to label a
+            group inside one dropdown, it needs no JS, and it degrades to a plain
+            list where the label is unsupported.
+          */}
+          {owners.map(owner => (
+            <optgroup key={owner} label={ownerLabel(owner)}>
+              {roster.filter(candidate => candidate.owner === owner).map(candidate => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.id} — {candidate.name}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         {/* An action, so it wears the action button. It used to borrow

@@ -1067,6 +1067,16 @@ export declare class WorkBuddyAccountPool {
    */
   private disabledIds;
   /**
+   * The account ids the store held after the last successful write.
+   *
+   * Read back on the next scan to say WHICH accounts left, not just how many.
+   * The list is written wholesale, so a scan that does not find an account
+   * deletes it — and that account's credential is then unrecoverable without a
+   * fresh sign-in (#117). `undefined` until the first write, so the first scan
+   * never reports every account as "leave".
+   */
+  private lastPersistedIds;
+  /**
    * Account ids the user threw out of the pool for good.
    *
    * Enforced BEFORE the credential is parsed: `scan()` skips a file whose
@@ -2302,11 +2312,24 @@ export declare class WorkBuddyCatalog {
   current(): readonly WorkBuddyModelInfo[];
   /**
    * The models DSH should actually offer, after applying the user's selection:
-   * disabled models are dropped, an explicit image list overrides the upstream
-   * capability flag, and a per-model budget caps the advertised window.
+   * disabled models are dropped, an explicit image list decides image support,
+   * and a per-model budget caps the advertised window.
    *
    * An absent `enabledModelIds` means "everything" — a fresh install with no
    * saved selection must not present an empty picker.
+   *
+   * IMAGE SUPPORT IS THE USER'S SET, NOT AN OR. The upstream flag is `true` for
+   * essentially every model of this vendor (measured: 15 of 16 on CN, 23 of 23
+   * on international), so `supportsImages || imageSet.has(id)` could only ever
+   * turn the flag ON — un-ticking the box in the card changed nothing, and the
+   * adapter kept advertising `['text','image']`. The checkbox existed and did
+   * not work, which is worse than not offering it.
+   *
+   * So when the user HAS saved an image selection, that set is the answer, in
+   * both directions. When they have not (undefined — a fresh install, or a
+   * config written before this fix), the upstream capability stands: silently
+   * disabling image input for everyone who never touched the switch would be a
+   * regression, and the absent case is exactly "no opinion".
    */
   visible(): readonly WorkBuddyModelInfo[];
   /** Replace the catalog and notify the adapter to rebuild its model list. */
@@ -4082,6 +4105,15 @@ export interface Config {
    * does not wipe what the automation already earned.
    */
   automationEarnings?: AutomationLedger;
+  /**
+   * Whether the shared 免密 free lane contributes models.
+   *
+   * Absent reads as OFF. It is the only lane that defaults off: it is a shared
+   * third-party endpoint with no credential of the user's own, so leaving it on
+   * dropped a group into the model picker that nothing in the UI could remove
+   * (the aggregate switch does not govern it — it is not an aggregate provider).
+   */
+  freeLane?: boolean;
 }
 /** One region's saved model selection. */
 export interface ModelSelectionConfig {

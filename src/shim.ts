@@ -1033,6 +1033,24 @@ function withBareModelId(raw: string, modelId: string): string {
     }
     const attempts: string[] = []
     let last: { kind: string; status: number; message: string } | undefined
+    /**
+     * Why the chain moved on from each member, in order.
+     *
+     * A chain hides its own machinery: the user sees one answer from an
+     * unspecified member, and when the answer is worse/different/slower than
+     * expected there is nothing on screen to explain it. The whole point of
+     * reading a fallback trace is answering "why did it switch, and where did it
+     * land" — so every skip records the member, the failure class and the wire
+     * status, and the finished turn logs the sequence once.
+     *
+     * Logged, not returned: the caller asked for a completion, and a response
+     * shape invented for diagnostics would break every client that parses it.
+     */
+    const switches: string[] = []
+    const noteSwitch = (member: string, kind: string, status: number): void => {
+      switches.push(`${member} → ${kind} (${String(status)})`)
+      logger?.warn?.(`dsh-xdpool: chain ${row.id} skipped ${member}: ${kind} (${String(status)}); trying next`)
+    }
     // The chain path had no conversation identity at all, which meant a combo
     // turn reached the gateway with no session headers and was refused with
     // 11128 in exactly the same way the single-model path was. Derived from the
@@ -1056,6 +1074,7 @@ function withBareModelId(raw: string, modelId: string): string {
             status: why.reason === 'cooling' ? 429 : 401,
             message: `member ${member.modelId} has no usable WorkBuddy account (${why.reason})`,
           }
+          noteSwitch(member.modelId, why.reason, last.status)
           continue
         }
         // Region-aware normalisation: a chain member belongs to this shim's
@@ -1083,15 +1102,18 @@ function withBareModelId(raw: string, modelId: string): string {
         if (result.kind === 'soft_rate') pool.penalize(account.id, parseRateLimitReset(result.message), member.modelId)
         else if (result.kind === 'session_dead') pool.penalizeCredentialDead(account.id)
         else if (result.kind === 'hard_credit') pool.penalizeExhausted(account.id)
+        noteSwitch(member.modelId, result.kind, result.status)
         continue
       }
       if (store === undefined || aggregate === undefined) {
         last = { kind: 'combo_config', status: 503, message: 'the aggregate lane is not available on this profile' }
+        noteSwitch(member.modelId, 'combo_config', 503)
         continue
       }
       const parsed = parseProviderModelId(member.modelId)
       if (parsed === null) {
         last = { kind: 'combo_config', status: 400, message: `member ${member.modelId} is not a valid provider model id` }
+        noteSwitch(member.modelId, 'combo_config', 400)
         continue
       }
       let resolved: ReturnType<typeof resolveAggregateProvider>
@@ -1103,6 +1125,7 @@ function withBareModelId(raw: string, modelId: string): string {
           status: 400,
           message: error instanceof Error ? error.message : String(error),
         }
+        noteSwitch(member.modelId, 'combo_config', 400)
         continue
       }
       const frames: string[] = []
@@ -1118,7 +1141,17 @@ function withBareModelId(raw: string, modelId: string): string {
           status: error instanceof AggregateError ? KIND_STATUS[error.kind] : 502,
           message: error instanceof Error ? error.message : String(error),
         }
+        noteSwitch(member.modelId, kind, last.status)
         continue
+      }
+      // A member answered. Say which one when the chain had to skip anything:
+      // the caller only sees the content, so without this line nobody can tell
+      // that the answer came from the third choice rather than the first.
+      if (switches.length > 0) {
+        logger?.info?.(
+          `dsh-xdpool: chain ${row.id} served by ${member.modelId} after skipping `
+            + `${String(switches.length)}/${String(members.length)}: ${switches.join('; ')}`,
+        )
       }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -1137,12 +1170,16 @@ function withBareModelId(raw: string, modelId: string): string {
     // as one model's 401.
     const kind = last?.kind ?? 'combo_empty'
     const status = last?.status ?? 503
+    // The trace goes in the message, not only the log: this is the one response
+    // where "which member failed with what" IS the answer the user needs, and
+    // sending them to a log file to find it is a worse trade than a long line.
+    const trace = switches.length === 0 ? '' : ` [${switches.join('; ')}]`
     writeOpenAIError(
       res,
       status,
       `combo_${kind}`,
       `chain ${row.id}: no member answered after ${attempts.length} [${attempts.join(' → ')}]`
-        + `: ${(last?.message ?? 'no member was reachable').slice(0, 300)}`,
+        + `: ${(last?.message ?? 'no member was reachable').slice(0, 300)}${trace}`,
     )
   }
   /**
