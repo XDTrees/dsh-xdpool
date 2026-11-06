@@ -815,10 +815,23 @@ function withBareModelId(raw: string, modelId: string): string {
     // registry publishes a model called `openai/gpt-4.1`.
     const body = withBareModelId(raw, parsed.modelId)
     const frames: string[] = []
+    /**
+     * One id per user request, so a retry across keys counts as ONE turn.
+     *
+     * The key-rotation loop inside the forwarder files each physical attempt, and
+     * they must share this id or the panel would report "3 turns" for one question
+     * that happened to trip a rate limit. Same spelling the pool lane uses.
+     */
+    const aggregateTurnId = randomBytes(8).toString('hex')
     try {
       await forwardAggregateStreamed(resolved, parsed.modelId, body, {
         signal,
         onData: payload => frames.push(payload),
+        // Filed by the forwarder, which is the only place that knows how each
+        // physical attempt ended.
+        ...usageRecorder === undefined
+          ? {}
+          : { usage: { recorder: usageRecorder, turnId: aggregateTurnId } },
       })
     } catch (error: unknown) {
       if (res.headersSent) {
@@ -1201,6 +1214,14 @@ function withBareModelId(raw: string, modelId: string): string {
         await forwardAggregateStreamed(resolved, parsed.modelId, withBareModelId(raw, parsed.modelId), {
           signal: memberSignal,
           onData: payload => frames.push(payload),
+          // A chain member on the aggregate side is still a physical call to a
+          // third-party vendor, so it belongs in the ledger under that vendor's
+          // name. Without this, a chain that answered through OpenCode would leave
+          // no trace at all — the same blindness that made the whole table read
+          // `国内版`.
+          ...usageRecorder === undefined
+            ? {}
+            : { usage: { recorder: usageRecorder, turnId: conversationKey ?? randomBytes(8).toString('hex') } },
         })
       } catch (error: unknown) {
         const kind = error instanceof AggregateError ? error.kind : 'server'
@@ -1516,6 +1537,7 @@ function withBareModelId(raw: string, modelId: string): string {
       // where `pool.acquire` found nothing, records NOTHING - under-reporting
       // one turn beats claiming a request that was never sent.
       usageRecorder?.record({
+        channel: 'workbuddy',
         region: region ?? 'cn',
         model: modelId ?? '(none)',
         account: account.label,
@@ -1764,6 +1786,7 @@ async function serveSuccessfulStream(
     recorded = true
     if (usage?.recorder === undefined) return
     usage.recorder.record({
+      channel: 'workbuddy',
       region: usage.region,
       model: usage.model,
       account: account.label,
@@ -1967,6 +1990,7 @@ async function recoverFromContextOverrun(options: RecoverOptions): Promise<Recov
       // below deliberately is NOT: that one is filed by the forwarder when the
       // stream ends, so filing it here too would count the same call twice.
       usage?.recorder.record({
+        channel: 'workbuddy',
         region: usage.region,
         model: usage.model,
         account: account.label,

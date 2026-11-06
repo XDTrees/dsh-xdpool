@@ -17,6 +17,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { createElement as h } from 'react'
 import { SIDEBAR_ROW_FIELD, readSidebarRow } from './sidebar-row.ts'
+import { DIST_OPTIONS, distHint, distLabel } from './distribution.ts'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings-plugins/client'
 import {
@@ -210,7 +211,6 @@ function formatCapacity(value: number | undefined): string {
  * the two cache-friendly extremes, then the two spreading modes. The row is
  * laid out one chip per mode, so this list length is also the column count.
  */
-const DIST_OPTIONS = ['sticky', 'priority', 'balanced', 'round-robin', 'expiry'] as const
 /**
  * The two supplier cards, in the order they are shown.
  *
@@ -342,21 +342,7 @@ function creditLeftOf(status: PoolWebStatus | undefined): string | undefined {
 }
 type DistTranslator = PoolCardInjected['t'] | undefined
 /** Localized name of one distribution mode. */
-function distLabel(option: PoolDistribution, t: DistTranslator): string {
-  if (option === 'sticky') return t?.('row.distSticky') ?? 'Per conversation'
-  if (option === 'priority') return t?.('row.distPriority') ?? 'Priority'
-  if (option === 'balanced') return t?.('row.distBalanced') ?? 'Balanced'
-  if (option === 'expiry') return t?.('row.distExpiry') ?? 'Expiring first'
-  return t?.('row.distRoundRobin') ?? 'Round-robin'
-}
 /** One-line explanation of what a mode does to caching and spend. */
-function distHint(option: PoolDistribution, t: DistTranslator): string {
-  if (option === 'sticky') return t?.('row.distStickyHint') ?? ''
-  if (option === 'priority') return t?.('row.distPriorityHint') ?? ''
-  if (option === 'balanced') return t?.('row.distBalancedHint') ?? ''
-  if (option === 'expiry') return t?.('row.distExpiryHint') ?? ''
-  return t?.('row.distRoundRobinHint') ?? ''
-}
 /** Pick the right promotion chip for a model. */
 /** One model's draft state while the card holds unsaved edits. */
 interface ModelDraftEntry {

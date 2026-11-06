@@ -246,7 +246,42 @@ export interface ProviderSetting {
    * one vendor that WAS configured indistinguishable from the rest.
    */
   enabled?: boolean
+  /**
+   * The FIRST usable key, kept as the single-key spelling.
+   *
+   * Almost every provider needs one key, and a user pasting one must not have to
+   * learn an array to do it. This field and {@link apiKeys} are kept in step by
+   * `updateProviderSetting`: writing `apiKey` sets a one-entry list, and writing
+   * `apiKeys` mirrors its first entry back here. Readers therefore do not have to
+   * know which spelling a config file happens to hold.
+   */
   apiKey?: string
+  /**
+   * Every key this provider may rotate through.
+   *
+   * The pool has always rotated accounts, but a third-party vendor could only
+   * ever hold ONE key, so "account usage" (priority / round-robin / balanced …)
+   * had nothing to distribute over and was not offered on those cards. A vendor
+   * with several keys on one account — which is how most rate limits are actually
+   * dodged — could not express that at all.
+   *
+   * The first entry is the preferred one; the rest are alternates in order.
+   * Absent or empty means "no key configured", which is the same state `apiKey`
+   * has always described.
+   */
+  apiKeys?: readonly string[]
+  /**
+   * How requests spread across those keys.
+   *
+   * The same five strategies the pool lane offers, and deliberately the same
+   * vocabulary rather than a second set of names for one idea. Absent means
+   * `priority`: use the preferred key until the vendor refuses it, then move on.
+   *
+   * Only meaningful when {@link apiKeys} holds more than one entry — with a single
+   * key there is nothing to distribute over, which is why the card hides the row
+   * in that case.
+   */
+  distribution?: string
   /** User override for the base URL, for providers whose host is per-deployment. */
   baseUrl?: string
   /**

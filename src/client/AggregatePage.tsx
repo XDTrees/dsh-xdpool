@@ -34,6 +34,7 @@ import {
 } from '../status-paths.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
 import { AGGREGATE_CARD_CSS } from './styles.ts'
+import { DIST_OPTIONS, distLabel } from './distribution.ts'
 import { BrandTile } from './brand-tile.tsx'
 import { channelIcon, channelInitials } from './channel-icons.ts'
 import { providerIcon } from './provider-icons.ts'
@@ -106,6 +107,15 @@ const MODEL_CHOOSER_THRESHOLD = 8
 interface ProviderDraft {
   apiKey: string
   baseUrl: string
+  /**
+   * A new key being appended to a vendor that already holds one.
+   *
+   * The read route never echoes a key back — `aggregateStatusOf` reports only
+   * `keyCount` — so nothing here can show what is stored. That rules out an
+   * editable list and makes appending the only honest shape: this field takes one
+   * key, and saving adds it after whatever is already there.
+   */
+  extraKey: string
 }
 export function AggregatePage({ t }: AggregatePageProps) {
   const [status, setStatus] = useState<PoolWebAggregateStatus | undefined>(undefined)
@@ -479,9 +489,19 @@ export function AggregatePage({ t }: AggregatePageProps) {
                     setOpened(prev => ({ ...prev, [provider.id]: prev[provider.id] !== true }))
                   }}
                   onDraft={(next) => { setDrafts(prev => ({ ...prev, [provider.id]: next })) }}
+                  onStrategy={(strategy) => {
+                    void patch({ kind: 'provider', providerId: provider.id, distribution: strategy })
+                  }}
                   onSave={async () => {
                     const draft = drafts[provider.id]
                     if (draft === undefined) return
+                    // The appended key joins whatever is stored. The host never
+                    // echoes keys back, so this sends ONLY the new key and asks the
+                    // host to append it — sending a whole list would overwrite the
+                    // stored keys with placeholders the card cannot know.
+                    const appending = draft.extraKey.trim() === ''
+                      ? {}
+                      : { appendApiKey: draft.extraKey.trim() }
                     const ok = await patch({
                       kind: 'provider',
                       providerId: provider.id,
@@ -489,6 +509,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
                       // "store an empty key" — clearing has its own action.
                       ...draft.apiKey === '' ? {} : { apiKey: draft.apiKey },
                       ...draft.baseUrl === '' ? {} : { baseUrl: draft.baseUrl },
+                      ...appending,
                     })
                     if (ok) {
                       setDrafts(prev => {
@@ -578,6 +599,7 @@ function ProviderRow({
   onOpen,
   onDraft,
   onSave,
+  onStrategy,
   onClear,
   onToggle,
   onTest,
@@ -618,6 +640,14 @@ function ProviderRow({
   onOpen: () => void
   onDraft: (next: ProviderDraft) => void
   onSave: () => Promise<void>
+  /**
+   * Commit one usage strategy immediately.
+   *
+   * Not folded into Save: it is a radio, and a radio that waits for a separate
+   * button is a radio the user thinks did nothing. It sends only `distribution`,
+   * so it cannot disturb the keys.
+   */
+  onStrategy: (strategy: string) => void
   onClear: () => Promise<void>
   onToggle: (enabled: boolean) => void
   onTest: () => void
@@ -880,7 +910,7 @@ function ProviderRow({
                   autoComplete="off"
                   value={draft?.apiKey ?? ''}
                   placeholder={t?.('agg.keyPlaceholder') ?? 'Paste the key'}
-                  onChange={event => { onDraft({ apiKey: event.target.value, baseUrl: draft?.baseUrl ?? '' }) }}
+                  onChange={event => { onDraft({ apiKey: event.target.value, baseUrl: draft?.baseUrl ?? '', extraKey: draft?.extraKey ?? '' }) }}
                 />
               </label>
               <label className="dsm-xdpool-agg-field">
@@ -889,9 +919,55 @@ function ProviderRow({
                   type="text"
                   value={draft?.baseUrl ?? provider.baseUrl ?? ''}
                   placeholder={t?.('agg.baseUrlPlaceholder') ?? 'Blank uses the default'}
-                  onChange={event => { onDraft({ apiKey: draft?.apiKey ?? '', baseUrl: event.target.value }) }}
+                  onChange={event => { onDraft({ apiKey: draft?.apiKey ?? '', baseUrl: event.target.value, extraKey: draft?.extraKey ?? '' }) }}
                 />
               </label>
+            </div>
+          : null}
+        {/*
+          Append a key, and (once there are two) the strategy that spreads over
+          them.
+
+          Both are gated on `keyCount`, which is all the host reports: the keys
+          themselves never come back, so this can only add or drop by position. A
+          vendor holding ONE key shows neither control — with a single key there is
+          nothing to distribute over, and a strategy switch with one option is an
+          inert control that reads like a promise.
+
+          That gating is the whole point of not copying the pool's "account usage"
+          row onto every card.
+        */}
+        {provider.authKind === 'apiKey' && provider.keyCount >= 1
+          ? <div className="dsm-xdpool-agg-fields">
+              <label className="dsm-xdpool-agg-field">
+                <span>
+                  {t?.('agg.extraKey', { count: provider.keyCount })
+                    ?? `Add another key (${String(provider.keyCount)} stored)`}
+                </span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={draft?.extraKey ?? ''}
+                  placeholder={t?.('agg.extraKeyPlaceholder') ?? 'Appended after the existing ones'}
+                  onChange={event => { onDraft({ apiKey: draft?.apiKey ?? '', baseUrl: draft?.baseUrl ?? '', extraKey: event.target.value }) }}
+                />
+              </label>
+              {provider.keyCount > 1
+                ? <label className="dsm-xdpool-agg-field">
+                    <span>{t?.('row.distTitle') ?? 'Account usage'}</span>
+                    <select
+                      value={provider.distribution ?? 'priority'}
+                      disabled={busy}
+                      onChange={event => { onStrategy(event.target.value) }}
+                    >
+                      {DIST_OPTIONS.map(option => (
+                        <option key={option} value={option}>
+                          {distLabel(option, t)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                : null}
             </div>
           : null}
         {/* The switch is separate from Save on purpose. Saving a key is what puts

@@ -28,6 +28,8 @@ import { describe, expect, it } from 'vitest'
 const ROOT = join(import.meta.dirname, '..')
 const styles = readFileSync(join(ROOT, 'src', 'client', 'styles.ts'), 'utf8')
 const card = readFileSync(join(ROOT, 'src', 'client', 'PoolCard.tsx'), 'utf8')
+/** The shared mode vocabulary, used by both the pool card and the key cards. */
+const distribution = readFileSync(join(ROOT, 'src', 'client', 'distribution.ts'), 'utf8')
 const locales = readFileSync(join(ROOT, 'src', 'client', 'locales.ts'), 'utf8')
 
 /** The body of one CSS rule, or '' when the selector is absent. */
@@ -42,7 +44,11 @@ const MODES = ['sticky', 'priority', 'balanced', 'round-robin', 'expiry'] as con
 
 describe('the mode picker has room for every mode it offers', () => {
   it('offers exactly the modes the pool implements', () => {
-    const declaration = card.slice(card.indexOf('const DIST_OPTIONS'))
+    // The list and the labels moved to `client/distribution.ts` when the aggregate
+    // page started offering the same five strategies for API keys. ONE vocabulary
+    // in one place — a second copy is how the two lanes would drift into naming
+    // the same idea differently.
+    const declaration = distribution.slice(distribution.indexOf('export const DIST_OPTIONS'))
     const list = declaration.slice(0, declaration.indexOf(']'))
     for (const mode of MODES) {
       expect(list, `${mode} must be offered`).toContain(`'${mode}'`)
@@ -175,10 +181,16 @@ describe('every mode is labelled in both languages', () => {
   })
 
   it('labels the modes through helpers, not an inline ternary chain', () => {
-    // The four-way nested ternary that used to live in the render body is how
-    // the fourth mode got added without the grid being revisited.
-    expect(card).toContain('function distLabel(')
-    expect(card).toContain('function distHint(')
+    // The four-way nested ternary that used to live in the render body is how the
+    // fourth mode got added without the grid being revisited. The helpers now live
+    // in `distribution.ts` (shared with the aggregate page's key strategies), so
+    // the card IMPORTS them rather than defining them.
+    expect(distribution).toContain('export function distLabel(')
+    expect(distribution).toContain('export function distHint(')
+    expect(card).toContain("from './distribution.ts'")
+    // And the card must not have grown its own copy back.
+    expect(card).not.toContain('function distLabel(')
+    expect(card).not.toContain('function distHint(')
     expect(card).not.toContain("option === 'sticky'\n                            ? (t?.('row.distSticky')")
   })
 })

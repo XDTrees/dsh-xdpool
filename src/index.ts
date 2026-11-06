@@ -1372,6 +1372,9 @@ function canonicalJson(value: unknown): string {
         await updateProviderSetting(patch.providerId, {
           ...patch.enabled === undefined ? {} : { enabled: patch.enabled },
           ...patch.apiKey === undefined ? {} : { apiKey: patch.apiKey },
+          ...patch.apiKeys === undefined ? {} : { apiKeys: patch.apiKeys },
+          ...patch.appendApiKey === undefined ? {} : { appendApiKey: patch.appendApiKey },
+          ...patch.distribution === undefined ? {} : { distribution: patch.distribution },
           ...patch.baseUrl === undefined ? {} : { baseUrl: patch.baseUrl },
           ...patch.models === undefined ? {} : { models: patch.models },
         })

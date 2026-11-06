@@ -283,6 +283,35 @@ export type PoolWebAggregatePatch =
       providerId: string
       enabled?: boolean
       apiKey?: string
+      /**
+       * Every key, preferred first — replaces whatever was stored.
+       *
+       * A REPLACEMENT rather than a delta, for the same reason `models` is: the
+       * card sends the whole list it is showing, and a delta would let two open
+       * tabs interleave into a set neither of them chose. An empty array clears
+       * every key.
+       */
+      apiKeys?: readonly string[]
+      /**
+       * Append ONE key to the stored list.
+       *
+       * The card cannot send `apiKeys`, because the read route never echoes keys
+       * back — it reports only `keyCount`. A replacement list from the browser
+       * would therefore have to be built from placeholders, and would overwrite
+       * every key the user cannot see. This field says "add this one after the
+       * ones already stored", which is the only instruction the card can honestly
+       * give.
+       *
+       * Ignored when it duplicates a stored key.
+       */
+      appendApiKey?: string
+      /**
+       * How requests spread across those keys.
+       *
+       * Same vocabulary as the pool lane (`priority`, `round-robin`, `balanced`,
+       * `sticky`, `expiry`); unknown values are rejected rather than stored.
+       */
+      distribution?: string
       baseUrl?: string
       /**
        * The chosen model set, replacing whatever this provider exposed before.
@@ -349,6 +378,23 @@ export interface PoolWebAggregateProvider {
   discovered: boolean
   /** When the provider was first configured. */
   addedAt?: string
+  /**
+   * How many keys this vendor holds.
+   *
+   * `0` for a keyless vendor, `1` for the ordinary case, more when the user
+   * pasted alternates. The card needs the COUNT rather than the keys themselves —
+   * keys never leave the host — because "account usage" only means anything when
+   * there is something to distribute over: with one key it would be a switch with
+   * a single option and no effect, so the card hides it.
+   */
+  keyCount: number
+  /**
+   * The usage strategy in force, when the user has chosen one.
+   *
+   * Absent means the documented default (priority). Shares the pool lane's
+   * vocabulary so both kinds of card present one idea one way.
+   */
+  distribution?: string
 }
 /** The document {@link POOL_AGGREGATE_PATH} answers with. */
 export interface PoolWebAggregateStatus {
@@ -1083,6 +1129,14 @@ export interface PoolWebAutomationEarnings {
 export type PoolRegion = 'cn' | 'global'
 /** How the pool spreads requests across its accounts. */
 export type PoolDistribution = 'priority' | 'round-robin' | 'balanced' | 'sticky' | 'expiry'
+/** The five strategies, as a value, so a request body can be validated against it. */
+export const POOL_DISTRIBUTIONS: readonly PoolDistribution[] = Object.freeze([
+  'priority', 'round-robin', 'balanced', 'sticky', 'expiry',
+])
+/** True when `value` names one of the five documented strategies. */
+export function isDistributionStrategy(value: string): value is PoolDistribution {
+  return (POOL_DISTRIBUTIONS as readonly string[]).includes(value)
+}
 /**
  * The schedule every automation job falls back to.
  *

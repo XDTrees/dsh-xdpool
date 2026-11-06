@@ -1549,6 +1549,35 @@ type PoolWebAggregatePatch = {
   providerId: string;
   enabled?: boolean;
   apiKey?: string;
+  /**
+   * Every key, preferred first — replaces whatever was stored.
+   *
+   * A REPLACEMENT rather than a delta, for the same reason `models` is: the
+   * card sends the whole list it is showing, and a delta would let two open
+   * tabs interleave into a set neither of them chose. An empty array clears
+   * every key.
+   */
+  apiKeys?: readonly string[];
+  /**
+   * Append ONE key to the stored list.
+   *
+   * The card cannot send `apiKeys`, because the read route never echoes keys
+   * back — it reports only `keyCount`. A replacement list from the browser
+   * would therefore have to be built from placeholders, and would overwrite
+   * every key the user cannot see. This field says "add this one after the
+   * ones already stored", which is the only instruction the card can honestly
+   * give.
+   *
+   * Ignored when it duplicates a stored key.
+   */
+  appendApiKey?: string;
+  /**
+   * How requests spread across those keys.
+   *
+   * Same vocabulary as the pool lane (`priority`, `round-robin`, `balanced`,
+   * `sticky`, `expiry`); unknown values are rejected rather than stored.
+   */
+  distribution?: string;
   baseUrl?: string;
   /**
    * The chosen model set, replacing whatever this provider exposed before.
@@ -1621,6 +1650,23 @@ interface PoolWebAggregateProvider {
   discovered: boolean;
   /** When the provider was first configured. */
   addedAt?: string;
+  /**
+   * How many keys this vendor holds.
+   *
+   * `0` for a keyless vendor, `1` for the ordinary case, more when the user
+   * pasted alternates. The card needs the COUNT rather than the keys themselves —
+   * keys never leave the host — because "account usage" only means anything when
+   * there is something to distribute over: with one key it would be a switch with
+   * a single option and no effect, so the card hides it.
+   */
+  keyCount: number;
+  /**
+   * The usage strategy in force, when the user has chosen one.
+   *
+   * Absent means the documented default (priority). Shares the pool lane's
+   * vocabulary so both kinds of card present one idea one way.
+   */
+  distribution?: string;
 }
 /** The document {@link POOL_AGGREGATE_PATH} answers with. */
 interface PoolWebAggregateStatus {
@@ -2477,7 +2523,42 @@ interface ProviderSetting {
    * one vendor that WAS configured indistinguishable from the rest.
    */
   enabled?: boolean;
+  /**
+   * The FIRST usable key, kept as the single-key spelling.
+   *
+   * Almost every provider needs one key, and a user pasting one must not have to
+   * learn an array to do it. This field and {@link apiKeys} are kept in step by
+   * `updateProviderSetting`: writing `apiKey` sets a one-entry list, and writing
+   * `apiKeys` mirrors its first entry back here. Readers therefore do not have to
+   * know which spelling a config file happens to hold.
+   */
   apiKey?: string;
+  /**
+   * Every key this provider may rotate through.
+   *
+   * The pool has always rotated accounts, but a third-party vendor could only
+   * ever hold ONE key, so "account usage" (priority / round-robin / balanced …)
+   * had nothing to distribute over and was not offered on those cards. A vendor
+   * with several keys on one account — which is how most rate limits are actually
+   * dodged — could not express that at all.
+   *
+   * The first entry is the preferred one; the rest are alternates in order.
+   * Absent or empty means "no key configured", which is the same state `apiKey`
+   * has always described.
+   */
+  apiKeys?: readonly string[];
+  /**
+   * How requests spread across those keys.
+   *
+   * The same five strategies the pool lane offers, and deliberately the same
+   * vocabulary rather than a second set of names for one idea. Absent means
+   * `priority`: use the preferred key until the vendor refuses it, then move on.
+   *
+   * Only meaningful when {@link apiKeys} holds more than one entry — with a single
+   * key there is nothing to distribute over, which is why the card hides the row
+   * in that case.
+   */
+  distribution?: string;
   /** User override for the base URL, for providers whose host is per-deployment. */
   baseUrl?: string;
   /**
@@ -2597,60 +2678,6 @@ interface RelaySetting {
   models?: string[];
 }
 //#endregion
-//#region src/aggregate.d.ts
-/** Registry `format` → the wire vocabulary this module speaks. */
-type AggregateWire = 'chat' | 'responses' | 'messages';
-/** One model the aggregate lane offers. */
-interface AggregateModelRow {
-  /** Composite id: `providerId/modelId`, which is also the picker id. */
-  id: string;
-  /** Display name: the provider's own name plus the row's label. */
-  name: string;
-  providerId: string;
-  modelId: string;
-  contextWindow: number;
-  maxOutputTokens: number;
-  supportsImages: boolean;
-  wire: AggregateWire;
-  /** `static` from the registry, `discovered` from a live listing. */
-  source: 'static' | 'discovered';
-}
-/** One stored aggregate row set, refreshed on change, for the shim and adapter. */
-declare class AggregateCatalog {
-  private readonly read;
-  private readonly poolRows;
-  private rows;
-  private chainRows;
-  /**
-   * @param read    The settings document.
-   * @param poolRows The pool's own rows, needed only to resolve a chain member
-   *   that names a WorkBuddy model. A chain may mix pool models with aggregate
-   *   ones, so without this a perfectly valid chain would lose its pool half.
-   */
-  constructor(read: () => AggregateStore | Promise<AggregateStore>, poolRows?: () => readonly WorkBuddyModelInfo[]);
-  /**
-   * Every row this catalog offers: third-party rows first, then chain rows.
-   *
-   * Chains come last so a picker listing stays readable — a chain is a
-   * convenience over models the user already has listed, not a new vendor.
-   */
-  current(): readonly (AggregateModelRow | ComboModelRow)[];
-  /** Only the third-party rows, which is what the aggregate resolver needs. */
-  providerRows(): readonly AggregateModelRow[];
-  /** Only the chain rows. */
-  comboRows(): readonly ComboModelRow[];
-  /** Re-read the store and notify listeners when the roster actually changed. */
-  refresh(): Promise<readonly (AggregateModelRow | ComboModelRow)[]>;
-  private listeners;
-  onChange(listener: () => void): () => void;
-  /** One third-party row by composite id, or undefined. */
-  find(id: string): AggregateModelRow | undefined;
-  /** One chain row by combo id, or undefined. */
-  findCombo(id: string): ComboModelRow | undefined;
-  /** Whether any provider or chain is serving anything right now. */
-  hasRows(): boolean;
-}
-//#endregion
 //#region src/stats.d.ts
 /**
  * Per-call usage accounting for the chat path.
@@ -2691,7 +2718,18 @@ interface TokenUsage {
 }
 /** One upstream HTTP round trip, successful or not. */
 interface UsageCall {
-  /** Which gateway served it: `cn` or `global`. */
+  /**
+   * Which CHANNEL served the call: `workbuddy`, `free`, or a provider id.
+   *
+   * Until this existed the ledger could only say `地区` (domestic /
+   * international), which is a property of the WorkBuddy pool and of nothing
+   * else. Every row therefore read `国内版` even when the call had gone to a
+   * third-party vendor or to the keyless lane, and the only honest reading of the
+   * table was "the other channels are not recorded at all" — which was true:
+   * only the pool and the free lane ever called `record`.
+   */
+  channel: string;
+  /** Which WorkBuddy gateway served it: `cn` or `global`; empty for other lanes. */
   region: string;
   /** The model id the request asked for. */
   model: string;
@@ -2725,6 +2763,14 @@ interface UsageCall {
 }
 /** One row of the per-model aggregate. */
 interface UsageRow {
+  /**
+   * The channel this row is about: `workbuddy`, `free`, or a provider id.
+   *
+   * Part of the grouping key, not just a label. Two vendors can publish the same
+   * model id, and the pool and the free lane can both serve `glm-5.3` — summing
+   * them into one row would attribute a third-party vendor's tokens to WorkBuddy.
+   */
+  channel: string;
   region: string;
   model: string;
   /** Physical upstream calls. */
@@ -2750,6 +2796,14 @@ interface UsageRow {
 interface UsageAccountRow {
   /** Display label of the account, as the pool prints it. */
   account: string;
+  /**
+   * The channel this account belongs to.
+   *
+   * Part of the grouping key: a provider's key and a pool account are different
+   * things even when both are labelled, and `free` is not a WorkBuddy account at
+   * all.
+   */
+  channel: string;
   /** Region the account belongs to; an account serves one gateway. */
   region: string;
   /** Physical calls this account served. */
@@ -2859,6 +2913,60 @@ declare class UsageRecorder {
    * calls apart is so that number stays honest in every place it appears.
    */
   private days;
+}
+//#endregion
+//#region src/aggregate.d.ts
+/** Registry `format` → the wire vocabulary this module speaks. */
+type AggregateWire = 'chat' | 'responses' | 'messages';
+/** One model the aggregate lane offers. */
+interface AggregateModelRow {
+  /** Composite id: `providerId/modelId`, which is also the picker id. */
+  id: string;
+  /** Display name: the provider's own name plus the row's label. */
+  name: string;
+  providerId: string;
+  modelId: string;
+  contextWindow: number;
+  maxOutputTokens: number;
+  supportsImages: boolean;
+  wire: AggregateWire;
+  /** `static` from the registry, `discovered` from a live listing. */
+  source: 'static' | 'discovered';
+}
+/** One stored aggregate row set, refreshed on change, for the shim and adapter. */
+declare class AggregateCatalog {
+  private readonly read;
+  private readonly poolRows;
+  private rows;
+  private chainRows;
+  /**
+   * @param read    The settings document.
+   * @param poolRows The pool's own rows, needed only to resolve a chain member
+   *   that names a WorkBuddy model. A chain may mix pool models with aggregate
+   *   ones, so without this a perfectly valid chain would lose its pool half.
+   */
+  constructor(read: () => AggregateStore | Promise<AggregateStore>, poolRows?: () => readonly WorkBuddyModelInfo[]);
+  /**
+   * Every row this catalog offers: third-party rows first, then chain rows.
+   *
+   * Chains come last so a picker listing stays readable — a chain is a
+   * convenience over models the user already has listed, not a new vendor.
+   */
+  current(): readonly (AggregateModelRow | ComboModelRow)[];
+  /** Only the third-party rows, which is what the aggregate resolver needs. */
+  providerRows(): readonly AggregateModelRow[];
+  /** Only the chain rows. */
+  comboRows(): readonly ComboModelRow[];
+  /** Re-read the store and notify listeners when the roster actually changed. */
+  refresh(): Promise<readonly (AggregateModelRow | ComboModelRow)[]>;
+  private listeners;
+  onChange(listener: () => void): () => void;
+  /** One third-party row by composite id, or undefined. */
+  find(id: string): AggregateModelRow | undefined;
+  /** One chain row by combo id, or undefined. */
+  findCombo(id: string): ComboModelRow | undefined;
+  /** Whether any provider or chain is serving anything right now. */
+  hasRows(): boolean;
 }
 //#endregion
 //#region src/channel-lane.d.ts

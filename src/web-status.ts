@@ -27,10 +27,11 @@ import type { UsageSummary } from './stats.ts'
 import { isAutomationJobKind, type AutomationRunSummary, type AutomationStatus } from './scheduler.ts'
 import { hasModelsListing, isProviderId } from './providers.ts'
 import { PROVIDER_NOTES_ZH } from './provider-notes-zh.ts'
-import { listProviderStates, providerEnabled, type AggregateStore } from './store.ts'
+import { listProviderStates, providerApiKeys, providerEnabled, type AggregateStore } from './store.ts'
 import { modelChoicesFor } from './aggregate.ts'
 import { isFreeLane } from './free-catalog.ts'
 import {
+  isDistributionStrategy,
   POOL_ACCOUNT_DISABLE_PATH,
   POOL_ACCOUNT_IGNORE_PATH,
   POOL_ACCOUNT_PREFER_PATH,
@@ -584,7 +585,7 @@ function parseAggregatePatch(body: Record<string, unknown>): PoolWebAggregatePat
   if (kind !== 'provider') return undefined
   const providerId = trimmed(body['providerId'])
   if (!isProviderId(providerId)) return undefined
-  const patch: { kind: 'provider'; providerId: string; enabled?: boolean; apiKey?: string; baseUrl?: string; models?: readonly string[] } = {
+  const patch: { kind: 'provider'; providerId: string; enabled?: boolean; apiKey?: string; apiKeys?: readonly string[]; appendApiKey?: string; distribution?: string; baseUrl?: string; models?: readonly string[] } = {
     kind: 'provider',
     providerId,
   }
@@ -592,6 +593,35 @@ function parseAggregatePatch(body: Record<string, unknown>): PoolWebAggregatePat
   // An empty key is a CLEARING action, not an empty value — see
   // `updateProviderSetting`, which drops the field rather than storing `''`.
   if (typeof body['apiKey'] === 'string') patch.apiKey = body['apiKey']
+  // The multi-key form. Normalised with the same rule as `models`: trimmed,
+  // de-duplicated, blanks dropped. An EMPTY array is a real instruction — it
+  // clears every key — so it must survive as an empty array rather than being
+  // treated as "field absent". The ordering is preserved because the first key is
+  // the preferred one and the rest are the alternates in turn.
+  if (Array.isArray(body['apiKeys'])) {
+    const seen = new Set<string>()
+    const apiKeys: string[] = []
+    for (const raw of body['apiKeys']) {
+      if (typeof raw !== 'string') continue
+      const key = raw.trim()
+      if (key === '' || seen.has(key)) continue
+      seen.add(key)
+      apiKeys.push(key)
+    }
+    patch.apiKeys = apiKeys
+  }
+  // Which strategy spreads requests over those keys. Validated against the same
+  // vocabulary the pool lane uses, so an unknown value is a 400 rather than a
+  // stored string nothing reads.
+  if (typeof body['distribution'] === 'string') {
+    const strategy = body['distribution'].trim()
+    if (!isDistributionStrategy(strategy)) return undefined
+    patch.distribution = strategy
+  }
+  // Append-only key addition. The card cannot see stored keys — the read route
+  // reports only `keyCount` — so it can ask for one more but can never send a
+  // whole list without overwriting keys it does not know.
+  if (typeof body['appendApiKey'] === 'string') patch.appendApiKey = body['appendApiKey']
   if (typeof body['baseUrl'] === 'string') patch.baseUrl = body['baseUrl']
   // The chosen model set. It is accepted as an array of strings and normalised
   // here — trimmed, de-duplicated, empties dropped — because this body arrives
@@ -688,6 +718,12 @@ export function aggregateStatusOf(
       // all and is simply serving what the fetch returned.
       discovered: (setting.discovered?.length ?? 0) > 0,
       ...setting.addedAt === undefined ? {} : { addedAt: setting.addedAt },
+      // The COUNT only — the keys themselves never leave the host. The card uses
+      // it to decide whether "account usage" is even meaningful: with one key
+      // there is nothing to distribute over, so that row stays hidden rather than
+      // showing a switch that cannot do anything.
+      keyCount: providerApiKeys(setting).length,
+      ...setting.distribution === undefined ? {} : { distribution: setting.distribution },
     })
   }
   return {
