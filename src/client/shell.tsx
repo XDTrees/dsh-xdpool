@@ -304,13 +304,20 @@ export function PoolShell({
       {hero === undefined ? null : hero}
       <div className="dsm-xdpool-body">{children}</div>
       {/*
-        The group invite, as a dialog over the card rather than a new tab.
+        The group invite, as a dialog over the WHOLE viewport rather than a new tab.
 
-        Rendered last and inside the shell so it is positioned against the card
-        (`.dsm-xdpool-shell` is the containing block), which keeps it off the
-        host dialog's own chrome. The overlay swallows clicks on itself only —
-        the panel stops propagation — so clicking the dim area closes and
-        clicking the code does not.
+        It used to be `position:absolute; inset:0` against `.dsm-xdpool-shell`, on the
+        reasoning that the shell is the card and the overlay should not cover the
+        host's chrome. That reasoning was wrong in practice: the shell is a column of
+        every panel on the page, so `inset:0` spanned the page's ENTIRE scroll height
+        and `align-items:center` put the dialog halfway down it — far below the
+        button that opened it, and off-screen on a long page. The user reported
+        exactly that ("一直在最底部出现不直观").
+
+        `position:fixed` centres it in the VIEWPORT, which is what a modal means and
+        what makes it appear next to the click regardless of scroll position. The
+        overlay still swallows clicks on itself only — the panel stops propagation —
+        so clicking the dim area closes and clicking the code does not.
       */}
       {!groupOpen ? null : (
         <div
