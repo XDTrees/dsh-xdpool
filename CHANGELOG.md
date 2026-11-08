@@ -1,6 +1,12 @@
 # Changelog
 本项目的所有重要变更都会记录在此文件。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+## 2.6.4 — postinstall 真的会跑了
+
+2.6.3 的修复方向是对的，但  的改动在合并时丢了：`postinstall` 没挂上，`scripts/` 也没进 `files`。结果是 npm 上的 2.6.3 依然缺 peer 依赖，靠的是此前手动建的 junction。
+
+现在两者都补齐，并核对 `npm pack` 的内容确实包含 `scripts/link-host-peers.mjs`。
+
 ## 2.6.3 — 修掉 2.6.2 装上后插件起不来的问题
 
 > 2.6.2 从 npm 安装后，插件导入失败（`Cannot find package '@earendil-works/pi-ai'`），
