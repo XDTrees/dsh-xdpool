@@ -91,6 +91,21 @@ function locate(name) {
   }
 }
 
+/**
+ * When to ENFORCE.
+ *
+ * This runs on `postinstall` of the published package, where a missing peer really does
+ * mean a plugin that cannot load — and it must fail loudly there. But the same script also
+ * runs when someone installs the repository for development or CI, where the host does not
+ * exist and the peers are resolved from `devDependencies` instead. Failing there would
+ * break every fresh clone and every pipeline for a condition that is not a problem.
+ *
+ * The two cases are told apart by whether this is a source checkout: `src/` ships in the
+ * repository and not in the tarball (`files` lists `lib`, `vendor`, `scripts`…).
+ */
+const IS_SOURCE_CHECKOUT = existsSync(join(PACKAGE_ROOT, 'src'))
+const ENFORCE = !IS_SOURCE_CHECKOUT
+
 const linked = []
 const missing = []
 for (const name of peerNames()) {
@@ -123,16 +138,27 @@ if (linked.length > 0) {
   for (const line of linked) process.stdout.write(`  ${line}\n`)
 }
 if (missing.length > 0) {
+  const where = IS_SOURCE_CHECKOUT
+    ? 'a source checkout, so the host is not expected to be present'
+    : 'an installed package, where a missing peer prevents the plugin from loading'
   process.stderr.write(
-    `dsh-xdpool: could not satisfy ${String(missing.length)} peer dependency(ies):\n`
-    + missing.map(name => `  ${name}\n`).join('')
-    + 'The plugin will fail to load without them. Install them into this profile, or set\n'
-    + 'DSH_HOST_ROOT to the directory containing node_modules.\n',
+    `dsh-xdpool: could not satisfy ${String(missing.length)} peer dependency(ies) `
+    + `(${where}):\n`
+    + missing.map(name => `  ${name}\n`).join(''),
   )
-  // `process.exitCode = 1` alone is not enough: the self-check below runs `await import`,
-  // and an unhandled resolution there would overwrite the code. Returning early keeps the
-  // failure authoritative.
-  process.exit(1)
+  if (ENFORCE) {
+    process.stderr.write(
+      'The plugin will fail to load without them. Install them into this profile, or set\n'
+      + 'DSH_HOST_ROOT to the directory containing node_modules.\n',
+    )
+    // Hard failure on purpose: a silently skipped link is what produced a package that
+    // installed cleanly and then could not load at all.
+    process.exit(1)
+  }
+  // A source checkout keeps going: `devDependencies` provide these for build and test,
+  // and CI has no harness to link against. Failing here would break the pipeline for a
+  // condition that is not a defect.
+  process.stdout.write('dsh-xdpool: continuing — this looks like a development checkout\n')
 } else {
   /**
    * Self-check: confirm every peer RESOLVES from the package root.
@@ -160,9 +186,12 @@ if (missing.length > 0) {
       `dsh-xdpool: ${String(unresolved.length)} peer dependency(ies) still do not resolve:\n`
       + unresolved.map(name => `  ${name}\n`).join(''),
     )
-    process.exit(1)
+    // Same split as above: fatal for an installed package, informational in a checkout.
+    if (ENFORCE) process.exit(1)
+    process.stdout.write('dsh-xdpool: continuing — this looks like a development checkout\n')
+  } else {
+    process.stdout.write('dsh-xdpool: all peer dependencies resolve; the build should load\n')
   }
-  process.stdout.write('dsh-xdpool: all peer dependencies resolve; the build should load\n')
 }
 
 // Keep the unused helper referenced so a tree-shaker cannot hide it if this file is ever
