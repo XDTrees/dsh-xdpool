@@ -225,7 +225,7 @@ function combosStatusOf(
 import { WorkBuddyScheduler, type AutomationJobKind, type AutomationLedger, type AutomationOptions } from './scheduler.ts'
 import { channelListableAsRows, createWorkBuddyShim, type WorkBuddyShim } from './shim.ts'
 import { createChannelLane, type ChannelLaneLlm } from './channel-lane.ts'
-import { readCreditSpend } from './credit-report.ts'
+import { backfillUsageFromLedger, readCreditSpend } from './credit-report.ts'
 import { ratesFor, type CreditRates } from './credits.ts'
 import { createPoolRelay, newRelayKey, relayDocumentOf, RELAY_DEFAULT_PORT, RELAY_HOSTS, type RelaySettings } from './relay.ts'
 import { UsageRecorder } from './stats.ts'
@@ -2182,6 +2182,21 @@ function canonicalJson(value: unknown): string {
         recordStartupNote(`registration FAILED: ${describeError(error)}`)
         return
       }
+      /**
+       * Refill today's usage from the pack's ledger before anything is served.
+       *
+       * `UsageRecorder` holds process memory, so a restart used to empty the usage panel
+       * and the pool card — the card then printed "网关尚未上报 token 数", which was never
+       * true: nothing had asked yet. The pack keeps a 90-day ledger on disk, so the same
+       * day was already recorded and simply not read back.
+       *
+       * Best-effort and fire-and-forget: a ledger that cannot be read costs the panel its
+       * pre-restart totals, never the plugin. It is deliberately not awaited — the first
+       * request must not wait on a file read.
+       */
+      void backfillUsageFromLedger(dshHome(), usageRecorder, ctx.logger).catch((error: unknown) => {
+        ctx.logger.warn?.('dsh-xdpool: usage backfill failed', error)
+      })
       // Discover accounts; the fallback catalog already serves models meanwhile.
       if (stopped) return
       void core.pool.scan().then(

@@ -205,3 +205,70 @@ describe('reading the pack ledger', () => {
     }
   })
 })
+
+describe('the day window means the LOCAL calendar day', () => {
+  /** Write a ledger with one entry on each of two adjacent local days. */
+  async function ledgerWithTwoDays(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'xdpool-day-'))
+    await mkdir(join(dir, 'channel-pack'), { recursive: true })
+    await writeFile(join(dir, 'channel-pack', 'token-ledger.json'), JSON.stringify({
+      days: {
+        '2026-11-07': { 'direct|buddy|a1|hy3': { requests: 5, inputTokens: 5_000_000 } },
+        '2026-11-08': { 'direct|buddy|a1|hy3': { requests: 2, inputTokens: 1_000_000 } },
+      },
+    }), 'utf8')
+    return dir
+  }
+
+  it('`days: 1` covers TODAY ONLY, not today plus yesterday', async () => {
+    // The strip is labelled "today"; a figure that silently included yesterday evening's
+    // work is the defect this pins. `daysAgoKey(days - 1)` is what makes the label true.
+    const dir = await ledgerWithTwoDays()
+    try {
+      const today = await readCreditSpend({
+        home: dir,
+        days: 1,
+        rateOf: () => DS,
+        now: new Date(2026, 10, 8, 20, 0, 0),
+      })
+      expect(today.rows).toHaveLength(1)
+      expect(today.rows[0]?.requests).toBe(2)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('`days: 2` reaches back to include yesterday', async () => {
+    const dir = await ledgerWithTwoDays()
+    try {
+      const two = await readCreditSpend({
+        home: dir,
+        days: 2,
+        rateOf: () => DS,
+        now: new Date(2026, 10, 8, 20, 0, 0),
+      })
+      expect(two.rows[0]?.requests).toBe(7)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses the LOCAL date, not UTC', async () => {
+    // Between midnight and 08:00 in UTC+8 the UTC date is still yesterday, so a UTC-based
+    // bound reported the previous day's totals for most of the early morning.
+    const dir = await ledgerWithTwoDays()
+    try {
+      // 00:30 local on the 8th — the UTC date is the 7th.
+      const report = await readCreditSpend({
+        home: dir,
+        days: 1,
+        rateOf: () => DS,
+        now: new Date(2026, 10, 8, 0, 30, 0),
+      })
+      expect(report.rows[0]?.requests).toBe(2)
+      expect(report.from).toBe('2026-11-08')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})

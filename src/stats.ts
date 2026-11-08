@@ -357,6 +357,32 @@ export class UsageRecorder {
     this.samples = []
   }
 
+  /**
+   * Refill today's samples from the pack's own ledger.
+   *
+   * WHY THIS EXISTS
+   *
+   * `samples` is process memory, so every restart emptied the usage panel and the pool
+   * card — "网关尚未上报 token 数" after a restart was not the gateway declining to
+   * answer, it was this recorder having forgotten. The pack, meanwhile, persists a 90-day
+   * day-aggregated ledger on disk, so the same period was already recorded and simply not
+   * read.
+   *
+   * Called ONCE at startup, before the first request. It REPLACES rather than appends:
+   * whatever is in memory at that moment is either empty (a fresh process) or belongs to
+   * the same ledger entries, and adding both would double every figure.
+   *
+   * The rows are synthesised at DAY granularity — one `UsageCall` per (channel, model) with
+   * the day's totals — because that is the resolution the ledger keeps. Per-call timestamps
+   * are not recoverable, so the panel's "recent calls" list stays empty after a restart
+   * while its totals are right; inventing timestamps to fill the list would be worse than
+   * an empty list.
+   */
+  backfill(calls: readonly UsageCall[]): void {
+    this.samples = []
+    for (const call of calls) this.record(call)
+  }
+
   /** Aggregate the retained window. */
   summary(): UsageSummary {
     interface Acc {
