@@ -858,7 +858,7 @@ export declare const WORKBUDDY_AUTH_FILE_ENV = "WORKBUDDY_AUTH_FILE";
  */
 interface WorkBuddySkippedFile {
   path: string;
-  reason: 'encrypted' | 'unreadable' | 'malformed';
+  reason: 'encrypted' | 'expired' | 'unreadable' | 'malformed';
 }
 interface WorkBuddyCredential {
   accessToken: string;
@@ -1202,6 +1202,19 @@ export declare class WorkBuddyAccountPool {
    * instead of silently showing half a pool.
    */
   skippedFilesInOrder(): readonly WorkBuddySkippedFile[];
+  /**
+   * Delete expired snapshots that a newer credential for the same account supersedes.
+   *
+   * Returns the paths actually removed. See the call site for the full safety rule; the
+   * short version is that it touches ONLY files classified `expired`, ONLY when the same
+   * `uin` is already served by a different (loaded) file, and never a live file.
+   *
+   * `uin` rather than `uid`: it is the billing identity, so two sign-ins of one person
+   * match even when the desktop app wrote them from different installs. A file whose
+   * identity cannot be read is left alone — deleting a credential on a guess is worse than
+   * keeping a dead one on the card.
+   */
+  private pruneExpiredSnapshots;
   /** Rescan the auth directories and merge newly discovered accounts. */
   scan(): Promise<WorkBuddyAccount[]>;
   /** All accounts, cooldown state included. */
@@ -1216,6 +1229,39 @@ export declare class WorkBuddyAccountPool {
    * model, e.g. CLI diagnostics).
    */
   private available;
+  /**
+   * The pool ordered into three bands, so a resting account is deferred instead of
+   * discarded.
+   *
+   * `available()` answers a binary question, and a binary answer loses the
+   * distinction that matters most when a pool is under pressure:
+   *
+   *   - an account that still HAS credits but was rate-limited a moment ago is
+   *     healthy — it should be tried AFTER the others, not treated as gone;
+   *   - an account resting after a failure is the last resort, but it is still a
+   *     resort: when it is the only one, trying it beats failing the request.
+   *
+   * A pool that drops both from the list turns "every account is cooling for
+   * twenty more seconds" into an error the user reads as "no account available",
+   * which is a different and much more alarming statement.
+   *
+   * The bands:
+   *
+   *   1. `ready`    — passes every gate `available()` checks.
+   *   2. `limited`  — region-eligible and not disabled/reserved, but cooling for
+   *                   this model or account-wide. Ordered by when it comes back,
+   *                   so the account that recovers first is spent first.
+   *   3. `resting`  — sign-in was rejected by the upstream. It never heals on a
+   *                   timer, so it is only tried when 1 and 2 are both empty.
+   *
+   * `disabled` and `reserve` accounts appear in NO band: those are user choices,
+   * and overriding them is not resilience, it is ignoring an instruction.
+   *
+   * Kept separate from `available()` rather than replacing it, so the binary
+   * question still has a binary answer for callers that want one (diagnostics,
+   * the status document) without either copy drifting from the other.
+   */
+  private rankedPool;
   /**
    * Why no account is available right now, for an accurate error.
    *
@@ -1324,6 +1370,13 @@ export declare class WorkBuddyAccountPool {
    * `conversationKey` is only consulted under `sticky`; other modes ignore it.
    */
   acquire(modelId?: string, region?: WorkBuddyRegion, conversationKey?: string, reserveExempt?: ReadonlySet<string>): Promise<WorkBuddyAccount | undefined>;
+  /**
+   * Whether an account belongs to a band that is currently in play.
+   *
+   * Only `ready` accounts are eligible for the probe shortcut: picking a resting
+   * account ahead of a healthy one is the very thing the bands exist to prevent.
+   */
+  private isStageEligible;
   /** How the pool currently spreads requests. Shown on the card. */
   currentDistribution(): AccountDistribution;
   /**
@@ -2206,7 +2259,7 @@ interface PoolWebStatus {
 interface PoolWebSkippedFile {
   /** Basename only; the full path lives in the desktop app's auth directory. */
   file: string;
-  reason: 'encrypted' | 'unreadable' | 'malformed';
+  reason: 'encrypted' | 'expired' | 'unreadable' | 'malformed';
 }
 /** How a region's model list was obtained. */
 type PoolWebCatalogSource = 'live' | 'fallback';
@@ -4272,6 +4325,15 @@ interface PoolStatusRouteOptions {
    * document. The catalog refresh is what makes a new chain pickable at once.
    */
   saveCombos?: (raw: unknown) => Promise<PoolWebCombosStatus>;
+  /**
+   * Estimated credit spend per channel and model, for the composer strip.
+   *
+   * Its own endpoint rather than a field of the status document: the pool card polls
+   * status every 30 seconds, and the ledger roll-up would be recomputed on every one
+   * of those polls for a number that changes once per request. The strip asks on its
+   * own cadence.
+   */
+  creditsSpend?: (days: number | undefined) => Promise<unknown>;
   /**
    * The relay's current state, or undefined when this build has no relay.
    *

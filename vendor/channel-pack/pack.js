@@ -1221,7 +1221,22 @@ async function requestToken(body, keyPair, fetcher = fetch) {
   if (!response.ok || !data?.credentials) {
     const message2 = `CodeArts token request failed: ${response.status}${data ? ` ${JSON.stringify(data)}` : ""}`;
     const errorCode = String(data?.error_code ?? "");
-    if (data?.error === "invalid_grant" || errorCode.includes("ExpiredRefreshToken")) {
+    if (data?.error === "invalid_grant" || errorCode.includes("ExpiredRefreshToken")
+          // [xdpool-local] a consumed refresh token is a dead credential.
+          //
+          // Huawei STS refresh tokens are SINGLE-USE: presenting one returns a
+          // new one, and the old value is marked used. "Has been used" is
+          // therefore terminal — either two refreshes raced and this is the
+          // loser, or a successful refresh failed to persist its replacement.
+          // Reporting it as an ordinary error left the account in the pool, so
+          // every later request paid for another hopeless refresh and the user
+          // saw an opaque 400 instead of "sign in again".
+          //
+          // Scoped here rather than in the shared predicate on purpose:
+          // STS5.* is Huawei's namespace, and another vendor could reuse a
+          // similar code for something recoverable.
+          || errorCode.includes("STS5.1806")
+          || /refresh token has been used/iu.test(String(data?.error_msg ?? ""))) {
       throw new RefreshTokenExpiredError(message2);
     }
     throw new Error(message2);
@@ -58010,6 +58025,21 @@ function parseCreditBalance(metrics) {
   );
   return { total, packages, expiredTotal: 0 };
 }
+// [xdpool-local] Whether this CodeArts credential's own STS expiry has passed.
+//
+// Huawei mints these AK/SK/security-token triples with a two-hour life, so a
+// stored credential very often IS expired while its refresh_token still has
+// weeks left. The gateway answers that with
+// `APIG.0602 Bad request: the security token has expired` — accurate, but it
+// reads like a sign-in failure and sends people off to re-scan a QR code they
+// never needed to re-scan. Callers use this to name the condition, and to
+// decide whether a re-mint is worth trying before reporting it at all.
+function codeartsCredentialExpired(credential) {
+  const raw = credential === null || credential === void 0 ? "" : credential.expires_at;
+  if (typeof raw !== "string" || raw.length === 0) return false;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed <= Date.now() : false;
+}
 async function fetchCodeArtsAccountInfoDetailed(credential, fetcher = fetch) {
   const url = `${CODEARTS_SNAP_ENGINE_URL}${CODEARTS_PACKAGE_INFO_PATH}`;
   const result = await signedSnapRequest("GET", url, credential, void 0, fetcher);
@@ -60762,6 +60792,34 @@ async function collectClaimResults(accounts, product, deps) {
   }
   return { results, summary: computeClaimSummary(outcomes) };
 }
+// [xdpool-local] Re-mint any CodeArts credential whose own STS expiry has
+// already passed, before the caller reports it as a failure.
+//
+// Best-effort by design: every failure is logged and swallowed. A refresh that
+// was rejected (`invalid_grant` — the token was rotated away by another client)
+// must still let the caller run, because the resulting balance error is the only
+// place that can tell the user to sign in again.
+//
+// It goes through `refreshAccountCredential`, which is the same per-ref serial
+// queue the 30-minute scheduler uses, so an on-demand heal can never race the
+// scheduler into consuming one refresh_token twice.
+async function healExpiredCodeArtsCredentials(accounts, pool, auth, resolve, warn) {
+  if (auth === void 0 || pool === void 0) return;
+  for (const entry of accounts) {
+    if (entry.enabled === false) continue;
+    try {
+      const resolved = await resolve(credentialRef13(entry.credentialRef));
+      if (resolved === void 0) continue;
+      const credential = JSON.parse(resolved.value);
+      if (!codeartsCredentialExpired(credential)) continue;
+      if (!isCodeArtsRefreshable(credential)) continue;
+      warn?.(`[channel-pack] codearts 账号 ${entry.id} 的临时凭证已过期，先自动续期`);
+      await auth.refreshAccountCredential(entry.credentialRef, pool, entry.id);
+    } catch (error) {
+      warn?.(`[channel-pack] codearts 账号 ${entry.id} 自动续期失败（仍继续查询）：${String(error)}`);
+    }
+  }
+}
 async function collectCreditBalances(accounts, product, deps) {
   const fetcher = deps.fetcher ?? fetch;
   const fetchBalance = deps.fetchBalance ?? (async (credential, product2) => fetchCreditBalance(
@@ -61116,6 +61174,30 @@ function registerChannelPackEndpoints(ctx, pool, codearts, buddy, workbuddy, lob
     };
   }
   async function handleMethod(method, payload, _signal) {
+    // [xdpool-local] One heal for every CodeArts entry point, before the switch.
+    //
+    // A CodeArts credential lives two hours; its refresh_token behind it lives
+    // ~30 days. Three separate RPC families read that credential and each of
+    // them can be the FIRST call after it has run out: `credits.balances` (the
+    // panel opening), `credits.status` and `credits.claimAll` (the 09:00 daily
+    // check-in, which then fails silently in a scheduler log nobody reads).
+    // Patching one branch would have left the other two reporting a dead
+    // sign-in for a credential that one refresh fixes, so the heal sits here,
+    // on the path they all share. It is idempotent and cheap when healthy:
+    // nothing is refreshed unless the credential's own stamp is already past.
+    if (typeof payload === "object" && payload !== null && payload.provider === "codearts") {
+      try {
+        await healExpiredCodeArtsCredentials(
+          await pool.listAccounts("codearts"),
+          pool,
+          codearts,
+          (ref) => ctx.credentials.resolve(ref),
+          (msg) => ctx.logger?.warn?.(msg)
+        );
+      } catch (error) {
+        ctx.logger?.warn?.(`[channel-pack] codearts 凭证对账失败（继续处理该请求）：${String(error)}`);
+      }
+    }
     if (method.startsWith("opencode.")) {
       if (config.disableOpencode === true) {
         return { ok: false, error: { code: "provider-disabled", message: "OpenCode account integration is disabled in this host" } };
@@ -62219,7 +62301,14 @@ function registerChannelPackEndpoints(ctx, pool, codearts, buddy, workbuddy, lob
             resolve: (ref) => ctx.credentials.resolve(ref),
             fetchBalanceDetailed: async (credential) => {
               const result = await fetchCodeArtsAccountInfoDetailed(credential);
-              if (!result.ok) return { balance: null, error: `\u8D26\u6237\u4FE1\u606F\u67E5\u8BE2\u5931\u8D25\uFF1A${result.message}` };
+              if (!result.ok) {
+                // [xdpool-local] An expired STS token is the commonest CodeArts
+                // failure, and the raw APIG message does not say what to do about
+                // it. Name the condition, then name the one action that fixes it.
+                // Only when it IS expired: a 5xx keeps its original wording.
+                const advice = codeartsCredentialExpired(credential) ? "\uFF08\u4E34\u65F6\u51ED\u8BC1\u5DF2\u8FC7\u671F\uFF0C\u70B9\u300C\u5237\u65B0\u51ED\u636E\u300D\u5373\u53EF\u6362\u65B0\uFF0C\u65E0\u9700\u91CD\u65B0\u767B\u5F55\uFF09" : "";
+                return { balance: null, error: `\u8D26\u6237\u4FE1\u606F\u67E5\u8BE2\u5931\u8D25${advice}\uFF1A${result.message}` };
+              }
               const info = result.info;
               if (!info.isCreditPackage) {
                 return {

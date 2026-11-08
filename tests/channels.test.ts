@@ -79,6 +79,11 @@ describe('channel route contract', () => {
       'account.refresh',
       'account.test',
       'account.update',
+      // Whole-pool credential backup. `backup.import` REPLACES rather than merges, and
+      // `backup.status` exists so the card can warn how many accounts it would replace.
+      'backup.export',
+      'backup.import',
+      'backup.status',
       'credits.balances',
       'credits.claimAll',
       'credits.status',
@@ -87,6 +92,10 @@ describe('channel route contract', () => {
       'model.setAllDisabled',
       'model.setContextBudget',
       'model.setDisabled',
+      // One-off rewards (Raccoon's login bonus, Loomy's onboarding tasks). A separate
+      // endpoint from `credits.claimAll` because these pay once per account rather
+      // than daily — which is also why it takes an `accountId`.
+      'onboarding.claim',
       'provider.status',
       'usage.autoCheckin',
     ])

@@ -225,6 +225,8 @@ function combosStatusOf(
 import { WorkBuddyScheduler, type AutomationJobKind, type AutomationLedger, type AutomationOptions } from './scheduler.ts'
 import { channelListableAsRows, createWorkBuddyShim, type WorkBuddyShim } from './shim.ts'
 import { createChannelLane, type ChannelLaneLlm } from './channel-lane.ts'
+import { readCreditSpend } from './credit-report.ts'
+import { ratesFor, type CreditRates } from './credits.ts'
 import { createPoolRelay, newRelayKey, relayDocumentOf, RELAY_DEFAULT_PORT, RELAY_HOSTS, type RelaySettings } from './relay.ts'
 import { UsageRecorder } from './stats.ts'
 import { buildStatus } from './status.ts'
@@ -235,6 +237,7 @@ export {
 } from './scheduler.ts'
 import { regionOf, WorkBuddyUpstreamClient, type WorkBuddyRegion } from './upstream.ts'
 import {
+  dshHome,
   ignoreAccount,
   ignoredIdsPath,
   pluginDataDir,
@@ -1327,6 +1330,73 @@ function canonicalJson(value: unknown): string {
     roster: () => shim.roster(),
     warn: error => ctx.logger.warn('dsh-xdpool: gateway roster failed', error),
   })
+  /**
+   * Estimated credit spend, read from the pack's own token ledger.
+   *
+   * TWO rate sources, because the pool and the login channels price models
+   * differently and NEITHER publishes a rate through the ledger:
+   *
+   *   - a POOL model (`buddy`, `workbuddy`) carries `multiplier` on its catalog row,
+   *     which is the gateway's own `creditMultiplier`. The built-in fallback table
+   *     deliberately has none — a stale price is worse than no price — so this is
+   *     populated only once the live catalog has loaded;
+   *   - a LOGIN-CHANNEL model (`trae`, `zcode`, …) carries its rate in the DISPLAY NAME
+   *     the pack builds (`Hy3 · x0.05`), because `model.list` has no rate field at all.
+   *
+   * Checking only the second was wrong: it left every pool row unpriced, which reads as
+   * "the pool is free" — the opposite of the truth for the channel the user actually
+   * uses most.
+   */
+  /**
+   * Estimated credit spend, read from the pack's own token ledger.
+   *
+   * The coefficients come from the table in `credits.ts`, measured against the live
+   * gateway — NOT from the `x0.11` figure the picker displays. That figure is a label;
+   * billing is three separate per-model coefficients (fresh input / cache read / output),
+   * and using the label as a flat rate understated a normal day by two orders of
+   * magnitude because it ignored the cache tier entirely.
+   *
+   * The pool's own catalog carries a `multiplier`, and it is deliberately NOT used for
+   * money: it is whatever the vendor chose to display, it moves with promotions, and the
+   * three-coefficient table is the only thing that reconciles against real charges.
+   */
+  const creditSpend = async (days: number | undefined): Promise<unknown> => {
+    /**
+     * Channel model names, read from the pack's own listing — NOT from the gateway
+     * roster.
+     *
+     * `hostRoster()` returns only what the gateway SHARES, and a user typically shares
+     * one model. The ledger records every model the pool has ever served, so pricing off
+     * the roster left almost every channel row unpriced.
+     */
+    let channelNames: readonly { channel: string; modelId: string; name: string }[] | undefined
+    const rateOf = (channel: string, modelId: string): CreditRates | undefined => {
+      // The table is keyed by model id alone, so the channel does not matter — a model
+      // costs the same whichever lane reached it. A channel may decorate the id, which
+      // `ratesFor` handles.
+      const direct = ratesFor(modelId)
+      if (direct !== undefined) return direct
+      // Fall back to the ledger's own spelling via the listing, which sometimes carries a
+      // vendor prefix the table does not.
+      const row = channelNames?.find(candidate => candidate.channel === channel
+        && candidate.modelId === modelId)
+      return row === undefined ? undefined : ratesFor(row.name)
+    }
+    try {
+      channelNames = (await channelLane.rows()).map(row => ({
+        channel: row.channel,
+        modelId: row.modelId,
+        name: row.name,
+      }))
+    } catch (error: unknown) {
+      ctx.logger?.warn?.('dsh-xdpool: channel model names unavailable for pricing:', error)
+    }
+    return await readCreditSpend({
+      home: dshHome(),
+      days,
+      rateOf,
+    })
+  }
   // Same-origin routes backing the XD Pool settings card. `webServer`
   // is an optional service: on a headless profile without it, no card routes
   // mount and the card shows an offline banner — the provider still works.
@@ -1678,6 +1748,8 @@ function canonicalJson(value: unknown): string {
         await hostRoster(),
       )
     },
+    /** Estimated credit spend per channel, for the composer strip. */
+    creditsSpend: async (days: number | undefined) => await creditSpend(days),
       /**
      * Relay state plus the gateway's model picker.
      *

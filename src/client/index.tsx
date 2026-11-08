@@ -34,6 +34,8 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 // section registration is narrowed locally at its call site.
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import { PoolCard } from './PoolCard.tsx'
+import { CreditStrip } from './credit-strip.tsx'
+import { CreditDot } from './CreditDot.tsx'
 import { PanelIcon } from './panel-icon.tsx'
 import { PoolPage } from './page.tsx'
 import { POOL_NAV_ICON_MASK_URL } from './nav-icon.ts'
@@ -227,6 +229,30 @@ export function apply(ctx: WorkBuddyClientContext): void {
       }, PoolPage))
     } catch (error: unknown) {
       console.error('[dsh-xdpool] sidebar entry unavailable (settings page unaffected):', error)
+    }
+    /**
+     * The credit dot beside the model name, in the composer's own row.
+     *
+     * `conversation.composer.dock` is inside `InputBar`, on the line that already holds
+     * the back button, the model name and the reasoning level. That adjacency is the
+     * point: the dot is a statement about the model it sits next to, so putting it
+     * anywhere else would leave the reader to work out which channel it describes.
+     *
+     * It renders on the `composer` variant only (the host gates it), and does not appear
+     * on the hero screen where no session exists yet.
+     *
+     * Own try/catch: a host line without this slot must not take the settings page down
+     * with it.
+     */
+    try {
+      ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+        name: 'conversation.composer.dock',
+        id: 'xdpool-credit-dot',
+        order: 20,
+        inject: (): { t?: PoolCardInjected['t'] } => (t === undefined ? {} : { t }),
+      }, CreditDot))
+    } catch (error: unknown) {
+      console.error('[dsh-xdpool] composer credit dot unavailable (everything else unaffected):', error)
     }
   } catch (error: unknown) {
     // Degrade silently on the page: the pool provider still serves models.

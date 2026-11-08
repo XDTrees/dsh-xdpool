@@ -47,6 +47,7 @@ import {
   POOL_CHECKIN_PATH,
   POOL_COMBOS_PATH,
   POOL_COMBOS_SAVE_PATH,
+  POOL_CREDITS_SPEND_PATH,
   POOL_RELAY_PATH,
   POOL_MODELS_SAVE_PATH,
   POOL_MODEL_PROBE_PATH,
@@ -276,6 +277,15 @@ export interface PoolStatusRouteOptions {
    * document. The catalog refresh is what makes a new chain pickable at once.
    */
   saveCombos?: (raw: unknown) => Promise<PoolWebCombosStatus>
+  /**
+   * Estimated credit spend per channel and model, for the composer strip.
+   *
+   * Its own endpoint rather than a field of the status document: the pool card polls
+   * status every 30 seconds, and the ledger roll-up would be recomputed on every one
+   * of those polls for a number that changes once per request. The strip asks on its
+   * own cadence.
+   */
+  creditsSpend?: (days: number | undefined) => Promise<unknown>
   /**
    * The relay's current state, or undefined when this build has no relay.
    *
@@ -1555,6 +1565,34 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
       },
     })
     /**
+     * Estimated credit spend, per channel.
+     *
+     * GET, `?days=N` optional. Read-only and cheap: the ledger roll-up is arithmetic
+     * over a file the pack already keeps, so the strip can refresh on every turn
+     * without touching an upstream.
+     */
+    const disposeCreditsSpend = ctx.webServer.register({
+      kind: 'exact',
+      path: POOL_CREDITS_SPEND_PATH,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        if (deps.creditsSpend === undefined) {
+          return json(res, 503, { error: 'credit accounting is not available in this build' })
+        }
+        try {
+          const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+          const raw = url.searchParams.get('days')
+          const parsed = raw === null ? undefined : Number(raw)
+          json(res, 200, await deps.creditsSpend(
+            parsed === undefined || !Number.isFinite(parsed) ? undefined : Math.trunc(parsed),
+          ))
+        } catch (error: unknown) {
+          json(res, 500, { error: safeMessage(error) })
+        }
+      },
+    })
+    /**
      * Replace the whole chain table.
      *
      * POST only, one table per request (see `POOL_COMBOS_SAVE_PATH`). The write
@@ -1632,6 +1670,7 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
       disposeRelay()
       disposeCombosSave()
       disposeCombos()
+      disposeCreditsSpend()
       disposeChannels()
       disposeAggregate()
       disposeAggregateDiscover()

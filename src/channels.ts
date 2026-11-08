@@ -247,6 +247,22 @@ export const REGISTERED_CHANNELS: readonly ChannelDescriptor[] = [
     note: '手机号注册即送免费额度；每日积分由服务端自动发放，登录奖励需在「新手任务」领取',
     login: 'browser',
     smsHint: true,
+    /**
+     * `credits: {}` is deliberate and does NOT mean "nothing to collect".
+     *
+     * Raccoon pays two different things and they arrive two different ways:
+     *
+     *   - the DAILY points are credited by the server on its own schedule, so
+     *     there is no check-in call to make. `credits.claimAll` answers "不支持每日
+     *     签到" for this channel, and that answer is correct;
+     *   - the DESKTOP LOGIN BONUS is a one-off, per account, and it is collectable
+     *     — through `onboarding.claim`, not through the daily claim.
+     *
+     * The empty object is what keeps the daily "Claim credits" button off this card
+     * (pressing it would only ever print that refusal). The login bonus has its own
+     * button, which the card draws for the channels in `ONBOARDING_CHANNELS`.
+     * `credits` staying present keeps the balance row on the card.
+     */
     credits: {},
   },
   {

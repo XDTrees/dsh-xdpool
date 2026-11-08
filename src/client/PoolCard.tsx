@@ -65,6 +65,7 @@ import { ModelFactsRow } from './model-facts-row.tsx'
 import type { ModelProbeReading } from './model-facts.ts'
 import type { UsageSummary } from '../stats.ts'
 import { ChannelPoolSection } from './ChannelPoolSection.tsx'
+import { BackupPanel } from './BackupPanel.tsx'
 import { POOL_VERSION } from '../version.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
 /** Localized copy injected by the browser-plugin registration. */
@@ -565,6 +566,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
     { id: 'ledger', label: t?.('shell.tabLedger') ?? 'Dashboard' },
     { id: 'routing', label: t?.('shell.tabRouting') ?? 'Routing' },
     { id: 'gateway', label: t?.('shell.tabGateway') ?? 'Gateway' },
+    { id: 'backup', label: t?.('shell.tabBackup') ?? 'Backup' },
   ] as const
   const [page, setPage] = useState<string>(
     () => initialShellTab(rememberedShellTab(), shellTabs),
@@ -1547,6 +1549,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
           : page === 'ledger' ? <LedgerPage t={t} usage={usage} />
                   : page === 'routing' ? <RoutingPage t={t} />
                 : page === 'gateway' ? <GatewayPage t={t} />
+                  : page === 'backup' ? <BackupPanel t={t} />
                   : <>
               <style>{POOL_CARD_CSS}</style>
               {usage === undefined
@@ -1874,9 +1877,15 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                   <span className="dsm-xdpool-skipped-reason">
                                     {entry.reason === 'encrypted'
                                       ? (t?.('row.skippedEncrypted') ?? 'encrypted — start WorkBuddy once')
-                                      : entry.reason === 'unreadable'
-                                        ? (t?.('row.skippedUnreadable') ?? 'file could not be read')
-                                        : (t?.('row.skippedMalformed') ?? 'not a credential file')}
+                                      : entry.reason === 'expired'
+                                        // A real credential whose 30-day refresh window has
+                                        // closed. Saying "not a credential file" here sends
+                                        // the reader looking for a format problem that does
+                                        // not exist.
+                                        ? (t?.('row.skippedExpired') ?? 'expired — sign in again, or delete it')
+                                        : entry.reason === 'unreadable'
+                                          ? (t?.('row.skippedUnreadable') ?? 'file could not be read')
+                                          : (t?.('row.skippedMalformed') ?? 'not a credential file')}
                                   </span>
                                 </p>
                               ))}
@@ -2227,6 +2236,9 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
               </div>
               </section>
               <ChannelPoolSection t={t} />
+              {/* Backup moved to its own page. It operates on the whole credential set
+                  rather than on one pool card, and sitting it under the accounts implied a
+                  scope it does not have. */}
               {flash === undefined ? null
                 : <p className="dsm-xdpool-note">{flash}</p>}
               {error === undefined ? null

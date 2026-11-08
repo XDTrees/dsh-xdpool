@@ -44,6 +44,17 @@ export const POOL_AUTOMATION_RUN_PATH = '/plugins/dsh-xdpool/automation/run'
 /** Set or clear one account's reserved-credit floor. */
 export const POOL_CREDIT_RESERVE_PATH = '/plugins/dsh-xdpool/accounts/credit-reserve'
 /**
+ * Estimated credit spend, per channel and per model.
+ *
+ * Derived from the pack's own token ledger, never from a credit counter — the pack
+ * records tokens, and the vendor's balance is only visible when it is read again. The
+ * arithmetic (tokens ÷ 1e6 × the model's published multiplier) and the honesty about
+ * its error live in `credits.ts`.
+ *
+ * `?days=N` limits the window; the ledger keeps 90 days.
+ */
+export const POOL_CREDITS_SPEND_PATH = '/plugins/dsh-xdpool/credits/spend'
+/**
  * Name the account to try first, or hand the choice back to the strategy.
  *
  * A route rather than a settings write for the reason the ignore list is a file:
@@ -271,6 +282,31 @@ export const CHANNEL_PACK_METHODS: ReadonlySet<string> = new Set([
   'model.setAllDisabled',
   'model.setContextBudget',
   'model.setDisabled',
+  /**
+   * One-off rewards: Raccoon's desktop-login bonus, Loomy's onboarding tasks.
+   *
+   * A SEPARATE endpoint from `credits.claimAll` on purpose — the pack splits them
+   * because the semantics differ in the way that matters. A daily claim may be
+   * repeated tomorrow; these pay once per ACCOUNT and are then gone, which is also
+   * why this call takes an `accountId` while the daily one takes only a `provider`.
+   *
+   * Present because a channel can have one, the other, or neither: Raccoon's daily
+   * points are credited by the server, so its `credits` field carries no `claim` and
+   * this is the ONLY thing it has to collect.
+   */
+  'onboarding.claim',
+  /**
+   * Whole-pool credential backup.
+   *
+   * `backup.export` returns the payload with every account's credential value, so the
+   * card encrypts it in the browser and never writes the plaintext anywhere; the pack's
+   * side of that contract is documented at its `backup.export` handler. `backup.import`
+   * REPLACES the set rather than merging, and `backup.status` exists so the card can
+   * say how many accounts an overwrite would destroy.
+   */
+  'backup.export',
+  'backup.import',
+  'backup.status',
   'provider.status',
   'usage.autoCheckin',
 ])
@@ -997,7 +1033,7 @@ export interface PoolWebStatus {
 export interface PoolWebSkippedFile {
   /** Basename only; the full path lives in the desktop app's auth directory. */
   file: string
-  reason: 'encrypted' | 'unreadable' | 'malformed'
+  reason: 'encrypted' | 'expired' | 'unreadable' | 'malformed'
 }
 /** How a region's model list was obtained. */
 export type PoolWebCatalogSource = 'live' | 'fallback'
