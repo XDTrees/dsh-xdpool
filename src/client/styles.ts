@@ -1109,6 +1109,12 @@ export const GATEWAY_CARD_CSS = `
 .dsm-xdpool-gw-model input:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
 .dsm-xdpool-gw-model-name{color:var(--dsw-alias-label-primary,#e8e8ea);font-size:12px;line-height:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .dsm-xdpool-gw-model-id{font-family:var(--dsw-alias-font-mono,ui-monospace,Menlo,Consolas,monospace);font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8a90a0);white-space:nowrap}
+/* The model id is a copy button living inside a <label>. It has to look like the text it
+   replaced, not like a second submit button — so the chrome is stripped and only the
+   pointer and a hover tint say it is pressable. */
+.dsm-xdpool-gw-copyid{appearance:none;-webkit-appearance:none;background:none;border:0;padding:0 2px;margin:0;cursor:pointer;border-radius:4px;font-family:var(--dsw-alias-font-mono,ui-monospace,Menlo,Consolas,monospace);font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary,#8a90a0);white-space:nowrap;text-align:left}
+.dsm-xdpool-gw-copyid:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary,#e8eaf0) 10%, transparent);color:var(--dsw-alias-label-secondary,#b9bfcc)}
+.dsm-xdpool-gw-copyid[data-on='true']{color:#3ba55d}
 .dsm-xdpool-gw-btn:hover:not(:disabled){transform:translateY(-1px);border-color:color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 55%, var(--dsw-alias-border-l2,#36373b));color:var(--dsw-alias-label-primary,#e8e8ea)}
 .dsm-xdpool-gw-btn:active:not(:disabled){transform:translateY(0);box-shadow:inset 0 2px 4px rgb(0 0 0 / 22%)}
 .dsm-xdpool-gw-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:2px}
@@ -1531,3 +1537,91 @@ export const PAGE_CSS = `
 .dsm-xdpool-page > .dsm-xdpool-shell{margin:0 auto}
 @media (max-width:720px){.dsm-xdpool-page{padding:14px 16px 26px}}
 `.trim()
+
+/**
+ * The composer credit dot and its panel.
+ *
+ * Its OWN export, not a member of a page block. The dot renders in the COMPOSER, which
+ * no settings page's `<style>` ever reaches — CSS parked in `GATEWAY_CARD_CSS` or
+ * `SHARED_CARD_CSS` is injected only inside the settings shell, so the panel came out as
+ * bare text with no dot and no card.
+ */
+export const CREDIT_DOT_CSS = `
+/* ── Composer credit dot ────────────────────────────────────────────────────
+   A 9px dot on the composer's own row, beside the model name it describes. Its COLOUR
+   is the whole at-a-glance message — green while the serving channel has credits, grey
+   once it does not — and the detail lives behind a click, because that row already
+   holds a back button, a model name, a multiplier and a reasoning level. */
+.dsm-xdpool-dotwrap{position:relative;display:inline-flex;align-items:center;flex:none;margin:0 2px}
+.dsm-xdpool-dot{appearance:none;-webkit-appearance:none;display:grid;place-items:center;width:16px;height:16px;padding:0;margin:0;border:0;background:none;cursor:pointer;flex:none;border-radius:4px;transition:background-color .16s ease}
+.dsm-xdpool-dot:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary,#e8eaf0) 12%, transparent)}
+.dsm-xdpool-dot-glyph{display:block;width:13px;height:13px;background-color:currentColor;-webkit-mask-image:var(--xdpool-dot-mask, none);mask-image:var(--xdpool-dot-mask, none);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-position:center;mask-position:center;-webkit-mask-size:13px 13px;mask-size:13px 13px;transition:color .18s ease}
+.dsm-xdpool-dot[data-state='alive']{color:#22c55e}
+.dsm-xdpool-dot[data-state='empty']{color:color-mix(in srgb, var(--dsw-alias-label-tertiary,#8a90a0) 85%, transparent)}
+.dsm-xdpool-dot:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:3px}
+/* Measured coordinates, not flow: the composer sits at the bottom of the viewport, so a
+   panel laid out downward would be clipped. */
+.dsm-xdpool-dotpanel{position:fixed;z-index:80;width:max-content;min-width:172px;max-width:min(280px,calc(100vw - 24px));display:flex;flex-direction:column;gap:7px;padding:10px 12px 11px;border-radius:14px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 92%, transparent);background:var(--dsw-alias-bg-layer-2,#1c1e22);box-shadow:0 18px 48px rgb(0 0 0 / 44%),0 3px 10px rgb(0 0 0 / 24%),inset 0 1px 0 rgb(255 255 255 / 7%);animation:dsm-xdpool-dotpanel-in .16s cubic-bezier(.16,1,.3,1)}
+@keyframes dsm-xdpool-dotpanel-in{from{opacity:0;transform:translateY(5px) scale(.985)}to{opacity:1;transform:none}}
+.dsm-xdpool-dotpanel-head{display:flex;align-items:center;gap:8px;min-width:0}
+.dsm-xdpool-dotpanel-channel{font-size:12.5px;font-weight:600;letter-spacing:.01em;color:var(--dsw-alias-label-primary,#e8eaf0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.dsm-xdpool-dotpanel-chip{margin-left:auto;padding:1px 8px;border-radius:999px;font-size:10px;line-height:16px;font-weight:500}
+.dsm-xdpool-dotpanel-chip[data-state='alive']{color:#22c55e;background:rgb(34 197 94 / 15%)}
+.dsm-xdpool-dotpanel-chip[data-state='empty']{color:var(--dsw-alias-label-tertiary,#8a90a0);background:color-mix(in srgb, var(--dsw-alias-label-tertiary,#8a90a0) 15%, transparent)}
+.dsm-xdpool-dotpanel-sec{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:baseline;font-size:12px;line-height:18px}
+.dsm-xdpool-dotpanel-k{color:var(--dsw-alias-label-tertiary,#8a90a0);white-space:nowrap}
+.dsm-xdpool-dotpanel-v{text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#e8eaf0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The spend bar. A fuller bar means MORE used, so it reads as a fuel gauge draining
+   toward the right; it turns amber past 90% because that is the point at which a long
+   task becomes a gamble. */
+.dsm-xdpool-dotbar{height:4px;border-radius:999px;overflow:hidden;background:color-mix(in srgb, var(--dsw-alias-label-tertiary,#8a90a0) 22%, transparent);margin:1px 0 2px}
+.dsm-xdpool-dotbar-fill{height:100%;border-radius:999px;background:#22c55e;transition:width .3s cubic-bezier(.16,1,.3,1),background-color .2s ease}
+.dsm-xdpool-dotbar-fill[data-full='true']{background:#f59e0b}
+.dsm-xdpool-dotpanel-more{display:flex;flex-direction:column;gap:2px;padding-top:6px;margin-top:1px;border-top:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 62%, transparent)}
+.dsm-xdpool-dotpanel-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;font-size:11px;line-height:16px}
+.dsm-xdpool-dotpanel-rowname{color:var(--dsw-alias-label-tertiary,#8a90a0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The channel that served today gets a brighter label; the rest still count
+   toward the total and are shown, because hiding them is what made the composer
+   dot disagree with the account-pool card. */
+.dsm-xdpool-dotpanel-rowname[data-used='true']{color:var(--dsw-alias-label-secondary,#b9bfcc)}
+.dsm-xdpool-dotpanel-rowval{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary,#b9bfcc)}
+`
+
+/**
+ * The account-backup card.
+ *
+ * Its OWN export, for the same reason `CREDIT_DOT_CSS` exists: this component renders in
+ * the account-pool page, and the rule that hid its raw file input had been parked in
+ * `CREDIT_DOT_CSS` — a stylesheet this page never loads. The visible symptom was the
+ * browser's native picker sitting on screen beside the buttons that were meant to replace
+ * it, so the row offered three "choose file" controls for one action.
+ */
+export const BACKUP_CSS = `
+.dsm-xdpool-bak{display:flex;flex-direction:column;gap:8px;padding:12px 14px 13px;border-radius:12px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 82%, transparent);background:color-mix(in srgb, var(--dsw-alias-bg-layer-2,#1c1e22) 72%, transparent);min-width:0}
+.dsm-xdpool-bak-head{display:flex;align-items:center;gap:8px;min-width:0}
+.dsm-xdpool-bak-title{font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#e8eaf0)}
+/* A one-word badge, not a sentence: the fact that the file is encrypted is worth a
+   glance, not a paragraph. */
+.dsm-xdpool-bak-warn{margin-left:auto;padding:1px 7px;border-radius:999px;font-size:10px;line-height:15px;color:#22c55e;background:rgb(34 197 94 / 13%)}
+.dsm-xdpool-bak-hint{margin:0;font-size:11px;line-height:17px;color:var(--dsw-alias-label-tertiary,#8a90a0)}
+.dsm-xdpool-bak-field{display:flex;align-items:center;gap:8px;min-width:0}
+.dsm-xdpool-bak-label{font-size:11px;color:var(--dsw-alias-label-secondary,#b9bfcc);white-space:nowrap;flex:none}
+.dsm-xdpool-bak-input{flex:1 1 auto;min-width:0;max-width:220px;appearance:none;-webkit-appearance:none;padding:5px 9px;border-radius:7px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 92%, transparent);background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 88%, transparent);color:var(--dsw-alias-label-primary,#e8eaf0);font-size:12px;line-height:17px;font-family:inherit}
+.dsm-xdpool-bak-input:focus{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px;border-color:transparent}
+.dsm-xdpool-bak-input::placeholder{color:var(--dsw-alias-label-tertiary,#8a90a0);opacity:.75}
+.dsm-xdpool-bak-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dsm-xdpool-bak-btn{appearance:none;-webkit-appearance:none;padding:5px 13px;border-radius:7px;cursor:pointer;font:inherit;font-size:12px;line-height:18px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 95%, transparent);background:transparent;color:var(--dsw-alias-label-secondary,#b9bfcc);transition:border-color .15s ease,background-color .15s ease,color .15s ease;white-space:nowrap}
+.dsm-xdpool-bak-btn:hover:not(:disabled){border-color:color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 55%, transparent);color:var(--dsw-alias-label-primary,#e8eaf0)}
+.dsm-xdpool-bak-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:2px}
+.dsm-xdpool-bak-btn:disabled{opacity:.45;cursor:not-allowed}
+.dsm-xdpool-bak-btn[data-tone='primary']{border-color:color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 62%, transparent);background:color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 16%, transparent);color:var(--dsw-alias-brand-primary,#5686fe);font-weight:600}
+.dsm-xdpool-bak-btn[data-tone='primary']:hover:not(:disabled){background:color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 24%, transparent)}
+/* The chosen file as a removable chip, so "which backup am I about to restore" is
+   answered before the confirm dialog rather than by it. */
+.dsm-xdpool-bak-file{display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:7px;background:color-mix(in srgb, var(--dsw-alias-label-primary,#e8eaf0) 7%, transparent);min-width:0}
+.dsm-xdpool-bak-filename{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-family:var(--dsw-alias-font-mono,ui-monospace,Menlo,Consolas,monospace);color:var(--dsw-alias-label-secondary,#b9bfcc)}
+.dsm-xdpool-bak-clear{appearance:none;-webkit-appearance:none;flex:none;width:16px;height:16px;padding:0;border:0;border-radius:4px;background:transparent;cursor:pointer;font-size:13px;line-height:14px;color:var(--dsw-alias-label-tertiary,#8a90a0)}
+.dsm-xdpool-bak-clear:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary,#e8eaf0) 12%, transparent);color:var(--dsw-alias-label-primary,#e8eaf0)}
+.dsm-xdpool-bak-note{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-success-primary,#22a06b)}
+.dsm-xdpool-bak-error{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-error-primary,#e5534b)}
+`

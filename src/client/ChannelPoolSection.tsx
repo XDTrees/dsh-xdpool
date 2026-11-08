@@ -97,6 +97,28 @@ let providerStatusCache: { at: number; key: string; answer: ChannelRpcEnvelope }
 const PROVIDER_STATUS_TTL_MS = 30_000
 
 /**
+ * Channels whose rewards are collected through `onboarding.claim`, not a daily
+ * check-in.
+ *
+ * Kept as a literal rather than derived from `channel.credits`, because the two
+ * rewards are different in kind: `credits.claim` is repeatable tomorrow and pays
+ * daily points, while these pay once per account and are then gone. The pack exposes
+ * them on separate endpoints for exactly that reason, and a channel can have either,
+ * both, or neither:
+ *
+ *   - `raccoon` — the daily points arrive on their own (the server credits them),
+ *     so its `credits` field is EMPTY on purpose. Only the desktop-login bonus is
+ *     claimable, and it lives here.
+ *   - `loomy` — onboarding tasks, topped up to a maximum rather than granted per
+ *     task.
+ *
+ * Both are implemented in the pack; before this the card simply never called the
+ * endpoint, so a signed-in Raccoon account had no way to collect the bonus its own
+ * note told the reader to look for.
+ */
+const ONBOARDING_CHANNELS: ReadonlySet<string> = new Set(['raccoon', 'loomy'])
+
+/**
  * Drop the snapshot after anything that changes the data behind it.
  *
  * Logins, deletions, toggles and manual balance refreshes all make the snapshot
@@ -731,6 +753,75 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     }
   }
 
+  /**
+   * Claim the ONE-OFF rewards a channel hands out per account.
+   *
+   * Two channels have such a reward and neither is a daily check-in:
+   *
+   *   - Raccoon (商汤) pays a desktop-login bonus once per account. Its daily
+   *     points are credited by the server on their own, which is why
+   *     `credits.claimAll` answers "不支持每日签到" for it — that answer is
+   *     correct and is not the whole story.
+   *   - Loomy (讯飞) has onboarding tasks that pay once each, with the reward
+   *     topped up to the maximum rather than granted per task.
+   *
+   * Both live behind `onboarding.claim`, a SEPARATE endpoint from
+   * `credits.claimAll` because the semantics differ in the way that matters: a
+   * daily claim may be repeated tomorrow, this one may not be repeated at all. The
+   * pack has implemented it for both channels all along; the card simply never
+   * called it, so a user with a signed-in Raccoon account saw no way to collect
+   * the login bonus the pack's own note told them to look for.
+   *
+   * Per ACCOUNT, not per channel: the endpoint takes an `accountId`, because one
+   * account having claimed does not mean the next one has.
+   */
+  const claimOnboarding = async (provider: string, accounts: readonly { id: string }[]): Promise<void> => {
+    if (accounts.length === 0) {
+      setNotice(t?.('channelpool.onboardingNoAccounts') ?? 'No account to claim for.')
+      return
+    }
+    markBusy(provider, true)
+    let claimed = 0
+    let earned = 0
+    let skipped = 0
+    let failed = 0
+    let firstError = ''
+    try {
+      for (const account of accounts) {
+        const envelope = await callPack('onboarding.claim', { provider, accountId: account.id })
+        if (!mountedRef.current) return
+        if (envelope.ok === false) {
+          failed += 1
+          if (firstError === '') firstError = envelope.error?.message ?? ''
+          continue
+        }
+        const value = envelope.value as { claimed?: unknown; skipped?: unknown; earned?: unknown } | undefined
+        const got = Array.isArray(value?.claimed) ? value.claimed.length : 0
+        const total = typeof value?.earned === 'number' ? value.earned : 0
+        claimed += got
+        earned += total
+        if (got === 0) skipped += 1
+      }
+      if (!mountedRef.current) return
+      // A refusal is worth naming: for Raccoon the common one is "already
+      // claimed", and a bare "failed" would send the user looking for a bug in a
+      // reward they simply already have.
+      if (failed > 0) {
+        setNotice(firstError !== ''
+          ? firstError
+          : (t?.('channelpool.onboardingFailed', { failed }) ?? `${failed} account(s) could not claim.`))
+      } else if (claimed === 0) {
+        setNotice(t?.('channelpool.onboardingNone') ?? 'Nothing left to claim — already collected.')
+      } else {
+        setNotice(t?.('channelpool.onboardingResult', { claimed, credit: amount(earned), skipped })
+          ?? `Claimed ${claimed} reward(s): +${amount(earned)}.`)
+      }
+      await refreshBalances(provider, true)
+    } finally {
+      if (mountedRef.current) markBusy(provider, false)
+    }
+  }
+
   const accountAction = async (
     provider: string,
     accountId: string,
@@ -872,6 +963,28 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     The claim button leads and is the only solid one on the row:
                     it is the single action here that pays the reader back, so it
                     should not have to compete with "reload the number". */}
+                {/* One-off rewards live behind their own endpoint, so they get
+                    their own button rather than being folded into the daily claim.
+                    Raccoon is the case that made this necessary: its daily points
+                    arrive by themselves, so `credits.claimAll` correctly answers
+                    "not supported", and the login bonus was therefore unreachable
+                    from the card even though the pack has implemented the claim
+                    for it all along. */}
+                {ONBOARDING_CHANNELS.has(channel.id) && (
+                  <button
+                    type="button"
+                    className="dsm-xdpool-btn"
+                    data-tone="primary"
+                    disabled={isBusy}
+                    onClick={() => { void claimOnboarding(channel.id, enabledAccounts) }}
+                    title={t?.('channelpool.onboardingHint')
+                      ?? '一次性奖励（登录奖励 / 新手任务），每号只能领一次'}
+                  >
+                    {isBusy
+                      ? (t?.('channelpool.claiming') ?? 'Claiming…')
+                      : (t?.('channelpool.onboarding') ?? '领取一次性奖励')}
+                  </button>
+                )}
                 {channel.credits?.claim === true && (
                   <button
                     type="button"
