@@ -23,6 +23,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { UsageCall } from './stats.ts'
 import { creditsOf, ratesFor, rateFromModelName, totalsByChannel, type CreditChannelTotal, type CreditRates, type CreditSpendRow } from './credits.ts'
 
 /** One ledger entry: the token counts the pack recorded for a model on a day. */
@@ -32,6 +33,9 @@ interface LedgerStats {
   outputTokens?: unknown
   /** Cache READS. Billed at the cache coefficient, and the largest term in agent use. */
   cacheReadTokens?: unknown
+  /** Failed requests, so a row's `ok` can reflect them. */
+  errors?: unknown
+  reasoningTokens?: unknown
 }
 
 /**
@@ -93,10 +97,25 @@ function numberOf(value: unknown): number {
 }
 
 /** `2026-11-07` minus N days, as the same string shape. */
+/**
+ * A `YYYY-MM-DD` key for `days` ago, in the LOCAL calendar.
+ *
+ * Not `toISOString()`: that is UTC, and the ledger's day keys are whatever the machine's
+ * clock says when the pack writes them — i.e. local. Mixing the two shifts the window by
+ * the UTC offset, so a user in UTC+8 reading "today" between midnight and 08:00 was shown
+ * the previous day's totals. The bug is invisible for most of the day and wrong for
+ * exactly the hours someone checks whether a long run has spent much.
+ *
+ * Built from local parts rather than by subtracting milliseconds, because a DST boundary
+ * would otherwise land on the wrong day.
+ */
 function daysAgoKey(days: number, now = new Date()): string {
   const copy = new Date(now.getTime())
-  copy.setUTCDate(copy.getUTCDate() - days)
-  return copy.toISOString().slice(0, 10)
+  copy.setDate(copy.getDate() - days)
+  const year = copy.getFullYear()
+  const month = String(copy.getMonth() + 1).padStart(2, '0')
+  const day = String(copy.getDate()).padStart(2, '0')
+  return `${String(year)}-${month}-${day}`
 }
 
 /** Split `mode|channel|account|model`, refusing anything that is not four parts. */
@@ -152,7 +171,15 @@ export async function readCreditSpend(input: {
   const daysNode = (parsed as { days?: unknown }).days
   if (daysNode === null || typeof daysNode !== 'object') return empty
 
-  const earliest = input.days === undefined ? undefined : daysAgoKey(input.days, input.now)
+  /**
+   * `days: 1` means TODAY ALONE, not "today plus yesterday".
+   *
+   * The old arithmetic subtracted the window size before taking the bound
+   * (`daysAgoKey(days)`), so a one-day window covered today AND yesterday: a strip labelled
+   * "today" reported a figure that included yesterday evening's work. `days - 1` makes the
+   * label true — one day back from today is the start of today.
+   */
+  const earliest = input.days === undefined ? undefined : daysAgoKey(Math.max(0, input.days - 1), input.now)
   // Accumulate per (channel, model) across every day in the window, because the strip
   // answers "which channel, which model" — not "what happened on Tuesday".
   const acc = new Map<string, { channel: string; model: string; requests: number; inputTokens: number; cacheTokens: number; outputTokens: number }>()
@@ -243,3 +270,101 @@ export async function readCreditSpend(input: {
 
 /** Re-exported so the host half can parse a name without importing `credits.ts` twice. */
 export { rateFromModelName }
+
+/**
+ * Refill a `UsageRecorder` with TODAY's totals from the pack ledger.
+ *
+ * The recorder keeps process memory only, so every restart emptied the usage panel and the
+ * pool card printed "the gateway reported no token counts" — an accusation aimed at the
+ * gateway for something this plugin had forgotten. The pack already persists a 90-day
+ * ledger, so the same period was on disk the whole time.
+ *
+ * Day granularity on purpose: the ledger aggregates per (channel, account, model) per day
+ * and keeps no per-call timestamps, so one `UsageCall` is synthesised per row carrying the
+ * day's totals. That makes the TOTALS correct after a restart while the panel's
+ * recent-calls list stays empty — inventing timestamps to fill a list would be worse than
+ * an empty list.
+ *
+ * Returns how many rows were restored, so a startup note can say whether it worked.
+ */
+export async function backfillUsageFromLedger(
+  home: string,
+  recorder: { record(call: UsageCall): void; reset(): void },
+  logger?: { info?(...args: unknown[]): void; warn?(...args: unknown[]): void },
+): Promise<number> {
+  let text: string
+  try {
+    text = await readFile(join(home, LEDGER_FILE), 'utf8')
+  } catch {
+    // No ledger yet: a fresh install has nothing to restore, and the panel's own empty
+    // state is the truthful one.
+    return 0
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    logger?.warn?.('dsh-xdpool: token ledger is not readable JSON; usage starts empty')
+    return 0
+  }
+  const daysNode = (parsed as { days?: unknown }).days
+  if (daysNode === null || typeof daysNode !== 'object') return 0
+
+  const today = daysKey(new Date())
+  const day = (daysNode as Record<string, unknown>)[today]
+  if (day === null || day === undefined || typeof day !== 'object') return 0
+
+  const calls: UsageCall[] = []
+  for (const [key, raw] of Object.entries(day as Record<string, unknown>)) {
+    const named = parseLedgerKey(key)
+    // Only the pool's own traffic; relay rows are another device's usage and would inflate
+    // a panel that reads as "what I did today".
+    if (named === undefined || named.mode !== POOL_MODE) continue
+    if (raw === null || typeof raw !== 'object') continue
+    const entry = raw as LedgerStats
+    const requests = numberOf(entry.requests)
+    const input = numberOf(entry.inputTokens)
+    const cache = numberOf(entry.cacheReadTokens)
+    const output = numberOf(entry.outputTokens)
+    calls.push({
+      channel: named.channel,
+      // The ledger key carries no region; the pool channels encode it in their own id.
+      region: named.channel === 'workbuddy' ? 'global' : named.channel === 'buddy' ? 'cn' : '',
+      model: named.model,
+      account: '',
+      turnId: `backfill:${today}:${named.channel}:${named.model}`,
+      // Midnight local, because the ledger's resolution is the day; a per-call timestamp
+      // does not exist to restore.
+      at: startOfLocalDay(new Date()).getTime(),
+      ok: requests > numberOf(entry.errors),
+      usage: {
+        inputTokens: input,
+        outputTokens: output,
+        cachedTokens: cache,
+        // Reasoning tokens are billed as output and the ledger keeps them apart; the
+        // backfilled row reports them so the panel's breakdown is not silently short.
+        reasoningTokens: numberOf(entry.reasoningTokens),
+      },
+    })
+  }
+  if (calls.length === 0) return 0
+  recorder.reset()
+  for (const call of calls) recorder.record(call)
+  logger?.info?.(`dsh-xdpool: restored ${String(calls.length)} usage row(s) for ${today} from the ledger`)
+  return calls.length
+}
+
+/** Local `YYYY-MM-DD`, matching how the pack names its day buckets. */
+function daysKey(now: Date): string {
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${String(year)}-${month}-${day}`
+}
+
+/** Midnight at the start of `now`'s local day. */
+function startOfLocalDay(now: Date): Date {
+  const copy = new Date(now.getTime())
+  copy.setHours(0, 0, 0, 0)
+  return copy
+}
