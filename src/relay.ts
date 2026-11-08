@@ -197,6 +197,35 @@ function writeJson(res: ServerResponse, status: number, code: string, message: s
   res.end(body)
 }
 /**
+ * Turn a bind failure into something the reader can act on.
+ *
+ * `listen EADDRINUSE: address already in use 127.0.0.1:8326` is accurate and useless.
+ * The overwhelmingly common cause is not "another program stole the port" — it is a
+ * previous DSH that has not finished exiting, still holding the relay it was serving.
+ * The requested port and the old listener are the same, so the fix is either to wait,
+ * or to pick a different port, and the message should say both.
+ *
+ * `EADDRNOTAVAIL` gets its own line because it means the machine has no such
+ * interface, which is a different mistake from a busy port and sends the reader
+ * looking in the wrong place if merged.
+ *
+ * The raw text is kept at the end rather than dropped: it is the only thing that can
+ * be searched for, and a paraphrase that loses it is worse than no paraphrase.
+ */
+function explainBindFailure(raw: string, host: string, port: number): string {
+  if (/EADDRINUSE/iu.test(raw)) {
+    return `端口 ${port} 已被占用（${host}）。最常见的原因是上一个 DSH 还没完全退出、仍占着这个网关端口：稍等几秒重试，或换一个端口后再打开。原始错误：${raw}`
+  }
+  if (/EADDRNOTAVAIL/iu.test(raw)) {
+    return `本机没有这个绑定地址（${host}）。选 127.0.0.1 只允许本机访问；要让手机等其他设备连进来才选 0.0.0.0。原始错误：${raw}`
+  }
+  if (/EACCES/iu.test(raw)) {
+    return `没有权限绑定端口 ${port}。1024 以下的端口通常需要管理员权限，换一个 1024 以上的端口即可。原始错误：${raw}`
+  }
+  return raw
+}
+
+/**
  * Build the relay.
  *
  * Nothing binds until {@link PoolRelay.ready} settles, so a port clash becomes a
@@ -240,8 +269,9 @@ export function createPoolRelay(options: PoolRelayOptions): PoolRelay {
     new Promise<void>(resolve => {
       const next = createServer(handle)
       const fail = (error: unknown): void => {
-        bindError = error instanceof Error ? error.message : String(error)
-        logger?.warn(`xdpool relay: cannot bind ${host}:${port} — ${bindError}`)
+        const raw = error instanceof Error ? error.message : String(error)
+        bindError = explainBindFailure(raw, host, port)
+        logger?.warn(`xdpool relay: cannot bind ${host}:${port} — ${raw}`)
         next.close(() => resolve())
       }
       next.once('error', fail)

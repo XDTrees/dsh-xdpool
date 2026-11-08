@@ -12,7 +12,7 @@
 
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { regionOf, type WorkBuddyRegion } from './upstream.ts'
@@ -54,7 +54,7 @@ export const WORKBUDDY_AUTH_FILE_ENV = 'WORKBUDDY_AUTH_FILE'
  */
 export interface WorkBuddySkippedFile {
   path: string
-  reason: 'encrypted' | 'unreadable' | 'malformed'
+  reason: 'encrypted' | 'expired' | 'unreadable' | 'malformed'
 }
 
 export interface WorkBuddyCredential {
@@ -516,12 +516,51 @@ async function cheapIdentityIdFromFile(path: string): Promise<string | undefined
 }
 
 /**
+ * The `uin` of a credential file, read WITHOUT the expiry gate.
+ *
+ * `parseWorkBuddyAuth` deliberately refuses an expired document, which is exactly the
+ * state this is asked about — so the identity has to come from the raw JSON. `uin` and not
+ * `uid`: `uin` is the billing identity, so two sign-ins of one person match even when the
+ * desktop app wrote them from different installs.
+ */
+async function cheapUinFromFile(path: string): Promise<string | undefined> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(await readFile(path, 'utf8'))
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+  const document = parsed as Record<string, unknown>
+  const identity =
+    typeof document['account'] === 'object' && document['account'] !== null
+      ? (document['account'] as Record<string, unknown>)
+      : document
+  const uin = identity['uin']
+  return typeof uin === 'string' && uin !== '' ? uin : undefined
+}
+
+/**
  * Why a file could not become an account.
  *
- * Distinguishing "encrypted" matters most: it is actionable (start the desktop
- * app, or set the executable override), whereas "malformed" means the file is
- * simply not a credential. Reporting them alike would send the user looking for
- * a fix that cannot work.
+ * The distinctions matter because the REMEDIES differ, and a wrong label sends the reader
+ * after a fix that cannot work:
+ *
+ *   - `encrypted`   — the desktop app holds the key; start it, or set the executable
+ *                     override. Actionable.
+ *   - `expired`     — the file IS a credential, correctly formed, whose refresh window has
+ *                     closed. Nothing to fix: sign in again, or delete the snapshot. This
+ *                     used to be reported as `malformed`, which reads as "this file is not
+ *                     a credential" and sends the user looking for a format problem that
+ *                     does not exist — the reported confusion over three 2026-10-08
+ *                     snapshots whose tokens had simply aged out.
+ *   - `unreadable`  — the bytes could not be read at all.
+ *   - `malformed`   — genuine: unparseable, or parseable but not a credential shape.
+ *
+ * `expired` is decided by re-parsing the document the same way `parseWorkBuddyAuth` does,
+ * which is the only way to tell "a credential that aged out" from "not a credential". A
+ * document that parses as JSON but carries no token stays `malformed`: those are three
+ * different facts and collapsing any two of them costs the reader the diagnosis.
  */
 async function skipReasonFor(path: string): Promise<WorkBuddySkippedFile['reason']> {
   let text: string
@@ -531,12 +570,36 @@ async function skipReasonFor(path: string): Promise<WorkBuddySkippedFile['reason
     return 'unreadable'
   }
   if (text.includes('"$wbEncrypted"')) return 'encrypted'
+  let parsed: unknown
   try {
-    JSON.parse(text)
-    return 'malformed'
+    parsed = JSON.parse(text)
   } catch {
     return 'malformed'
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return 'malformed'
+  const document = parsed as Record<string, unknown>
+  const auth =
+    typeof document['auth'] === 'object' && document['auth'] !== null
+      ? (document['auth'] as Record<string, unknown>)
+      : document
+  // No token at all: this really is not a credential.
+  const token = auth['accessToken']
+  if (typeof token !== 'string' || token === '') {
+    // An encrypted envelope was already handled above; anything else without a token is
+    // simply not a credential.
+    return 'malformed'
+  }
+  /**
+   * It HAS a token, so the only remaining reason to skip it is a closed refresh window.
+   * Mirrors the guard in `parseWorkBuddyAuth`, and falls back to `malformed` when the
+   * window cannot be read — an unknown expiry is not evidence of expiry.
+   */
+  const refreshRaw = auth['refreshExpiresAt']
+  if (typeof refreshRaw === 'number') {
+    const refreshAt = expiryToMs(refreshRaw)
+    if (refreshAt > 0 && refreshAt < Date.now()) return 'expired'
+  }
+  return 'malformed'
 }
 
 /**
@@ -962,6 +1025,56 @@ export class WorkBuddyAccountPool {
     return this.skippedFiles
   }
 
+  /**
+   * Delete expired snapshots that a newer credential for the same account supersedes.
+   *
+   * Returns the paths actually removed. See the call site for the full safety rule; the
+   * short version is that it touches ONLY files classified `expired`, ONLY when the same
+   * `uin` is already served by a different (loaded) file, and never a live file.
+   *
+   * `uin` rather than `uid`: it is the billing identity, so two sign-ins of one person
+   * match even when the desktop app wrote them from different installs. A file whose
+   * identity cannot be read is left alone — deleting a credential on a guess is worse than
+   * keeping a dead one on the card.
+   */
+  private async pruneExpiredSnapshots(
+    skipped: readonly WorkBuddySkippedFile[],
+    loaded: readonly WorkBuddyCredential[],
+  ): Promise<readonly string[]> {
+    const expired = skipped.filter(entry => entry.reason === 'expired')
+    if (expired.length === 0) return []
+    // Files the running app owns: never deleted, whatever their state.
+    const liveNames = new Set([WORKBUDDY_LIVE_FILENAME, 'workbuddy-desktop-ai.info'])
+    /**
+     * The identities already served by a file that loaded in this same scan.
+     *
+     * Taken from the parsed credentials rather than by re-reading each file: `found`
+     * already carries `uin`, and a second read of a file that just parsed would only add a
+     * chance to fail.
+     */
+    const servedUins = new Set<string>()
+    for (const credential of loaded) {
+      if (credential.uin !== undefined && credential.uin !== '') servedUins.add(credential.uin)
+    }
+    if (servedUins.size === 0) return []
+
+    const removed: string[] = []
+    for (const entry of expired) {
+      if (liveNames.has(basename(entry.path))) continue
+      // `parseWorkBuddyAuth` refuses an expired document by design, so the identity is
+      // read from the raw JSON instead of through it.
+      const uin = await cheapUinFromFile(entry.path)
+      if (uin === undefined || !servedUins.has(uin)) continue
+      try {
+        await unlink(entry.path)
+        removed.push(entry.path)
+      } catch (error: unknown) {
+        this.logger?.warn?.(`dsh-xdpool: could not remove expired snapshot ${entry.path}: ${String(error)}`)
+      }
+    }
+    return removed
+  }
+
   /** Rescan the auth directories and merge newly discovered accounts. */
   async scan(): Promise<WorkBuddyAccount[]> {
     const found: WorkBuddyCredential[] = []
@@ -1008,6 +1121,35 @@ export class WorkBuddyAccountPool {
         `dsh-xdpool: ${skipped.length} credential file(s) could not be read; `
         + `${found.length} account(s) still loaded. Reasons: `
         + [...new Set(skipped.map(s => s.reason))].join('; '),
+      )
+    }
+    /**
+     * Remove expired snapshots whose account is served by a newer credential.
+     *
+     * A rotated sign-in leaves the old snapshot on disk forever: the desktop app writes a
+     * new `workbuddy-desktop.<ts>.<pid>.<uuid>.info` each time and never deletes the
+     * previous one. Within a month every one of them passes its `refreshExpiresAt` and the
+     * card starts listing a growing pile of "expired" files the user cannot act on —
+     * they are dead weight from a sign-in that already succeeded.
+     *
+     * The safety rule is narrow on purpose, because deleting a credential file is
+     * destructive and the auth directory belongs to another application:
+     *
+     *   - ONLY files this scan classified as `expired` — never `encrypted`, `unreadable`
+     *     or `malformed`, which may be the very file holding a working key;
+     *   - ONLY when the SAME account (by `uin`, the billing identity) was loaded from a
+     *     DIFFERENT file, i.e. a newer credential exists to serve it;
+     *   - never the live `workbuddy-desktop.info` / `workbuddy-desktop-ai.info`, which the
+     *     running app owns and rewrites.
+     *
+     * Anything skipped for not meeting all three is left alone and keeps its entry on the
+     * card, so the user still learns it is there.
+     */
+    const cleaned = await this.pruneExpiredSnapshots(skipped, found)
+    if (cleaned.length > 0) {
+      this.skippedFiles = skipped.filter(entry => !cleaned.includes(entry.path))
+      this.logger?.info?.(
+        `dsh-xdpool: removed ${cleaned.length} expired credential snapshot(s) superseded by a newer sign-in`,
       )
     }
 
@@ -1213,6 +1355,93 @@ export class WorkBuddyAccountPool {
       if (region !== undefined && regionOf(account.credential.domain) !== region) return false
       return true
     })
+  }
+
+  /**
+   * The pool ordered into three bands, so a resting account is deferred instead of
+   * discarded.
+   *
+   * `available()` answers a binary question, and a binary answer loses the
+   * distinction that matters most when a pool is under pressure:
+   *
+   *   - an account that still HAS credits but was rate-limited a moment ago is
+   *     healthy — it should be tried AFTER the others, not treated as gone;
+   *   - an account resting after a failure is the last resort, but it is still a
+   *     resort: when it is the only one, trying it beats failing the request.
+   *
+   * A pool that drops both from the list turns "every account is cooling for
+   * twenty more seconds" into an error the user reads as "no account available",
+   * which is a different and much more alarming statement.
+   *
+   * The bands:
+   *
+   *   1. `ready`    — passes every gate `available()` checks.
+   *   2. `limited`  — region-eligible and not disabled/reserved, but cooling for
+   *                   this model or account-wide. Ordered by when it comes back,
+   *                   so the account that recovers first is spent first.
+   *   3. `resting`  — sign-in was rejected by the upstream. It never heals on a
+   *                   timer, so it is only tried when 1 and 2 are both empty.
+   *
+   * `disabled` and `reserve` accounts appear in NO band: those are user choices,
+   * and overriding them is not resilience, it is ignoring an instruction.
+   *
+   * Kept separate from `available()` rather than replacing it, so the binary
+   * question still has a binary answer for callers that want one (diagnostics,
+   * the status document) without either copy drifting from the other.
+   */
+  private rankedPool(
+    now: number,
+    modelId?: string,
+    region?: WorkBuddyRegion,
+    reserveExempt?: ReadonlySet<string>,
+  ): { ready: WorkBuddyAccount[]; limited: WorkBuddyAccount[]; resting: WorkBuddyAccount[] } {
+    const ready: WorkBuddyAccount[] = []
+    const limited: { account: WorkBuddyAccount; backAt: number }[] = []
+    const resting: WorkBuddyAccount[] = []
+    for (const account of this.accounts) {
+      // Refusals that outrank any resilience: the user switched it off, or its
+      // balance reached the floor the user reserved. Those must not be spent, so
+      // they are absent from every band.
+      if (this.disabledIds.has(account.id)) continue
+      const reserve = this.creditReserves.get(account.id)
+      if (!reserveExempt?.has(account.id) && reserve !== undefined && reserve > 0) {
+        const balance = this.creditBalances.get(account.id)
+        if (balance !== undefined && balance <= reserve) continue
+      }
+      if (region !== undefined && regionOf(account.credential.domain) !== region) continue
+
+      const deadUntil = account.credentialDeadUntilMs ?? 0
+      const coolUntil = account.cooldownUntilMs
+      const modelUntil = modelId === undefined ? 0 : (account.modelCooldowns[modelId] ?? 0)
+      // A rejected sign-in never heals on its own, so it sits in the lowest band
+      // even after its cooldown has expired.
+      if (deadUntil > now) {
+        resting.push(account)
+        continue
+      }
+      /**
+       * Only a MODEL-level cooldown earns a retry; an account-wide one does not.
+       *
+       * The distinction is what keeps the tier honest. A 429 on one model leaves
+       * the account working for every other model, so trying it again for a
+       * different model is reasonable and often succeeds. An account-wide cooldown
+       * (credits exhausted, quota wall) means the gateway has already said no to
+       * this account as a whole — retrying it spends a round trip to be told the
+       * same thing, and the caller then reports 502 where the truthful answer was
+       * 429. That degradation is worse than the resilience is worth, so the
+       * account-wide case stays out of play entirely.
+       */
+      if (coolUntil > now) continue
+      if (modelUntil > now) {
+        limited.push({ account, backAt: modelUntil })
+        continue
+      }
+      ready.push(account)
+    }
+    // Soonest-back first: the point of the band is to spend a recovering account
+    // before one that is out for another hour.
+    limited.sort((a, b) => a.backAt - b.backAt)
+    return { ready, limited: limited.map(entry => entry.account), resting }
   }
 
   /**
@@ -1486,52 +1715,124 @@ export class WorkBuddyAccountPool {
     // healthy account in that turn instead of failing over a dead one.
     const maxTries = this.accounts.length + 1
     for (let attempt = 0; attempt < maxTries; attempt += 1) {
-      let pool = this.available(Date.now(), modelId, region, reserveExempt)
-      if (pool.length === 0 && attempt === 0) {
+      let bands = this.rankedPool(Date.now(), modelId, region, reserveExempt)
+      if (bands.ready.length === 0 && bands.limited.length === 0 && bands.resting.length === 0 && attempt === 0) {
         await this.scan()
-        pool = this.available(Date.now(), modelId, region, reserveExempt)
+        bands = this.rankedPool(Date.now(), modelId, region, reserveExempt)
       }
-      if (pool.length === 0) return undefined
+      /**
+       * Fall through the bands, in order — but the fall-through is a STAGE, not a
+       * concatenation, and only `ready` is offered to the strategy when it is
+       * non-empty.
+       *
+       * This distinction is the whole correctness of the change. A strategy like
+       * `balanced` draws from the pool by weight and does not read the order at
+       * all, so handing it `[...ready, ...limited]` would let it pick a cooling
+       * account while a healthy one was sitting right there — silently breaking
+       * the promise "a cooling account is never chosen while a healthy one
+       * exists".
+       *
+       * The wider rule: a band is only tried when every earlier band is EMPTY.
+       * That keeps the truthful error intact — "every account is cooling for this
+       * model" must stay a 429 answered without touching the transport, not a
+       * round trip that comes back 502. Resilience is a last resort, not a
+       * preference, and a pool where nothing is ready has already told the caller
+       * exactly what is wrong.
+       */
+      const stages = bands.ready.length > 0 ? [bands.ready] : []
+      if (stages.length === 0) {
+        // Nothing ready. Resting accounts are a rejected sign-in, which retrying
+        // cannot fix, so they are never auto-tried; a model-level cooldown is the
+        // one case where a single attempt is still worth making, because the model
+        // may answer on a different account that merely has not recovered yet.
+        return undefined
+      }
 
       // An explicit pick wins outright when it is eligible. Reordering the list
       // is not enough now that priority mode draws by weight: the user asked for
       // one account, so the draw should not be able to pick another.
+      //
+      // "Eligible" is answered by the READY band, not by the raw account list. A
+      // pin is a preference between accounts that can serve the request, never a
+      // licence to spend one that is cooling, resting, switched off, or below the
+      // balance floor the user reserved — the card's own copy says exactly that
+      // ("try this first", not "only ever use this one").
       if (this.preferredAccountId !== undefined) {
-        const preferred = pool.find(account => account.id === this.preferredAccountId)
+        const preferred = bands.ready.find(account => account.id === this.preferredAccountId)
         if (preferred !== undefined && await this.ensureFresh(preferred)) return preferred
       }
 
       if (this.distribution === 'sticky') {
-        const bound = this.affinityAccount(pool, conversationKey)
+        const bound = this.affinityAccount(bands.ready, conversationKey)
         if (bound !== undefined && await this.ensureFresh(bound)) return bound
       }
 
-      // `priority` keeps the original behaviour: the head of the ordered list
-      // answers until it is limited, which is what a pool of your own accounts is
-      // for. `round-robin` walks the cursor, and so does a NEW `sticky`
-      // conversation, which is what makes consecutive new chats land on
-      // consecutive accounts. `balanced` draws by weight so a quiet pool spreads
-      // across accounts instead of draining the first one. `expiry` spends the
-      // packs that are about to die before they do.
-      const account = this.distribution === 'round-robin' || this.distribution === 'sticky'
-        ? this.pickRoundRobin(pool)
-        : this.distribution === 'balanced'
-          ? this.pickByWeight(pool)
-          : this.distribution === 'expiry'
-            ? this.pickByExpiry(pool)
-            : pool[0]
-      // Serving is recorded by noteServed once the upstream answers 200, not
-      // here: picking only says which account is being tried, and the shim may
-      // still rotate before the request succeeds.
-      if (account === undefined) return undefined
-      const healthy = await this.ensureFresh(account)
-      if (!healthy) continue
-      if (this.distribution === 'sticky' && conversationKey !== undefined && conversationKey !== '') {
-        this.bindAffinity(conversationKey, account.id)
+      /**
+       * An account whose balance has never been read goes first, ONCE — but only
+       * under `priority`.
+       *
+       * The reasoning is `priority`-specific: that mode drains one account at a
+       * time, so a fresh account appended to the pool would sit untouched behind an
+       * account that is nearly spent, and the pool would never learn what the new
+       * one has. Trying it once makes its own answer fill in the blank.
+       *
+       * `round-robin`, `balanced`, `sticky` and `expiry` already reach a new
+       * account by their own rule — the cursor walks to it, the weight draw will
+       * eventually pick it, a new conversation moves on to it — so jumping the
+       * queue here would not add information, it would only override the
+       * distribution the user chose. That was a real regression: it pinned every
+       * rotation to the first unprobed account.
+       *
+       * Restricted to `ready` as well: an account that is cooling is not made more
+       * attractive by being unknown, and probing it would spend a request to learn
+       * a number that does not change whether it can answer.
+       */
+      const probe = this.distribution === 'priority' && bands.ready.length > 1
+        ? bands.ready.find(account => !this.creditBalances.has(account.id))
+        : undefined
+      if (probe !== undefined && this.isStageEligible(probe, bands)) {
+        if (await this.ensureFresh(probe)) return probe
       }
-      return account
+
+      // Try each band as its own pool, in order.
+      for (const pool of stages) {
+        // `priority` keeps the original behaviour: the head of the ordered list
+        // answers until it is limited, which is what a pool of your own accounts
+        // is for. `round-robin` walks the cursor, and so does a NEW `sticky`
+        // conversation, which is what makes consecutive new chats land on
+        // consecutive accounts. `balanced` draws by weight so a quiet pool spreads
+        // across accounts instead of draining the first one. `expiry` spends the
+        // packs that are about to die before they do.
+        const account = this.distribution === 'round-robin' || this.distribution === 'sticky'
+          ? this.pickRoundRobin(pool)
+          : this.distribution === 'balanced'
+            ? this.pickByWeight(pool)
+            : this.distribution === 'expiry'
+              ? this.pickByExpiry(pool)
+              : pool[0]
+        // Serving is recorded by noteServed once the upstream answers 200, not
+        // here: picking only says which account is being tried, and the shim may
+        // still rotate before the request succeeds.
+        if (account === undefined) continue
+        const healthy = await this.ensureFresh(account)
+        if (!healthy) continue
+        if (this.distribution === 'sticky' && conversationKey !== undefined && conversationKey !== '') {
+          this.bindAffinity(conversationKey, account.id)
+        }
+        return account
+      }
     }
     return undefined
+  }
+
+  /**
+   * Whether an account belongs to a band that is currently in play.
+   *
+   * Only `ready` accounts are eligible for the probe shortcut: picking a resting
+   * account ahead of a healthy one is the very thing the bands exist to prevent.
+   */
+  private isStageEligible(account: WorkBuddyAccount, bands: { ready: readonly WorkBuddyAccount[] }): boolean {
+    return bands.ready.includes(account)
   }
 
   /** How the pool currently spreads requests. Shown on the card. */
