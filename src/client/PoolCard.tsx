@@ -282,10 +282,14 @@ interface RegionCardModel {
   }
   readonly activeAccount: PoolWebAccount | undefined
   /**
-   * CN only: the international gateway has no growth system at all, so the
-   * automation pane there would be a switch that can never do anything. That is
-   * also why the whole field is typed optional — "not applicable" is a real
-   * answer here, not a missing value.
+   * CN only: the schedule is ONE shared setting on a ONE shared scheduler, so the
+   * pane that edits it lives on the domestic card only — a second switch on the
+   * international card would edit the same numbers and could disagree with it.
+   * (This is a UI decision, not a statement about that gateway: `report` and
+   * `streak` do run there, see `JOB_REGION_SCOPE` in scheduler.ts.)
+   *
+   * That is also why the whole field is typed optional — "not applicable here"
+   * is a real answer, not a missing value.
    */
   readonly automation?: PoolWebStatus['automation'] | undefined
   readonly automationTotals: AutomationTotals
@@ -1292,10 +1296,10 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
    * settings document stores it: the schedule fields must be carried along, or a
    * save would drop the hour lists the scheduler is running on.
    *
-   * The schedule is CN-only (the international gateway has no growth system at
-   * all), so this is written from the CN card and both keys are refreshed: the
-   * scheduler is one shared process, and a stale CN number showing under the
-   * international card would be a lie.
+   * The pane is rendered on the CN card only (see `automation` above), so this is
+   * written from there and both keys are refreshed: the scheduler is one shared
+   * process, and a stale CN number showing under the international card would be
+   * a lie.
    */
   const setAutomationEnabled = async (region: PoolRegion, enabled: boolean): Promise<void> => {
     const write = settingsScope?.set

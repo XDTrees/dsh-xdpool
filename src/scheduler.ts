@@ -18,13 +18,15 @@
  *
  * Everything is serial and failure-isolated: one account throwing skips that
  * account and continues with the next, and one job throwing never stops the
- * loop. `global`-region accounts are skipped entirely — the international
- * gateway has no growth/task system, so calling it would only produce noise.
+ * loop. `global`-region accounts take part in the jobs that actually exist on
+ * that gateway (`report` and `streak` both do — the daily-active credit depends
+ * on the report), and are held out of the ones that do not (`tasks`, `travel`,
+ * `compensation`). See `JOB_REGION_SCOPE` for the per-job reasons.
  */
 
 import type { WorkBuddyAccount, WorkBuddyAccountPool, WorkBuddyCredential } from './accounts'
 import { randomUUID } from 'node:crypto'
-import { isAlreadyCheckin, isNoCompensation, regionOf } from './upstream'
+import { isAlreadyCheckin, isCheckinUnavailable, isNoCompensation, regionOf } from './upstream'
 import type { WorkBuddyRegion, WorkBuddyTask, WorkBuddyUpstreamClient } from './upstream'
 import {
   APPEARANCE_THEME_KEY, LIGHTHOUSE_EXPERT_ID, automationChain, appearanceChain, buddyAppChain,
@@ -506,21 +508,45 @@ export function isFireHour(now: Date, hours: readonly number[]): boolean {
  *
  * So the scope is per job, and the default for a job that is not named is `cn`:
  * a new job must opt in explicitly rather than inherit an accident.
+ *
+ * Measured against the live international gateway (`www.workbuddy.ai`,
+ * 2026-11-10) rather than assumed — three of the six jobs do work there, and the
+ * old comment's claim that the gateway "has no activity report and no streak
+ * ladder" was simply wrong:
+ *
+ * - `POST /v2/report` answers 200 `{code:0}` and moves the very next
+ *   `GET /activity/growth/streak` read from `days: 0` to `days: 1` on an account
+ *   with no prior history. That is the whole daily-active credit mechanism: each
+ *   recorded active day grants a 30-credit `Bonus Pack` (31-day expiry, granted
+ *   server-side the following morning — there is no claim endpoint).
+ * - `GET /activity/growth/streak` returns the same shape as CN (`streak.days`,
+ *   `next_tier`, and `redemption_status.tiers[].{tier,days,credit,energy,cards,
+ *   chances}`), so the streak ladder and its `7d/14d/28d` redemption work too.
+ * - Check-in is the one thing that genuinely does not: the activity is closed
+ *   (`active: false`) and `daily-checkin` answers `签到活动未开启或已过期`, which
+ *   `isAlreadyCheckin` does not recognise — hence the misleading `failed: +1`.
+ *
+ * The task centre also exists (`GET /v2/activity/growth/tasks` returns five
+ * tasks) but is NOT safe to enable: its entries key on numeric `task_id` + `code`
+ * with no `task_code`, no `reward_credit`/`reward_energy` and no `current`/
+ * `target`, so `parseTask` drops them and `tasks/accept` answers `task not found`.
+ * Making that work is a parsing job with no measurable payout, so it stays off.
  */
 const JOB_REGION_SCOPE: Readonly<Record<string, readonly WorkBuddyRegion[]>> = {
-  // Growth jobs are CN-only: the international gateway has no task centre, no
-  // activity report and no streak ladder, so calling those endpoints there would
-  // only produce 404s and noise.
-  report: ['cn'],
+  // Both live on the growth gateway, which exists in both regions.
+  report: ['cn', 'global'],
+  streak: ['cn', 'global'],
+  // Task centre + travel + compensation are CN-only: the international entries
+  // use a different task schema (see above), `buddy/info` reports no buddy, and
+  // the compensation routes are served by the CN billing host only.
   tasks: ['cn'],
-  streak: ['cn'],
   travel: ['cn'],
   compensation: ['cn'],
-  // Check-in is the one job that pays credits on both gateways, and it is the
-  // safest to try: idempotent, one call, and "already checked in" is already
-  // classified as success rather than failure. So a global account is allowed
-  // here — if the endpoint turns out not to exist there, the run records one
-  // skipped item and the rest of the pool is unaffected.
+  // Check-in pays credits on both gateways, and it is the safest to try:
+  // idempotent, one call, and "already checked in" is already classified as
+  // success rather than failure. So a global account is allowed here — if the
+  // endpoint turns out not to exist there, the run records one skipped item and
+  // the rest of the pool is unaffected.
   checkin: ['cn', 'global'],
 }
 
@@ -1187,14 +1213,27 @@ export class WorkBuddyScheduler {
               // bad minute must not cost the user their check-in — in which case
               // the old behaviour (claim, translate the error) is the fallback.
               let alreadyDone = false
+              let activityClosed = false
               try {
                 const status = await this.client.fetchCheckinStatus(account.credential)
                 alreadyDone = status.todayCheckedIn === true
+                // `active: false` means the gateway runs no check-in activity at
+                // all — the international one answers exactly this. Skip the
+                // write: claiming would only earn a 400 and a failure row.
+                //
+                // Strictly `=== false`: an older upstream that omits the field
+                // must fall through to the claim path, not be read as "closed".
+                activityClosed = status.active === false
               } catch (error: unknown) {
                 this.logger.warn?.(`automation checkin ${account.label}: status read failed, claiming anyway:`, error)
               }
               if (alreadyDone) {
                 this.logger.info?.(`automation checkin ${account.label}: already done today (read, not claimed)`)
+                break
+              }
+              if (activityClosed) {
+                this.logger.info?.(`automation checkin ${account.label}: no check-in activity on this gateway, skipped`)
+                items.push({ title: '每日签到', status: 'skipped', note: 'this gateway runs no check-in activity' })
                 break
               }
               try {
@@ -1210,7 +1249,13 @@ export class WorkBuddyScheduler {
                 // Still translated, because the status read above can fail or
                 // race another client: "already checked in" arriving as an error
                 // is an idempotent success, and counting it as a failure would
-                // make a healthy account look broken.
+                // make a healthy account look broken. Same for "the activity is
+                // not running here" — nothing was collected, but nothing broke.
+                if (isCheckinUnavailable(error)) {
+                  this.logger.info?.(`automation checkin ${account.label}: no check-in activity on this gateway, skipped`)
+                  items.push({ title: '每日签到', status: 'skipped', note: 'this gateway runs no check-in activity' })
+                  break
+                }
                 if (!isAlreadyCheckin(error)) throw error
                 this.logger.info?.(`automation checkin ${account.label}: already done today`)
               }

@@ -480,8 +480,10 @@ describe('the disclosures open in place', () => {
   })
 
   it('keeps the two tool buttons on the domestic lane only', () => {
-    // The international gateway has no growth system at all, so an automation
-    // switch there would be a control that can never do anything.
+    // The schedule is one shared setting on one shared scheduler, so only the CN
+    // card edits it — a second switch on the international card would drive the
+    // same numbers. (This is a UI decision: `report` and `streak` DO run against
+    // that gateway — see JOB_REGION_SCOPE in src/scheduler.ts.)
     expect(card).toContain('dsm-xdpool-region-cntools')
     expect(card).toMatch(/region === 'cn' \? here\?\.automation : undefined/)
     // And the card it reads from must be this lane's status, not the focused one.
