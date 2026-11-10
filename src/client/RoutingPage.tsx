@@ -111,9 +111,26 @@ function draftOf(combo: PoolWebCombo): ChainDraft {
    * can serve right now. Dropping them would make a save silently delete members
    * the user never asked to remove — the "保存了没法用" class of data loss.
    */
-  const platforms = combo.platforms.map(group => ({ owner: group.owner, models: [...group.models] }))
-  const known = new Set(combo.models)
-  for (const modelId of combo.missing) {
+  /**
+   * A chain read from disk may be missing `platforms` entirely — an older shape, a
+   * hand-edited file, or a partial write — and either level can be absent:
+   * `platforms` itself, or one group's `models` array inside it.
+   *
+   * Both used to be spread unguarded, so a chain in either state crashed the whole
+   * routing page with `Cannot read properties of undefined (reading 'length')` — a
+   * message that names neither the chain nor the field, leaving nothing to act on.
+   * Normalising here means every reader below can treat the shape as total.
+   */
+  const platforms = (Array.isArray(combo.platforms) ? combo.platforms : [])
+    .filter(group => group !== null && typeof group === 'object')
+    .map(group => ({
+      owner: typeof group.owner === 'string' ? group.owner : 'workbuddy',
+      models: Array.isArray(group.models)
+        ? [...group.models].filter(model => typeof model === 'string')
+        : [],
+    }))
+  const known = new Set(Array.isArray(combo.models) ? combo.models : [])
+  for (const modelId of Array.isArray(combo.missing) ? combo.missing : []) {
     if (known.has(modelId)) continue
     const slash = modelId.indexOf('/')
     const owner = slash === -1 ? 'workbuddy' : modelId.slice(0, slash)
@@ -131,7 +148,11 @@ function draftOf(combo: PoolWebCombo): ChainDraft {
     // `flattenDraft(platforms)`: grouping is lossy for an interleaved chain, so
     // deriving it here would reorder the user's fallbacks the moment the page
     // rendered, and the next Save would write that new order back.
-    flat: [...combo.models, ...combo.missing.filter(id => !combo.models.includes(id))],
+    flat: [
+      ...(Array.isArray(combo.models) ? combo.models : []),
+      ...(Array.isArray(combo.missing) ? combo.missing : [])
+        .filter(id => !(Array.isArray(combo.models) ? combo.models : []).includes(id)),
+    ],
     strategy: combo.strategy,
     stickyLimit: combo.stickyLimit,
     enabled: combo.enabled,

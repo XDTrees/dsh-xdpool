@@ -184,8 +184,12 @@ describe('reading the pack ledger', () => {
     const dir = await mkdtemp(join(tmpdir(), 'xdpool-ledger-'))
     try {
       await mkdir(join(dir, 'channel-pack'), { recursive: true })
+      // Dated "today" rather than a literal, because the window is the LOCAL calendar day
+      // now; a hard-coded date falls outside it the moment the suite runs on another day.
+      const today = new Date()
+      const key = `${String(today.getFullYear())}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
       await writeFile(join(dir, 'channel-pack', 'token-ledger.json'), JSON.stringify({
-        days: { '2026-11-08': { 'renamed-format': { requests: 1 } } },
+        days: { [key]: { 'renamed-format': { requests: 1 } } },
       }), 'utf8')
       const report = await readCreditSpend({ home: dir, days: 1, rateOf: () => undefined })
       expect(report.unreadable).toBe(1)

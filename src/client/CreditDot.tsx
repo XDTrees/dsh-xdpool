@@ -412,7 +412,23 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
     }
   }, [open])
 
-  if (failed || snapshot === undefined) return null
+  /**
+   * The dot itself is never withheld.
+   *
+   * `failed || snapshot === undefined` used to `return null` for the WHOLE component, which
+   * removed the trigger as well as the panel. The reported symptom was "clicking the green
+   * credit icon opens a blank page": a newly created session has no snapshot yet, so the dot
+   * briefly existed (green, from an earlier paint) and then the component unmounted, leaving
+   * an empty popover shell on screen.
+   *
+   * Rendering the dot unconditionally and explaining the absence INSIDE the panel is the
+   * only version where a click always produces an answer — which is the entire job of a
+   * status indicator.
+   *
+   * `snapshot === undefined` before the first successful load reads as grey: an unknown
+   * balance must not be presented as "you are fine".
+   */
+  const ready = snapshot !== undefined && !failed
 
   /**
    * Green when the serving channel still has credits, grey when it does not.
@@ -421,9 +437,8 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
    * reserved floor, so a non-zero total is genuinely spendable. A channel that could not
    * be read is grey — the dot must not claim "you are fine" on missing data.
    */
-  const alive = snapshot.channel !== undefined && snapshot.channel.total > 0
-  const label = alive
-    ? (t?.('dot.alive') ?? '还有积分')
+  const alive = ready && snapshot.channel !== undefined && snapshot.channel.total > 0
+  const label = alive    ? (t?.('dot.alive') ?? '还有积分')
     : (t?.('dot.empty') ?? '没有积分了')
 
   return (
@@ -442,7 +457,7 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
         data-state={alive ? 'alive' : 'empty'}
         aria-label={label}
         aria-expanded={open}
-        title={`${label} · ${snapshot.channel === undefined ? '—' : grouped(snapshot.channel.total)}`}
+        title={`${label} · ${snapshot?.channel === undefined ? '—' : grouped(snapshot.channel.total)}`}
         onClick={() => { setOpen(current => !current) }}
       >
         {/* The plugin's own pool glyph in a mask, not a plain circle: it says WHICH
@@ -482,6 +497,23 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
             one lane (a `workbuddy.ai` account alongside the domestic ones); with a single
             lane the header already says everything.
           */}
+          {/*
+            When the data is not there yet, say so INSIDE the panel.
+
+            The alternative — which shipped — was to render nothing at all, so a click on a
+            freshly created session's dot produced an empty popover: the "clicking the green
+            credit icon opens a blank page" report. A status indicator must always answer
+            its own click; "not loaded yet" is an answer, an empty box is not.
+          */}
+          {!ready ? (
+            <p className="dsm-xdpool-dotpanel-empty">
+              {failed
+                ? (t?.('dot.loadFailed') ?? '积分数据读取失败')
+                : (t?.('dot.loading') ?? '正在读取积分…')}
+            </p>
+          ) : null}
+          {!ready ? null : (
+            <>
           <div className="dsm-xdpool-dotpanel-head">
             <span className="dsm-xdpool-dotpanel-channel">
               {snapshot.all.length === 0
@@ -538,6 +570,8 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
               </div>
             )
             : null}
+            </>
+          )}
         </div>
       )}
     </span>

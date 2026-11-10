@@ -36894,7 +36894,19 @@ var LobsteraiAdapter = class extends LlmAdapter3 {
    */
   providerInfo(provider) {
     const id = typeof provider === "string" && provider.length > 0 ? provider : this.product.id;
-    return { id, name: this.product.displayName };
+    // [xdpool-local] Present this lane under the name the rest of the plugin uses.
+    //
+    // `channels.ts` (REGISTERED_CHANNELS), `region-card.tsx` and
+    // `ChannelPoolSection.tsx` all call this lane 「WorkBuddy 国内版」, while the
+    // vendor product constant still carries the upstream name "CodeBuddy (腾讯)".
+    // One lane rendered under two names in one product is issue #119: the pool card
+    // and the model picker disagreed about which product the user had signed in to.
+    //
+    // Overridden at the PRESENTATION layer rather than in the constant, because
+    // `throwIfAllAccountsRateLimited` also reads `product.displayName` for its error
+    // text; changing the constant would silently rewrite those messages too.
+    const name = id === "buddy" ? "WorkBuddy 国内版" : this.product.displayName;
+    return { id, name };
   }
   /**
    * 懒加载远端模型目录（仅拉取一次）。

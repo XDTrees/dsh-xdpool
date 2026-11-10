@@ -918,7 +918,17 @@ export function apply(ctx: Context, config: Config = {}): void {
     // user's curated few models to the entire catalog. Losing a selection must
     // degrade to "unchanged", never to "everything".
     const fallbackSelection = (region: 'cn' | 'global') => {
-      const legacyEmpty = legacySelection.enabledModelIds === undefined
+      /**
+       * An empty ARRAY counts as absent here too.
+       *
+       * The legacy keys may be present but empty: a host that initialises
+       * `enabledModelIds: []` before the picker is first used (DSH 0.2.2-rc.1 does) makes
+       * "the key exists" a very different statement from "the user chose models". Reading
+       * `[]` as a real selection narrowed the catalog to zero models — the `has no
+       * configured model "<id>"` report in issue #122.
+       */
+      const list = legacySelection.enabledModelIds
+      const legacyEmpty = (list === undefined || list.length === 0)
         && legacySelection.imageModelIds === undefined
         && legacySelection.contextBudgets === undefined
       return legacyEmpty ? core.catalogs[region].currentSelection() : legacySelection
