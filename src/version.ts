@@ -11,4 +11,4 @@
  *
  * @module dsh-xdpool/version
  */
-export const POOL_VERSION = '2.6.4'
+export const POOL_VERSION = '2.6.5'

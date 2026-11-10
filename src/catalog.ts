@@ -182,7 +182,21 @@ export class WorkBuddyCatalog {
    */
   visible(): readonly WorkBuddyModelInfo[] {
     const enabled = this.selection.enabledModelIds
-    const allow = enabled === undefined ? undefined : new Set(enabled)
+    /**
+     * An EMPTY list means "nothing has been chosen yet", not "serve nothing".
+     *
+     * `undefined` was already treated as "all enabled", but `[]` fell through to an empty
+     * allow-set and filtered out every model. A host that writes the legacy key with a
+     * default `[]` — DSH 0.2.2-rc.1 does exactly that before the picker has ever been
+     * used — therefore made this catalog publish ZERO models, and the picker and every
+     * "test" call reported `has no configured model "<id>"` for models that were plainly
+     * listed on the card (issue #122).
+     *
+     * The two states cannot be distinguished by intent afterwards, so the safe reading is
+     * chosen: an empty selection is indistinguishable from no selection, and "everything"
+     * is recoverable in one click whereas "nothing" looks like a broken install.
+     */
+    const allow = enabled === undefined || enabled.length === 0 ? undefined : new Set(enabled)
     const images = this.selection.imageModelIds
     const imageSet = images === undefined ? undefined : new Set(images)
     const budgets = this.selection.contextBudgets

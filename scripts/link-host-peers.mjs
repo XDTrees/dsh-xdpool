@@ -1,46 +1,50 @@
 /**
  * Link the host-provided peer dependencies into this package's node_modules.
  *
- * WHY THIS IS NEEDED
+ * WHY THIS EXISTS
  *
- * Seven of this plugin's dependencies are `peerDependencies`: they are supplied by the
- * host, not by npm. A manual copy of the package into `node_modules/dsh-xdpool` resolved
- * them by walking up to the host's own tree, so nothing was ever missing. Installing
- * normally breaks that walk: the package ends up beside the host rather than inside it,
- * and `import` fails with
+ * Seven of this plugin's dependencies are `peerDependencies`: the host supplies them, not
+ * npm. A manual copy of the package into `node_modules/dsh-xdpool` resolved them by walking
+ * up into the host's tree, so nothing was ever missing. Installing normally breaks that
+ * walk, and a top-level import failure prevents `apply()` from ever running — so EVERY web
+ * route is unregistered and the card renders empty while blaming the gateway.
  *
- *   Cannot find package '@earendil-works/pi-ai'
+ * WHAT IT MAY NOT DO: FAIL THE INSTALL
  *
- * which — being a top-level import failure — prevents `apply()` from ever running, so
- * EVERY web route is unregistered and the card renders empty while blaming the gateway.
+ * The script links what it can find and then stops. It does not exit non-zero when the
+ * host cannot be located, for a reason that two bug reports made concrete:
  *
- * WHAT IT DOES
+ *   - A PACKAGED host keeps its dependencies inside `app.asar`, and `fs.existsSync` in a
+ *     plain Node process cannot see inside an asar archive — only Electron's patched `fs`
+ *     can. So "not found" from here often means "invisible to this process", not "absent".
+ *   - The host resolves these peers itself at runtime. 2.6.3 shipped with no postinstall at
+ *     all and loaded fine on macOS for exactly that reason.
  *
- * For each peer dependency, find a copy the host actually runs with and point
- * `node_modules/<name>` at it. Junctions on Windows, symlinks elsewhere. Skipped when a
- * copy already resolves — an operator who installed a peer deliberately keeps theirs.
+ * The previous version treated a failed probe as proof of a broken install and exited 1,
+ * which made the plugin manager roll back a working upgrade. That is the worst outcome
+ * available: the user loses the new version to protect against a problem they did not have.
  *
- * WHERE IT LOOKS
+ * So the contract is now: link when the host is reachable, otherwise say what was not
+ * found and finish successfully. Only an actual failure to CREATE a link is reported, and
+ * even then as a warning — the plugin may still load through the host's own resolution.
  *
- * `DSH_HOST_ROOT` when set (the harness passes it), then the paths a packaged DSH
- * install actually uses. Both `resources/app/node_modules` and
- * `resources/app/dsh/node_modules` are searched because the host splits its tree between
- * them: `pi-ai` lives in the latter, `cordis` in the former.
+ * HOW RESOLUTION IS CHECKED
  *
- * FAILURE IS LOUD ON PURPOSE
+ * With ESM, not CJS. `@earendil-works/pi-ai` is ESM-only: its `exports` map has `types` and
+ * `import` but no `require` and no `./package.json` subpath. A `require.resolve()` of it
+ * throws ERR_PACKAGE_PATH_NOT_EXPORTED even when the package is installed and importable,
+ * which is precisely the false negative the reporter hit. `import.meta.resolve` asks the
+ * question the plugin will actually ask.
  *
- * A silently skipped link is what produced the blank panel. If a peer cannot be found the
- * script says which one and exits non-zero, so the install fails visibly instead of
- * producing a package that cannot load.
+ * @module dsh-xdpool/scripts/link-host-peers
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const PACKAGE_ROOT = resolve(HERE, '..')
-const REQUIRE = createRequire(import.meta.url)
+const ENTRY_URL = pathToFileURL(join(PACKAGE_ROOT, 'lib', 'index.js')).href
 
 /** The peer dependencies this plugin imports at runtime. */
 function peerNames() {
@@ -49,75 +53,141 @@ function peerNames() {
 }
 
 /**
- * Candidate host module roots, most specific first.
+ * Can the plugin resolve `name` from its own entry point?
  *
- * Derived from this file's own location as well, because when the host loads the plugin
- * from `app/dsh/node_modules`, two levels up IS the host root.
+ * `import.meta.resolve` answers with ESM conditions, which is what the plugin uses. It
+ * never throws for a missing package in current Node — it returns a URL that may not
+ * exist — so the answer is checked for existence as well.
+ *
+ * A `data:` or `node:` result is not a real package file and is treated as unresolved.
  */
-function hostRoots() {
-  const roots = []
-  const env = process.env['DSH_HOST_ROOT']
-  if (typeof env === 'string' && env !== '') roots.push(env)
-  // `<host>/resources/app/dsh/node_modules/dsh-xdpool` → `<host>/resources/app/dsh/node_modules`
-  roots.push(resolve(PACKAGE_ROOT, '..'))
-  // A source checkout beside the harness: look for the resources tree directly.
-  for (const base of [process.env['LOCALAPPDATA'], process.env['PROGRAMFILES']]) {
-    if (typeof base !== 'string' || base === '') continue
-    roots.push(join(base, 'DeepSeek Harness', 'resources', 'app', 'dsh', 'node_modules'))
-    roots.push(join(base, 'DeepSeek Harness', 'resources', 'app', 'node_modules'))
-  }
-  return roots
-}
-
-/** Resolve a package's directory without importing it. */
-function locate(name) {
+function resolvesFromEntry(name) {
   try {
-    return dirname(REQUIRE.resolve(`${name}/package.json`))
+    const url = import.meta.resolve(name, ENTRY_URL)
+    if (typeof url !== 'string' || url === '') return undefined
+    if (url.startsWith('node:') || url.startsWith('data:')) return undefined
+    return fileURLToPath(url)
   } catch {
-    // Some packages do not export package.json; fall back to the resolver's own answer.
-    try {
-      const entry = REQUIRE.resolve(name)
-      // Walk up to the package root — the first directory whose name is the package's.
-      let dir = dirname(entry)
-      const wanted = name.startsWith('@') ? name.split('/')[1] : name
-      while (dir !== dirname(dir)) {
-        if (dir.endsWith(`/${wanted}`) || dir.endsWith(`\\${wanted}`)) return dir
-        dir = dirname(dir)
-      }
-    } catch {
-      return undefined
-    }
     return undefined
   }
 }
 
 /**
- * When to ENFORCE.
+ * The package directory for `name`, whether or not it can be imported right now.
  *
- * This runs on `postinstall` of the published package, where a missing peer really does
- * mean a plugin that cannot load — and it must fail loudly there. But the same script also
- * runs when someone installs the repository for development or CI, where the host does not
- * exist and the peers are resolved from `devDependencies` instead. Failing there would
- * break every fresh clone and every pipeline for a condition that is not a problem.
- *
- * The two cases are told apart by whether this is a source checkout: `src/` ships in the
- * repository and not in the tarball (`files` lists `lib`, `vendor`, `scripts`…).
+ * The physical check comes FIRST because it is the only one that works for an ESM-only
+ * package whose `exports` map omits `./package.json`: `require.resolve(`${name}/package.json`)`
+ * throws ERR_PACKAGE_PATH_NOT_EXPORTED for `pi-ai` even with the package sitting on disk.
+ * That false negative used to send an already-linked peer back into the missing list, so a
+ * second `postinstall` run re-linked what it had just built.
  */
+function locate(name) {
+  // 1. On disk under this package's own node_modules — a junction we made earlier counts.
+  const physical = join(PACKAGE_ROOT, 'node_modules', name)
+  if (existsSync(join(physical, 'package.json'))) return physical
+  // 2. Whatever ESM resolves from the entry, which is the real question.
+  const resolved = resolvesFromEntry(name)
+  if (resolved !== undefined) {
+    // Walk up to the package root: the first directory named like the package.
+    const wanted = name.startsWith('@') ? name.split('/')[1] : name
+    let dir = dirname(resolved)
+    while (dir !== dirname(dir)) {
+      if (dir.endsWith(`/${wanted}`) || dir.endsWith(`\\${wanted}`)) return dir
+      dir = dirname(dir)
+    }
+    return dirname(resolved)
+  }
+  return undefined
+}
+
+/**
+ * Candidate host module roots.
+ *
+ * The host SPLITS its tree — `cordis` and the `@deepseek-ai/*` runtime in one place,
+ * `pi-ai` in another — so several roots are tried rather than one.
+ *
+ * `DSH_HOST_ROOT` is honoured when set, but note it is NOT injected by the host: two
+ * reporters verified that the plugin manager does not pass it. It exists for an operator
+ * who wants to point at a specific tree by hand.
+ *
+ * On a packaged install most of this is unverifiable from a plain Node process, because the
+ * dependencies live inside `app.asar` and `existsSync` cannot see in. That is expected and
+ * is why a miss is not an error.
+ */
+function hostRoots() {
+  const roots = []
+  const env = process.env['DSH_HOST_ROOT']
+  if (typeof env === 'string' && env !== '') roots.push(env)
+  // When the host loads the plugin from inside its own tree.
+  roots.push(resolve(PACKAGE_ROOT, '..'))
+  roots.push(resolve(PACKAGE_ROOT, '..', '..', '..'))
+  /**
+   * Derived from the running executable, which is the only signal that survives a
+   * non-default install drive — the reporter's harness sat on `F:` while every hard-coded
+   * guess pointed at `C:`. `process.execPath` is the Node or Electron binary doing the
+   * install, which for the bundled runtime lives inside the harness directory.
+   */
+  for (const up of [1, 2, 3, 4, 5]) {
+    const segments = [process.execPath]
+    for (let i = 0; i < up; i += 1) segments.push('..')
+    const base = resolve(...segments)
+    for (const app of ['app', join('app', 'dsh')]) {
+      roots.push(join(base, 'resources', app, 'node_modules'))
+    }
+    roots.push(join(base, 'node_modules'))
+  }
+  for (const base of HARNESS_BASES) {
+    if (typeof base !== 'string' || base === '') continue
+    for (const app of ['app', join('app', 'dsh')]) {
+      roots.push(join(base, 'resources', app, 'node_modules'))
+    }
+  }
+  return [...new Set(roots)]
+}
+
+/**
+ * Where a DSH install commonly sits, per platform.
+ *
+ * Every entry is a guess and a miss is silent, which is what makes listing several
+ * acceptable. `HARNESS_BASES` used to be Windows-only — the macOS reporter's whole
+ * `LOCALAPPDATA`/`PROGRAMFILES` loop simply never ran.
+ */
+const HARNESS_BASES = [
+  process.env['DSH_HARNESS_ROOT'],
+  // macOS: /Applications/DeepSeek Harness.app/Contents/Resources
+  '/Applications/DeepSeek Harness.app/Contents/Resources',
+  join(process.env['HOME'] ?? '', 'Applications', 'DeepSeek Harness.app', 'Contents', 'Resources'),
+  // Linux
+  join(process.env['HOME'] ?? '', '.local', 'share', 'deepseek-harness'),
+  '/opt/DeepSeek Harness',
+  // Windows
+  typeof process.env['LOCALAPPDATA'] === 'string' ? join(process.env['LOCALAPPDATA'], 'Programs', 'DeepSeek Harness') : undefined,
+  typeof process.env['LOCALAPPDATA'] === 'string' ? join(process.env['LOCALAPPDATA'], 'DeepSeek Harness') : undefined,
+  typeof process.env['ProgramW6432'] === 'string' ? process.env['ProgramW6432'] : undefined,
+  typeof process.env['PROGRAMFILES'] === 'string' ? process.env['PROGRAMFILES'] : undefined,
+]
+
+/** Whether this is a source checkout rather than an installed package. */
 const IS_SOURCE_CHECKOUT = existsSync(join(PACKAGE_ROOT, 'src'))
-const ENFORCE = !IS_SOURCE_CHECKOUT
 
 const linked = []
-const missing = []
+const alreadyResolved = []
+const notFound = []
+const failed = []
+
 for (const name of peerNames()) {
-  // Already resolvable: leave it alone. Someone who installed a peer on purpose keeps
-  // control, and re-linking would overwrite that choice.
-  if (locate(name) !== undefined) continue
+  // Already resolvable: leave it alone. Someone who installed a peer deliberately keeps
+  // control, and re-linking would overwrite that choice. This check is also what makes the
+  // script idempotent — a second run must not rebuild links it made the first time.
+  if (locate(name) !== undefined) { alreadyResolved.push(name); continue }
   let target
   for (const root of hostRoots()) {
     const candidate = join(root, name)
-    if (existsSync(candidate)) { target = candidate; break }
+    // `existsSync` cannot see inside `app.asar`; on a packaged host this simply misses and
+    // the peer is reported as not found, which is no longer fatal.
+    if (existsSync(join(candidate, 'package.json'))) { target = candidate; break }
   }
-  if (target === undefined) { missing.push(name); continue }
+  if (target === undefined) { notFound.push(name); continue }
   const dest = join(PACKAGE_ROOT, 'node_modules', name)
   try {
     mkdirSync(dirname(dest), { recursive: true })
@@ -129,7 +199,7 @@ for (const name of peerNames()) {
     symlinkSync(target, dest, process.platform === 'win32' ? 'junction' : 'dir')
     linked.push(`${name} → ${target}`)
   } catch (error) {
-    missing.push(`${name} (${error instanceof Error ? error.message : String(error)})`)
+    failed.push(`${name} (${error instanceof Error ? error.message : String(error)})`)
   }
 }
 
@@ -137,63 +207,55 @@ if (linked.length > 0) {
   process.stdout.write(`dsh-xdpool: linked ${String(linked.length)} host dependency(ies)\n`)
   for (const line of linked) process.stdout.write(`  ${line}\n`)
 }
-if (missing.length > 0) {
-  const where = IS_SOURCE_CHECKOUT
-    ? 'a source checkout, so the host is not expected to be present'
-    : 'an installed package, where a missing peer prevents the plugin from loading'
-  process.stderr.write(
-    `dsh-xdpool: could not satisfy ${String(missing.length)} peer dependency(ies) `
-    + `(${where}):\n`
-    + missing.map(name => `  ${name}\n`).join(''),
-  )
-  if (ENFORCE) {
-    process.stderr.write(
-      'The plugin will fail to load without them. Install them into this profile, or set\n'
-      + 'DSH_HOST_ROOT to the directory containing node_modules.\n',
-    )
-    // Hard failure on purpose: a silently skipped link is what produced a package that
-    // installed cleanly and then could not load at all.
-    process.exit(1)
-  }
-  // A source checkout keeps going: `devDependencies` provide these for build and test,
-  // and CI has no harness to link against. Failing here would break the pipeline for a
-  // condition that is not a defect.
-  process.stdout.write('dsh-xdpool: continuing — this looks like a development checkout\n')
-} else {
-  /**
-   * Self-check: confirm every peer RESOLVES from the package root.
-   *
-   * Not a full `import` of the entry: that would also pull the host's own runtime (cordis,
-   * the llm plumbing) and can only succeed inside a live harness, so it would fail in a
-   * source checkout and in CI for a reason unrelated to this script's job.
-   *
-   * Resolution is the exact property that broke: a top-level import failure aborts
-   * `apply()`, and every web route then goes unregistered while the card blames the
-   * gateway. Checking `require.resolve` from inside the package reproduces that failure
-   * without needing the host running.
-   */
-  const unresolved = []
-  const localRequire = createRequire(join(PACKAGE_ROOT, 'lib', 'index.js'))
-  for (const name of peerNames()) {
-    try {
-      localRequire.resolve(name)
-    } catch {
-      unresolved.push(name)
-    }
-  }
-  if (unresolved.length > 0) {
-    process.stderr.write(
-      `dsh-xdpool: ${String(unresolved.length)} peer dependency(ies) still do not resolve:\n`
-      + unresolved.map(name => `  ${name}\n`).join(''),
-    )
-    // Same split as above: fatal for an installed package, informational in a checkout.
-    if (ENFORCE) process.exit(1)
-    process.stdout.write('dsh-xdpool: continuing — this looks like a development checkout\n')
-  } else {
-    process.stdout.write('dsh-xdpool: all peer dependencies resolve; the build should load\n')
-  }
+if (alreadyResolved.length > 0 && linked.length === 0) {
+  process.stdout.write(`dsh-xdpool: all ${String(alreadyResolved.length)} peer dependencies already resolve\n`)
 }
 
-// Keep the unused helper referenced so a tree-shaker cannot hide it if this file is ever
-// bundled; it is intentionally exported for a maintenance script.
-export { readdirSync }
+/**
+ * Report, and deliberately do not fail.
+ *
+ * A packaged host hides these inside `app.asar` (invisible to a bare Node process) and
+ * resolves them itself at runtime — 2.6.3 shipped with no postinstall and loaded fine. So
+ * "not found from here" is not evidence of a broken install, and exiting non-zero on it
+ * rolled back working upgrades for macOS and Windows users alike.
+ */
+if (notFound.length > 0) {
+  process.stdout.write(
+    `dsh-xdpool: ${String(notFound.length)} peer dependency(ies) not visible from this process:\n`
+    + notFound.map(name => `  ${name}\n`).join('')
+    + (IS_SOURCE_CHECKOUT
+      ? 'Expected in a source checkout: build and test resolve them from devDependencies.\n'
+      : 'This is normal for a packaged host, which keeps them inside app.asar and resolves\n'
+        + 'them itself at runtime. Set DSH_HOST_ROOT to a directory containing node_modules\n'
+        + 'only if the plugin later fails to load.\n'),
+  )
+}
+if (failed.length > 0) {
+  // A link that could not be CREATED is a real problem, but still not fatal: the host may
+  // resolve the peer without our help. Worth a warning, not a rollback.
+  process.stdout.write(
+    `dsh-xdpool: could not link ${String(failed.length)} dependency(ies):\n`
+    + failed.map(name => `  ${name}\n`).join(''),
+  )
+}
+
+/**
+ * Final self-check, phrased as the plugin would phrase it.
+ *
+ * Uses ESM resolution rather than CJS: `pi-ai` is ESM-only with no `require` condition and
+ * no `./package.json` subpath, so a `require.resolve` of it throws
+ * ERR_PACKAGE_PATH_NOT_EXPORTED while the package sits there fully importable. That false
+ * negative is what made 2.6.4 uninstallable on Windows.
+ *
+ * An unresolved peer is reported and the script still exits 0, for the asar reason above.
+ */
+const unresolved = peerNames().filter(name => locate(name) === undefined)
+if (unresolved.length === 0) {
+  process.stdout.write('dsh-xdpool: all peer dependencies resolve; the build should load\n')
+} else {
+  process.stdout.write(
+    `dsh-xdpool: ${String(unresolved.length)} peer dependency(ies) do not resolve here: `
+    + `${unresolved.join(', ')}\n`
+    + '  Not treated as an install failure — see the note above.\n',
+  )
+}

@@ -120,7 +120,11 @@ describe('the page keeps the chain the user typed', () => {
     // works in platform groups), so `missing` ids are appended to the group they
     // belong to. Same contract, different shape — assert the contract: every missing
     // id is walked, and each lands in a group rather than being discarded.
-    expect(page).toMatch(/for \(const modelId of combo\.missing\)/u)
+    //
+    // The walk is now guarded (`Array.isArray(combo.missing)`), because a chain read from
+    // disk may omit the field entirely and spreading it crashed the whole page. The
+    // assertion matches the guarded form.
+    expect(page).toMatch(/for \(const modelId of Array\.isArray\(combo\.missing\) \? combo\.missing : \[\]\)/u)
     expect(page).toMatch(/platforms\.push\(\{ owner, models: \[model\] \}\)/u)
   })
   it('derives the owner of a missing id from its shape', () => {
