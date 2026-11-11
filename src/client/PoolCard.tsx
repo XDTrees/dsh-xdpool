@@ -1784,22 +1784,39 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                           />
                         </div>
                       </div>
-                      {region === 'cn'
-                        ? <div className="dsm-xdpool-region-cntools">
-                            <button
-                              type="button"
-                              className="dsm-xdpool-region-tool"
-                              aria-expanded={distOpen}
-                              aria-controls={distPaneId}
-                              onClick={() => { setPane(distPaneId, !distOpen) }}
-                            >
-                              <span className="dsm-xdpool-region-tool-caret" aria-hidden="true">▸</span>
-                              <span>{t?.('row.distTitle') ?? 'Account usage'}</span>
-                              <span className="dsm-xdpool-region-tool-value">
-                                {distLabel(card.status?.distribution ?? 'priority', t)}
-                              </span>
-                            </button>
-                            <button
+                      {/*
+                        "Account usage" is shown on BOTH region cards, while the
+                        automation pane stays domestic-only.
+
+                        The reason is what each control edits. `distribution` is
+                        one shared host setting (`applyConfigFromSource` reads a
+                        single key into THE pool, and both region providers draw
+                        from that one pool), so a global user needs to reach it
+                        too — hiding it on their card meant the only way to pick
+                        "Expiring first" was to go find the domestic card, which
+                        never applied to the accounts they were trying to spend.
+
+                        Automation is different: `card.automation` is only
+                        populated for the domestic lane, so rendering the same
+                        switch on the international card would show a control
+                        that can never do anything.
+                      */}
+                      <div className="dsm-xdpool-region-cntools">
+                        <button
+                          type="button"
+                          className="dsm-xdpool-region-tool"
+                          aria-expanded={distOpen}
+                          aria-controls={distPaneId}
+                          onClick={() => { setPane(distPaneId, !distOpen) }}
+                        >
+                          <span className="dsm-xdpool-region-tool-caret" aria-hidden="true">▸</span>
+                          <span>{t?.('row.distTitle') ?? 'Account usage'}</span>
+                          <span className="dsm-xdpool-region-tool-value">
+                            {distLabel(card.status?.distribution ?? 'priority', t)}
+                          </span>
+                        </button>
+                        {region === 'cn'
+                          ? <button
                               type="button"
                               className="dsm-xdpool-region-tool"
                               aria-expanded={autoOpen}
@@ -1816,8 +1833,8 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                     : (t?.('row.autoOff') ?? 'Off')}
                               </span>
                             </button>
-                          </div>
-                        : null}
+                          : null}
+                      </div>
                       <RegionCardPane id={accountsPaneId} open={accountsOpen}>
                         {card.accountCount === 0 && card.status !== undefined
                           ? <div className="dsm-xdpool-region-empty">
@@ -2671,6 +2688,29 @@ function AccountStats({
           {formatNumber(credits?.total)}
         </span>
       </span>
+      {/*
+        The deadline the "Expiring first" mode sorts by.
+
+        Without it the mode is unfalsifiable on this card: a user who picks it
+        sees one account used and cannot tell whether the soonest-expiring pack
+        was actually chosen, or what date the pool is racing. Rendered only when
+        a one-off pack actually carries a deadline — a monthly pack refreshes
+        instead of expiring, so it contributes nothing here.
+      */}
+      {credits?.nearestExpiryMs === undefined
+        ? null
+        : <span
+            className="dsm-xdpool-panel dsm-xdpool-panel-expiry"
+            title={t?.('row.creditsNearestExpiryHint')
+              ?? 'The soonest deadline among this account\'s one-off credit packs. The Expiring-first account-usage mode spends this account before the others.'}
+          >
+            <span className="dsm-xdpool-panel-title">
+              {t?.('row.creditsNearestExpiry') ?? 'First expiry'}
+            </span>
+            <span className="dsm-xdpool-total-value">
+              {formatExpiry(credits.nearestExpiryMs)}
+            </span>
+          </span>}
       {hasCheckin
         ? <div className="dsm-xdpool-checkin">
             {account.checkinError !== undefined
