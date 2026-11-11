@@ -1901,6 +1901,30 @@ function canonicalJson(value: unknown): string {
     .then(async () => {
       if (stopped) return
       recordStartupNote(`both shims ready cn=${shims.cn.baseUrl()} global=${shims.global.baseUrl()}; entering registration`)
+      // Only a region for which the pool discovered at least one credential gets
+      // a provider.
+      //
+      // The fallback catalog is installed before any account exists, so both
+      // gateways used to be advertised even when one of them had nothing behind
+      // it: the picker listed that region's whole roster and every request died
+      // at the upstream with "no account". Scanning here, instead of trusting a
+      // scan that runs later with no say in registration, keeps the decision in
+      // one place. A failed scan stays conservative and registers both — exactly
+      // the old behaviour, so a filesystem quirk cannot hide a working region.
+      const accountRegions = await (async (): Promise<Set<WorkBuddyRegion>> => {
+        try {
+          const discovered = await core.pool.scan()
+          return new Set(discovered.map(account => regionOf(account.credential.domain)))
+        } catch (error: unknown) {
+          ctx.logger.warn(
+            'dsh-xdpool: account scan before registration failed; registering both regions',
+            error,
+          )
+          return new Set<WorkBuddyRegion>(['cn', 'global'])
+        }
+      })()
+      if (stopped) return
+      recordStartupNote(`region gate: ${[...accountRegions].join(',') || 'none'}`)
       try {
         // One adapter per region. Each provider is bound to its own account
         // slice of the pool (see the `region` argument on `pool.acquire`), so a
@@ -1967,14 +1991,12 @@ function canonicalJson(value: unknown): string {
         // directory rejection now costs the settings entry alone and the models
         // keep being served.
         try {
-          releaseAdapterCn = ctx.llm.registerAdapter(
-            [POOL_PROVIDER_BY_REGION.cn],
-            adaptersByRegion.cn.adapter,
-          )
-          releaseAdapterGlobal = ctx.llm.registerAdapter(
-            [POOL_PROVIDER_BY_REGION.global],
-            adaptersByRegion.global.adapter,
-          )
+          releaseAdapterCn = accountRegions.has('cn')
+            ? ctx.llm.registerAdapter([POOL_PROVIDER_BY_REGION.cn], adaptersByRegion.cn.adapter)
+            : undefined
+          releaseAdapterGlobal = accountRegions.has('global')
+            ? ctx.llm.registerAdapter([POOL_PROVIDER_BY_REGION.global], adaptersByRegion.global.adapter)
+            : undefined
           releaseAdapterAggregate = ctx.llm.registerAdapter(
             [XDPOOL_AGGREGATE_PROVIDER],
             adaptersByRegion.aggregate.adapter,
@@ -2006,20 +2028,28 @@ function canonicalJson(value: unknown): string {
           // them one at a time left the second call reading a registry entry the
           // first had not finished creating (the `reading 'get'` failure).
           releaseDirectory = ctx.llm.registerConfigurableProviders([
-            {
-              provider: POOL_PROVIDER_BY_REGION.cn,
-              displayName: POOL_NAME_BY_REGION.cn,
-              settingsNs: XDPOOL_SETTINGS_NS,
-              settingsPath: [],
-              declared: false,
-            },
-            {
-              provider: POOL_PROVIDER_BY_REGION.global,
-              displayName: POOL_NAME_BY_REGION.global,
-              settingsNs: XDPOOL_SETTINGS_NS,
-              settingsPath: [],
-              declared: false,
-            },
+            ...(accountRegions.has('cn')
+              ? [
+                  {
+                    provider: POOL_PROVIDER_BY_REGION.cn,
+                    displayName: POOL_NAME_BY_REGION.cn,
+                    settingsNs: XDPOOL_SETTINGS_NS,
+                    settingsPath: [],
+                    declared: false,
+                  },
+                ]
+              : []),
+            ...(accountRegions.has('global')
+              ? [
+                  {
+                    provider: POOL_PROVIDER_BY_REGION.global,
+                    displayName: POOL_NAME_BY_REGION.global,
+                    settingsNs: XDPOOL_SETTINGS_NS,
+                    settingsPath: [],
+                    declared: false,
+                  },
+                ]
+              : []),
             {
               // No settings form: every aggregate provider's key lives in the
               // plugin's own store file, so the host has nothing to render and
