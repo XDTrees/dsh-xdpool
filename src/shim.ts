@@ -2072,7 +2072,13 @@ async function serveSuccessfulJson(
       ...(tracker.usage === undefined ? {} : { usage: tracker.usage }),
     })
   }
-  let buffer = Buffer.alloc(0)
+  /**
+   * Explicitly `Buffer<ArrayBufferLike>`: `Buffer.alloc(0)` infers
+   * `Buffer<ArrayBuffer>`, and `Buffer.concat` widens to `ArrayBufferLike`, so the
+   * assignment back into `buffer` fails under strict lib types. Annotating the accumulator
+   * once is clearer than casting at each of the two assignments.
+   */
+  let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0)
   let failure: unknown
   try {
     for await (const chunk of Readable.fromWeb(result.response.body as Parameters<typeof Readable.fromWeb>[0])) {

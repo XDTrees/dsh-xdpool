@@ -1,6 +1,42 @@
 # Changelog
 本项目的所有重要变更都会记录在此文件。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+## 2.6.6 — 免费线上游已关闭；国际版每日活跃；网关支持非流式
+
+> 三处独立改动：一个必须如实说明的坏消息，两个来自社区的修复。
+
+### 免费模型线已被上游关闭（#96）
+
+实测一次裸调用，上游现在回答：
+
+```json
+{"type":"error","error":{"type":"FreeUsageLimitError",
+ "message":"Free usage limit reached. Free models work in OpenCode
+  (https://opencode.ai); subscribe to OpenCode Go to keep going…"}}
+```
+
+这既不是指纹失配，也不是「按会话计额」——**上游把免费模型收进了自己的客户端**，第三方的 UA、请求头、路径怎么改都进不去。#96 的「从装上就没成功过」不是我们没修对门禁，而是那道门已经不在了。
+
+原来的提示让人去更新插件，那在门禁还是指纹的年代是对的，现在是一条死路。现在按名字识别 `FreeUsageLimitError`，直接说明这条路已关闭、给出可用的替代（换渠道，或订阅 OpenCode Go）。
+
+### 国际版账号恢复每日活跃上报（PR #138）
+
+`scheduler.ts` 原先把 `report` / `streak` 限定为国内版，理由是国际版没有任务中心。这个前提不成立：
+
+| 接口 | 国际版实测 |
+|---|---|
+| `POST /v2/report` | `200 {"code":0}` |
+| `GET /activity/growth/streak` | `200`，字段形状与国内版一致 |
+| `GET /activity/growth/tasks` | `200`，返回 5 条任务 |
+
+国际版的机制是：**每个被记录的活跃日，服务端次日凌晨发一个 30 积分的 `Bonus Pack`**，没有领取接口。一个请求就能点亮当天活跃（实测 heatmap 当天 score 从 0 变 2、`streak.days` 从 0 变 1），漏一天就真少 30 积分。
+
+顺带把「签到活动未开启」记为**跳过**而非失败，不再污染失败计数。
+
+### 网关支持 `stream: false`（PR #144）
+
+此前池车道与缓冲车道一律按流式处理，客户端发 `stream: false` 也只拿回 SSE。现在两条车道都按请求体决定，非流式请求返回一个完整 JSON 响应。
+
 ## 2.6.5 — 安装不再被判失败，积分面板不再空白
 
 > 五张 issue，三个独立根因。前两张是同一件事的两面：2.6.4 的 postinstall 会把**本来能用的安装**判成失败。
