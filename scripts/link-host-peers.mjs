@@ -72,6 +72,32 @@ function resolvesFromEntry(name) {
   }
 }
 
+/** The installed version of a package directory, or undefined when unreadable. */
+function versionOf(dir) {
+  try {
+    const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+    return typeof manifest.version === 'string' ? manifest.version : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The host's copy of a peer, if one can be found.
+ *
+ * Separate from `locate` because the two answer different questions: `locate` asks "is this
+ * importable", `hostCopyOf` asks "where is the host's own copy". The second is needed to
+ * detect a version MISMATCH, which is a failure mode `locate` cannot see — the package
+ * resolves perfectly well at the wrong generation.
+ */
+function hostCopyOf(name) {
+  for (const root of hostRoots()) {
+    const candidate = join(root, name)
+    if (existsSync(join(candidate, 'package.json'))) return candidate
+  }
+  return undefined
+}
+
 /**
  * The package directory for `name`, whether or not it can be imported right now.
  *
@@ -160,12 +186,64 @@ const HARNESS_BASES = [
   // Linux
   join(process.env['HOME'] ?? '', '.local', 'share', 'deepseek-harness'),
   '/opt/DeepSeek Harness',
-  // Windows
+  // Windows, default locations
   typeof process.env['LOCALAPPDATA'] === 'string' ? join(process.env['LOCALAPPDATA'], 'Programs', 'DeepSeek Harness') : undefined,
   typeof process.env['LOCALAPPDATA'] === 'string' ? join(process.env['LOCALAPPDATA'], 'DeepSeek Harness') : undefined,
   typeof process.env['ProgramW6432'] === 'string' ? process.env['ProgramW6432'] : undefined,
   typeof process.env['PROGRAMFILES'] === 'string' ? process.env['PROGRAMFILES'] : undefined,
+  /**
+   * Windows, installed on another drive.
+   *
+   * Not a guess about this particular machine: it is derived from where the PROFILE lives.
+   * A DSH profile sits at `<harness data dir>/profiles/<name>`, and on Windows the data
+   * directory is often the harness's own folder — which is exactly the layout this repo
+   * was developed against (`D:\dsh-home\profiles\desktop` beside `D:\DeepSeek Harness`).
+   * When they are siblings, the harness is one segment up with a different name, so the
+   * sibling of the data dir is tried as a harness root too.
+   *
+   * A miss costs nothing, which is why deriving is preferable to hard-coding a drive letter.
+   */
+  ...siblingHarnessBases(),
 ]
+
+/**
+ * Harness roots that can be derived from where this profile lives.
+ *
+ * `D:\dsh-home\profiles\desktop\node_modules\dsh-xdpool` → walk up to the data directory,
+ * then try every plausible sibling. Cheap, and it is the only way to find a harness on a
+ * non-default drive without asking the user to set an environment variable.
+ *
+ * Several levels are tried because the two layouts in the wild differ:
+ *
+ *   - `<dataDir>/profiles/<name>` — the data dir's PARENT holds the harness
+ *     (`D:\dsh-home` beside `D:\DeepSeek Harness`)
+ *   - the harness IS the data dir's parent — some installs put profiles inside the app
+ *
+ * A miss costs nothing, which is why deriving beats hard-coding a drive letter.
+ */
+function siblingHarnessBases() {
+  const out = []
+  let dir = PACKAGE_ROOT
+  let dataDir
+  for (let i = 0; i < 8; i += 1) {
+    dir = dirname(dir)
+    if (dir === dirname(dir)) break
+    // `<x>/profiles/...` means `<x>` is the data directory.
+    if (dirname(dir).endsWith('profiles')) { dataDir = dirname(dir); break }
+    if (dir.endsWith('profiles')) { dataDir = dirname(dir); break }
+  }
+  const start = dataDir ?? resolve(PACKAGE_ROOT, '..', '..', '..')
+  // Walk up a few levels from the data directory, offering a sibling at each.
+  let cursor = start
+  for (let i = 0; i < 3; i += 1) {
+    out.push(join(cursor, 'DeepSeek Harness'))
+    const parent = dirname(cursor)
+    if (parent === cursor) break
+    out.push(join(parent, 'DeepSeek Harness'))
+    cursor = parent
+  }
+  return out
+}
 
 /** Whether this is a source checkout rather than an installed package. */
 const IS_SOURCE_CHECKOUT = existsSync(join(PACKAGE_ROOT, 'src'))
@@ -176,16 +254,36 @@ const notFound = []
 const failed = []
 
 for (const name of peerNames()) {
-  // Already resolvable: leave it alone. Someone who installed a peer deliberately keeps
-  // control, and re-linking would overwrite that choice. This check is also what makes the
-  // script idempotent — a second run must not rebuild links it made the first time.
-  if (locate(name) !== undefined) { alreadyResolved.push(name); continue }
-  let target
-  for (const root of hostRoots()) {
-    const candidate = join(root, name)
-    // `existsSync` cannot see inside `app.asar`; on a packaged host this simply misses and
-    // the peer is reported as not found, which is no longer fatal.
-    if (existsSync(join(candidate, 'package.json'))) { target = candidate; break }
+  /**
+   * A peer that resolves is only acceptable if its VERSION matches the host's.
+   *
+   * Resolvability alone is not the contract that matters. `@earendil-works/pi-ai` shipped
+   * from a `devDependency` at 0.85.1 while the host ran 1.1.0, and the plugin's own
+   * `warnOnPiAiGenerationMismatch` documents the result: two copies on one call chain throw
+   * at the adapter seam and the host reports every turn as a non-retryable `PI_AI_ERROR`.
+   * The package resolved fine — at the wrong generation.
+   *
+   * So when the host has a copy and ours differs, the host's copy WINS. That is the whole
+   * point of treating these as peer dependencies: the host owns them, and a second
+   * generation beside it is a defect rather than a choice.
+   */
+  const current = locate(name)
+  const hostCopy = hostCopyOf(name)
+  const hostVersion = hostCopy === undefined ? undefined : versionOf(hostCopy)
+  const ours = current === undefined ? undefined : versionOf(current)
+  if (current !== undefined && (hostVersion === undefined || ours === hostVersion)) {
+    alreadyResolved.push(name)
+    continue
+  }
+  // A mismatch is reported below through `relinked` when the host copy is linked.
+  let target = hostCopy
+  if (target === undefined) {
+    for (const root of hostRoots()) {
+      const candidate = join(root, name)
+      // `existsSync` cannot see inside `app.asar`; on a packaged host this simply misses and
+      // the peer is reported as not found, which is no longer fatal.
+      if (existsSync(join(candidate, 'package.json'))) { target = candidate; break }
+    }
   }
   if (target === undefined) { notFound.push(name); continue }
   const dest = join(PACKAGE_ROOT, 'node_modules', name)
@@ -197,7 +295,7 @@ for (const name of peerNames()) {
     // Junction on Windows because creating a real symlink needs elevation there; a
     // junction needs none and behaves the same for directory reads.
     symlinkSync(target, dest, process.platform === 'win32' ? 'junction' : 'dir')
-    linked.push(`${name} → ${target}`)
+    linked.push(`${name} → ${target}${ours === undefined ? '' : ` (was ${ours}, host has ${hostVersion ?? '?'})`}`)
   } catch (error) {
     failed.push(`${name} (${error instanceof Error ? error.message : String(error)})`)
   }
