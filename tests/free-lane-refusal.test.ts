@@ -86,4 +86,21 @@ describe('the free lane explains a refusal instead of guessing', () => {
     expect(hint).toContain('classifyUpstream(status, refusal, retryAfterMs, \'\')')
     expect(hint).not.toContain("new AggregateError('session_dead'")
   })
+
+  it('says the lane is CLOSED when the upstream names FreeUsageLimitError', () => {
+    // Verified against the live endpoint on 2026-11-12: a raw call answers
+    // `{"type":"error","error":{"type":"FreeUsageLimitError","message":"Free usage limit
+    // reached. Free models work in OpenCode …"}}`. That is not a fingerprint rejection and
+    // not a per-conversation budget — the upstream moved free models behind its own
+    // client, so no header change reaches it.
+    //
+    // The old message told the user to update the plugin, which was true when the gate was
+    // a fingerprint and is now a dead end. Saying "closed" costs one branch and stops
+    // someone hunting for a version that will not come.
+    expect(source).toContain('FreeUsageLimitError')
+    expect(source).toContain('the free lane is closed')
+    expect(source).toMatch(/serves free models only inside its own client/u)
+    // And it offers a way forward instead of a retry.
+    expect(source).toContain('subscription')
+  })
 })

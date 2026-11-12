@@ -775,29 +775,56 @@ function withSessionQuotaHint(error: unknown, retryAfterMs: number | undefined):
  * and no explanation of which of its four fingerprint facts was wrong. That
  * reaches the caller as a bare `client` failure, and a bare 4xx is what the
  * host then renders in its own words: the user in #96 saw "当前请求的额度已用尽"
- * for a request that had never been billed. The wording pointed at waiting,
- * while the actual cause was "this build's fingerprint no longer matches, update
- * the plugin" — the two need opposite responses.
+ * for a request that had never been billed.
  *
- * The lane cannot tell them apart from the outside (both look like a refusal
- * with a thin body), so this does not pretend to. It names the actionable
- * reading FIRST — the fingerprint, which the user can fix by updating — and
- * keeps the quota possibility second, because it is the one that fixes itself.
+ * ## The premise changed (verified 2026-11-12)
  *
- * A 429 keeps its own hint ({@link withSessionQuotaHint}): that one really is
- * quota, and blurring the two would lose a distinction worth keeping.
+ * This used to say "the fingerprint moved, update the plugin". It no longer
+ * does, because a raw call now answers:
+ *
+ * ```
+ * {"type":"error","error":{"type":"FreeUsageLimitError",
+ *  "message":"Free usage limit reached. Free models work in OpenCode
+ *   (https://opencode.ai); subscribe to OpenCode Go to keep going…"}}
+ * ```
+ *
+ * That is not a fingerprint rejection and not a per-conversation budget: the
+ * upstream has moved free models behind the OpenCode client itself. No header,
+ * UA or path change reaches it, which is why #96 could not be fixed by
+ * matching the gate more exactly — the gate is gone, replaced by an account
+ * metering that a third-party client cannot enter.
+ *
+ * So the message names the real situation FIRST and stops promising that a
+ * plugin update will help. `FreeUsageLimitError` is called out by name because
+ * it is the specific shape of "this lane is closed to you", and telling the
+ * user to wait or retry would spend their time on something that cannot work.
+ *
+ * A 429 keeps its own hint ({@link withSessionQuotaHint}). The distinction is
+ * worth keeping: 429 is a budget that resets, 403 is a door that closed.
  */
 function withFreeTierHint(status: number, refusal: string, retryAfterMs: number | undefined): unknown {
   const base = classifyUpstream(status, refusal, retryAfterMs, '')
   if (status !== 403) return base
   // The provider's own sentence is kept: it is the only evidence a maintainer
-  // has when the fingerprint moves again.
+  // has when the policy moves again.
   const separator = base.message.indexOf(': ')
   const detail = separator === -1 ? '' : base.message.slice(separator + 2)
   const kept = detail === '' ? '' : ` (provider said: ${detail})`
+  /**
+   * `FreeUsageLimitError` means the upstream has closed this lane to non-client
+   * traffic. Distinguished from a generic refusal so the advice can be true:
+   * updating the plugin will not help, and only a real OpenCode client (or a
+   * subscription) can.
+   */
+  const closed = /FreeUsageLimitError|Free usage limit reached/iu.test(refusal)
   return new AggregateError(
     base.kind,
-    'the free lane refused this client: its request fingerprint no longer matches what opencode.ai accepts, '
+    closed
+      ? 'the free lane is closed: opencode.ai now serves free models only inside its own client, '
+        + 'so a third-party request is refused regardless of fingerprint. Use another channel, '
+        + 'or subscribe to OpenCode Go'
+        + kept
+      : 'the free lane refused this client: its request fingerprint no longer matches what opencode.ai accepts, '
       + 'so this is NOT an exhausted quota and waiting will not help — update dsh-xdpool and try again; '
       + 'if it persists, report this message. The shared free quota is also metered per conversation, so one '
       + `retry in a fresh conversation covers the case where only that budget is spent${kept}`,
