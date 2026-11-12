@@ -96,7 +96,21 @@ function flattenDraft(platforms: ChainDraft['platforms']): string[] {
   const seen = new Set<string>()
   for (const platform of platforms) {
     for (const model of platform.models) {
-      const id = platform.owner === 'workbuddy' ? model : `${platform.owner}/${model}`
+      /**
+       * A channel member is ALREADY composite (#141).
+       *
+       * `owner` here is the editor's grouping label. For a scan-login channel the
+       * member's own id is `<channel>:<model>` and already carries the owner, so
+       * prefixing it again produced `trae/trae:deepseek-v4.1-flash`. The runtime then
+       * matched nothing and the chain reported every member missing — and a save in that
+       * state would have rewritten the chain with the doubled ids.
+       *
+       * The colon is the test, matching `channelMemberOf` in `combos.ts`.
+       */
+      const selfOwned = /^[A-Za-z0-9_-]+:/u.test(model)
+      const id = platform.owner === 'workbuddy' || selfOwned
+        ? model
+        : `${platform.owner}/${model}`
       if (seen.has(id)) continue
       seen.add(id)
       out.push(id)
@@ -132,9 +146,25 @@ function draftOf(combo: PoolWebCombo): ChainDraft {
   const known = new Set(Array.isArray(combo.models) ? combo.models : [])
   for (const modelId of Array.isArray(combo.missing) ? combo.missing : []) {
     if (known.has(modelId)) continue
+    /**
+     * Read the owner the same way `combos.ts` does, so a missing CHANNEL member is filed
+     * under its channel rather than under a slash prefix (#141).
+     *
+     * `raccoon:sn-…` belongs to `raccoon`; splitting on `/` would find no slash, call it a
+     * pool model, and then `flattenDraft` would write `workbuddy/raccoon:…` back.
+     */
+    const colon = modelId.indexOf(':')
+    const channelHead = colon > 0 ? modelId.slice(0, colon) : ''
+    const isChannelMember = channelHead !== '' && /^[A-Za-z0-9_-]+$/u.test(channelHead)
     const slash = modelId.indexOf('/')
-    const owner = slash === -1 ? 'workbuddy' : modelId.slice(0, slash)
-    const model = slash === -1 ? modelId : modelId.slice(slash + 1)
+    const owner = isChannelMember
+      ? channelHead
+      : (slash === -1 ? 'workbuddy' : modelId.slice(0, slash))
+    // For a channel member the whole id stays the model, because it is complete on its
+    // own and `flattenDraft` will not prefix it again.
+    const model = isChannelMember
+      ? modelId
+      : (slash === -1 ? modelId : modelId.slice(slash + 1))
     const group = platforms.find(entry => entry.owner === owner)
     if (group === undefined) platforms.push({ owner, models: [model] })
     else if (!group.models.includes(model)) group.models.push(model)

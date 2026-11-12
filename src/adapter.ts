@@ -358,7 +358,36 @@ export function createWorkBuddyAdapter(options: WorkBuddyAdapterOptions): WorkBu
         ...catalog.comboRows().map(row => toComboModel(row, baseUrl, providerId)),
       ]
     }
-    return catalog.visible().map(info => toPiModel(info, baseUrl, providerId))
+    /**
+     * EVERY model, with the user's selection applied where it is meaningful (#143).
+     *
+     * The card's tick-boxes narrow what the picker LISTS, and `visible()` is the right
+     * answer for "what should be offered". It is the wrong answer for "what can this
+     * provider serve": a user who types or picks a model by id — `kimi-k3.1-pro` in the
+     * report — got `pi-ai provider "xdpool" has no configured model "kimi-k3.1-pro"`,
+     * because that model was not in the four ticked boxes. The model existed, the account
+     * could serve it, and the refusal came from a display filter.
+     *
+     * So the selection is applied as an ORDER and a per-model capability override, not as
+     * a hard allow-list:
+     *
+     *   - ticked models come first, in catalogue order (what the picker shows);
+     *   - unticked models follow, so an explicit id still resolves;
+     *   - the image flag and the context budget still come from `visible()`, because those
+     *     are the two settings where "the user said so" must win.
+     *
+     * `visible()` cannot express the ordering on its own — it returns a filtered list — so
+     * the two are merged here, keyed by id, with the per-model overrides taken from the
+     * visible row when it exists.
+     */
+    const withSelection = (): Model<Api>[] => {
+      const shown = catalog.visible()
+      const shownIds = new Set(shown.map(info => info.id))
+      // Ticked first (their exact rows, including image/budget overrides), then the rest.
+      const rest = catalog.current().filter(info => !shownIds.has(info.id))
+      return [...shown, ...rest].map(info => toPiModel(info, baseUrl, providerId))
+    }
+    return withSelection()
   }
   /**
    * Build a fresh provider object whose `models` array is the catalog as it

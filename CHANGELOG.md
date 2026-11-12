@@ -1,6 +1,47 @@
 # Changelog
 本项目的所有重要变更都会记录在此文件。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+## 2.6.7 — 路由链的渠道成员不再被双重加前缀
+
+> 四张 issue：一条数据会被写坏的路由缺陷，两条真实代码缺陷，一条「说清楚」的改动。
+
+### 渠道成员 id 被加了两次前缀（#141）
+
+一条 9 成员的混合链在路由页报「这些成员暂时不在册」，实际存下来的形态是：
+
+```
+trae/trae:deepseek-v4.1-flash
+raccoon/raccoon:sn-deepseek-v4-1-flash-1017
+cline/cline:deepseek/deepseek-v4.1-flash-1017:batch
+```
+
+两个根因叠加：
+
+- `splitPlatforms` 按第一个 `/` 切分。`cline:deepseek/…` 被切成 provider `cline`、model `cline:deepseek/…`，编辑器于是显示双前缀。
+- `flattenDraft` 给所有非池子泳道拼 `${owner}/${model}`，而渠道成员自己的 id（`raccoon:sn-…`）已经带着 owner。
+
+结果是运行时匹配不到任何成员，**在这种状态下保存会把双前缀写回配置**——报告里最危险的部分。
+
+修法是认冒号：`<channel>:<model>` 本身完整，`<owner>/<model>` 才是第三方 provider 行的写法。渠道头必须是裸标识符（字母、数字、`_`、`-`），所以 `https://host/x` 不会被误认成渠道 `https`。缺成员的归属判断也改成同一套规则，否则 `raccoon:sn-…` 会被归到 `workbuddy` 下。
+
+### 出网 fetch 在调用时才读全局（#140）
+
+`options.fetchImpl ?? globalThis.fetch` 每次请求都重新读全局。billion-context 会打补丁拦截 `globalThis.fetch` 来做 8 MiB 直连闸门，于是那个补丁成了**所有渠道请求的传输层**——它不知道请求属于哪个会话，结果要么拒绝请求体（422，外层渲染成 400），要么丢掉渠道需要的会话归属。
+
+改成创建时捕获一次。显式传入的 `options.fetchImpl` 仍然优先，测试和嵌入方照旧可以替换。
+
+### 明确指定的模型不再被显示过滤挡住（#143）
+
+卡片勾选决定选择器**列出**什么，不该决定 provider **能服务**什么。`kimi-k3.1-pro` 在名册上、账号也能跑，却因为不在勾选的四项里报 `has no configured model`——拒绝来自一个显示过滤器。
+
+现在返回「勾选的在前、其余在后」的并集：默认选择不变，显式指定的 id 也能解析。图片开关和上下文预算仍取 `visible()` 的结果，因为那两项是用户明确说了算的。
+
+### zcode 无 code 的风控拒绝被当成裸 405（#132）
+
+截图里 `HTTP 405 · request has been blocked due to unusual activity` 被渲染成普通 HTTP 错误，而同一种情况在别处能得到正确的 3012 提示。原因是响应体没有 `code` 字段、状态码既不是 401 也不是 403，所有分支都没命中。
+
+这条车道只发一个固定的 POST，405 不可能是真的方法错误——那是 WAF 在回应一个它决定不检查的请求。现在按风控归类，用户看到的是冷却警告而不是一个无从下手的状态码。
+
 ## 2.6.6 — 免费线上游已关闭；国际版每日活跃；网关支持非流式
 
 > 三处独立改动：一个必须如实说明的坏消息，两个来自社区的修复。

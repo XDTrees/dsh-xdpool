@@ -128,10 +128,19 @@ describe('the page keeps the chain the user typed', () => {
     expect(page).toMatch(/platforms\.push\(\{ owner, models: \[model\] \}\)/u)
   })
   it('derives the owner of a missing id from its shape', () => {
-    // A bare id is a pool model; anything else carries `provider/model`. Getting this
-    // wrong would file a vanished third-party member under the pool and show it on
-    // the wrong platform card.
-    expect(page).toContain("const owner = slash === -1 ? 'workbuddy' : modelId.slice(0, slash)")
+    // A bare id is a pool model; anything else carries `provider/model` or
+    // `channel:model`. Getting this wrong would file a vanished member under the wrong
+    // platform card — or, for a channel member, under `workbuddy` (#141).
+    //
+    // The channel form is checked FIRST, because its model half may contain slashes
+    // (`cline:deepseek/deepseek-v4.1-flash-1017:batch`) and splitting on `/` would then
+    // cut inside the model name.
+    expect(page).toContain('const isChannelMember')
+    expect(page).toContain("const owner = isChannelMember")
+    // The channel-head test rejects anything with a slash (a URL scheme is not a channel).
+    expect(page).toContain('A-Za-z0-9_-')
+    // And the plain provider form is still there for everything else.
+    expect(page).toContain('slash === -1 ? \'workbuddy\' : modelId.slice(0, slash)')
   })
   it('reports an unresolved member rather than hiding it', () => {
     expect(page).toContain('route.missing')
