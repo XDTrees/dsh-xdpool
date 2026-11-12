@@ -130,6 +130,20 @@ export function flattenPlatforms(platforms: readonly ComboPlatform[]): string[] 
  * owner is read from its shape (`workbuddy` for a bare id, the prefix otherwise)
  * and groups come out in first-seen order — which is the order the members were
  * in, so re-flattening reproduces exactly what was stored.
+ *
+ * ## A channel member's id is NOT `owner/model` (#141)
+ *
+ * A scan-login channel publishes members as `<channel>:<model>`, and the model id
+ * may itself contain slashes (`cline:deepseek/deepseek-v4.1-flash-1017:batch`).
+ * Splitting on the first `/` turns that into provider `cline` and model
+ * `cline:deepseek/…`, so the editor showed a doubled prefix and the round-trip
+ * write added one more (`trae/trae:deepseek-v4.1-flash`), at which point the
+ * runtime could no longer match any member and the chain reported every one of
+ * them missing.
+ *
+ * The colon is the discriminator: `<channel>:<model>` names a channel member as a
+ * single token, while `<owner>/<model>` is how a third-party provider row is
+ * written. Checked BEFORE the slash split so a channel id is never cut.
  */
 export function splitPlatforms(models: readonly string[]): ComboPlatform[] {
   const groups = new Map<string, string[]>()
@@ -137,9 +151,19 @@ export function splitPlatforms(models: readonly string[]): ComboPlatform[] {
   for (const raw of models) {
     const id = text(raw)
     if (id === '') continue
-    const parsed = parseProviderModelId(id)
-    const owner = parsed === null ? POOL_OWNER : parsed.providerId
-    const model = parsed === null ? id : parsed.modelId
+    /**
+     * `channel:model` — keep the whole thing as the model and file it under the
+     * channel. `indexOf('/') === -1` is not required: the model half may contain
+     * slashes, and the colon is what marks the shape.
+     */
+    const channelMember = channelMemberOf(id)
+    const parsed = channelMember === undefined ? parseProviderModelId(id) : null
+    const owner = channelMember === undefined
+      ? (parsed === null ? POOL_OWNER : parsed.providerId)
+      : channelMember.channel
+    const model = channelMember === undefined
+      ? (parsed === null ? id : parsed.modelId)
+      : channelMember.model
     let bucket = groups.get(owner)
     if (bucket === undefined) {
       bucket = []
@@ -149,6 +173,26 @@ export function splitPlatforms(models: readonly string[]): ComboPlatform[] {
     if (!bucket.includes(model)) bucket.push(model)
   }
   return order.map(owner => ({ owner, models: groups.get(owner) ?? [] }))
+}
+
+/**
+ * Read `<channel>:<model>` where the channel is a bare identifier.
+ *
+ * Returns undefined for anything else, so a provider-row id (`openai/gpt-4`) and a
+ * bare pool id (`hy3`) both keep whatever handling they had. The channel half is
+ * required to look like an identifier rather than a URL scheme: `https://…` has a
+ * colon too, and treating that as a channel would file the row under `https`.
+ */
+function channelMemberOf(id: string): { channel: string; model: string } | undefined {
+  const colon = id.indexOf(':')
+  if (colon <= 0) return undefined
+  const channel = id.slice(0, colon)
+  const model = id.slice(colon + 1)
+  if (model === '') return undefined
+  // An identifier: letters, digits, `_` and `-`. A scheme with `//` behind it, or any
+  // slash in the head, is not a channel.
+  if (!/^[A-Za-z0-9_-]+$/u.test(channel)) return undefined
+  return { channel, model }
 }
 /** One picker row standing for a chain. */
 export interface ComboModelRow {
