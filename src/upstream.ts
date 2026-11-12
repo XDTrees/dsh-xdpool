@@ -1760,8 +1760,18 @@ export class WorkBuddyUpstreamClient {
     return models
   }
 
-  /** Read-only credits query, aggregated by package. Does not consume credits. */
-  async fetchCredits(credential: WorkBuddyCredential): Promise<WorkBuddyCredits> {
+  /**
+   * Read-only credits query, aggregated by package. Does not consume credits.
+   *
+   * `signal` is the caller's cancellation, merged with the built-in timeout
+   * rather than replacing it: the pool's background warm must give up when the
+   * host shuts down, and a caller that has already gone away must not leave a
+   * 30 s request running. `AbortSignal.any` is already the repo's way of
+   * combining these (see the pricing probe in the shim), and the timeout stays
+   * in force so a signal-less caller keeps the old behaviour exactly.
+   */
+  async fetchCredits(credential: WorkBuddyCredential, signal?: AbortSignal): Promise<WorkBuddyCredits> {
+    const timeout = AbortSignal.timeout(JSON_TIMEOUT_MS)
     const now = new Date()
     const fmt = (date: Date): string => {
       const p = (n: number) => n.toString().padStart(2, '0')
@@ -1778,7 +1788,7 @@ export class WorkBuddyUpstreamClient {
         PackageEndTimeRangeBegin: fmt(now),
         PackageEndTimeRangeEnd: fmt(new Date(now.getTime() + 365 * 101 * 24 * 3600 * 1000)),
       }),
-      signal: AbortSignal.timeout(JSON_TIMEOUT_MS),
+      signal: signal === undefined ? timeout : AbortSignal.any([timeout, signal]),
     })
     const envelope = await readEnvelope(response)
     if (!response.ok || envelope.code !== 0) throw envelopeError(response.status, envelope)

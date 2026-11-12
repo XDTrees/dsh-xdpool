@@ -1882,6 +1882,13 @@ async function serveSuccessfulStream(
   // fresh reading. Deliberately NOT awaited: the response is already ready and
   // a balance lookup must never delay the user's stream.
   void refreshBalance(account)
+  // Same treatment for the deadline `expiry` mode sorts on, which ages out even
+  // while the pool is busy. The pool owns every guard (no client, dead sign-in,
+  // already reading, nothing to learn), so this is only the request-path nudge
+  // that makes the TTL recoverable without a timer of its own. It writes the
+  // deadline only, never the balance, so it cannot move an account across its
+  // reserve floor (S7).
+  if (pool.expiryReadingOf(account.id).stale) pool.warmExpiryReadingFor(account.id)
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',

@@ -577,8 +577,17 @@ export declare class WorkBuddyUpstreamClient {
    * list is missing half its entries for the rest of the session".
    */
   private fetchModelsOnce;
-  /** Read-only credits query, aggregated by package. Does not consume credits. */
-  fetchCredits(credential: WorkBuddyCredential): Promise<WorkBuddyCredits>;
+  /**
+   * Read-only credits query, aggregated by package. Does not consume credits.
+   *
+   * `signal` is the caller's cancellation, merged with the built-in timeout
+   * rather than replacing it: the pool's background warm must give up when the
+   * host shuts down, and a caller that has already gone away must not leave a
+   * 30 s request running. `AbortSignal.any` is already the repo's way of
+   * combining these (see the pricing probe in the shim), and the timeout stays
+   * in force so a signal-less caller keeps the old behaviour exactly.
+   */
+  fetchCredits(credential: WorkBuddyCredential, signal?: AbortSignal): Promise<WorkBuddyCredits>;
   /** Query today's check-in status without changing account state. */
   fetchCheckinStatus(credential: WorkBuddyCredential): Promise<WorkBuddyCheckinStatus>;
   /** Claim today's check-in reward. The browser route guards this mutation. */
@@ -842,6 +851,41 @@ interface TokenRefresher {
     domain?: string;
   }>;
 }
+/**
+ * Minimal billing surface the pool needs to fill `creditExpiry` itself.
+ *
+ * Declared here for the same reason as {@link TokenRefresher}: the pool knows
+ * about accounts, not about HTTP, and importing `WorkBuddyUpstreamClient` would
+ * make the two modules circular. `fetchCredits` is OPTIONAL so every existing
+ * `TokenRefresher` — the test stubs, and any host that only wired token refresh
+ * — keeps working untouched; a client without it simply warms nothing.
+ */
+interface CreditReader {
+  fetchCredits(credential: WorkBuddyCredential, signal?: AbortSignal): Promise<{
+    total: number;
+    /** Absent (or undefined) when no one-off pack has a deadline. */
+    nearestExpiryMs?: number | undefined;
+  }>;
+}
+/**
+ * What the pool knows about one account's one-off pack deadlines.
+ *
+ * The three `state`s are the whole point of the B+ fix: "never asked", "asked,
+ * nothing has a deadline" and "asked, here is the deadline" need different
+ * handling, and collapsing them into one absent-key predicate is what made a
+ * pure monthly-pack account be re-read forever (S1 in
+ * `EXPIRY-ADVERSARIAL-20261111.md`). `stale` is orthogonal: the reading is real
+ * but older than {@link EXPIRY_READING_TTL_MS}, so it describes the past.
+ */
+interface ExpiryReading {
+  state: 'unread' | 'none' | 'at';
+  /** Deadline, epoch ms; present exactly when `state === 'at'`. */
+  at?: number;
+  /** When this reading was written, epoch ms; absent for `unread`. */
+  readAtMs?: number;
+  /** True when the reading is older than {@link EXPIRY_READING_TTL_MS}. */
+  stale: boolean;
+}
 /** Live auth file name the WorkBuddy desktop app writes. */
 export declare const WORKBUDDY_LIVE_FILENAME = "workbuddy-desktop.info";
 /** Snapshot files left behind by previous logins share this prefix. */
@@ -970,9 +1014,16 @@ interface AccountPoolOptions {
    */
   credentialDeadCooldownMs?: number;
   /** Upstream client used to refresh near-expiry tokens. */
-  client?: TokenRefresher;
+  client?: TokenRefresher & Partial<CreditReader>;
   /** Refresh this long before actual expiry; default five minutes. */
   refreshMarginMs?: number;
+  /**
+   * How long a credit-pack deadline reading is trusted, in ms.
+   *
+   * Defaults to {@link EXPIRY_READING_TTL_MS}; overridable so a test can age a
+   * reading without sleeping for an hour.
+   */
+  expiryReadingTtlMs?: number;
   /**
    * How requests are spread across the pool.
    *
@@ -1024,6 +1075,7 @@ export declare class WorkBuddyAccountPool {
   private credentialDeadCooldownMs;
   private readonly client;
   private readonly refreshMarginMs;
+  private readonly expiryReadingTtlMs;
   private accounts;
   /**
    * Files the last scan could not read, with the reason.
@@ -1119,10 +1171,41 @@ export declare class WorkBuddyAccountPool {
    * their own cycle and are therefore never urgent — which is why this is
    * written from the same `fetchCredits` reading that fills `creditBalances`.
    *
-   * An absent entry means "never probed, or nothing is about to expire". Both
-   * are the same thing to `expiry` mode: not urgent, so it sorts last.
+   * A positive value is a deadline. The two other states are kept in
+   * {@link creditExpiryNone} and {@link creditExpiryReadAt} rather than as a
+   * missing key, because a missing key cannot tell "we never looked" from "we
+   * looked and nothing has a deadline" — and only the first is worth reading
+   * again. An account whose packs are all monthly reads as `none` forever, which
+   * is exactly right: asking again cannot change the answer (S1).
    */
   private creditExpiry;
+  /**
+   * Accounts whose last reading found NO one-off deadline (all monthly packs, or
+   * none at all). Written instead of deleting the key, so the account stops
+   * being a candidate for re-reading.
+   */
+  private creditExpiryNone;
+  /** When each account's deadline reading was taken, epoch ms. */
+  private creditExpiryReadAt;
+  /**
+   * Accounts whose deadline reading is being fetched right now.
+   *
+   * Same de-duplication idea as {@link refreshInflight}, for the same reason: a
+   * scan-triggered warm and a request-triggered top-up must not both spend a
+   * billing round trip on the same account. A Set rather than a Map of promises
+   * because no caller ever awaits the warm — the point is only that a second
+   * pass skips it.
+   */
+  private expiryWarmInflight;
+  /**
+   * Last time the pool tried to warm an account's deadline reading, epoch ms.
+   *
+   * The TTL is the success gate, not a retry gate: a failed read writes nothing,
+   * so without this a permanently failing billing endpoint would be hit on every
+   * scan and every served request. One attempt per account per minute is cheap
+   * and still recovers quickly from a transient failure.
+   */
+  private expiryWarmAttemptAt;
   /**
    * Last time each account served a request, epoch ms. Drives the idle term
    * of the priority-mode weighting below: an account that just served loses to
@@ -1217,6 +1300,47 @@ export declare class WorkBuddyAccountPool {
   private pruneExpiredSnapshots;
   /** Rescan the auth directories and merge newly discovered accounts. */
   scan(): Promise<WorkBuddyAccount[]>;
+  /**
+   * Warm the deadline readings that `expiry` mode sorts on.
+   *
+   * Fire-and-forget on purpose, from `scan()`: the pool's first request arrives
+   * before any reading exists, and the honest answer to that is the documented
+   * fallback plus a log line, not a stalled request. Everything about the call
+   * is chosen to be unable to make things worse:
+   *
+   *   - `this.client` may not exist (a host that wired only token refresh), in
+   *     which case there is nothing to read with and the pass is a no-op — the
+   *     same guard `ensureFresh` uses;
+   *   - a dead sign-in is skipped, and a successful read NEVER calls
+   *     `clearCredentialDead`. That is the difference between this and
+   *     `reviveBenched`: the billing endpoint answers 200 for a banned account
+   *     (observed on 11140), so treating a read as proof of health is what got a
+   *     banned account revived six times in a day (S2). Only a token refresh or a
+   *     fresh sign-in may clear that mark;
+   *   - accounts whose reading is fresh enough are skipped, and so are accounts
+   *     already being read (S10's de-duplication, mirroring `refreshInflight`);
+   *   - a failed read writes nothing and only warns, so the next pass tries
+   *     again without the failure being mistaken for a reading.
+   */
+  private warmExpiryReadings;
+  /** One account's warm read; see {@link warmExpiryReadings} for the rules. */
+  private warmOneExpiryReading;
+  /**
+   * Top up one account's deadline reading, from wherever the pool notices it is
+   * missing or stale.
+   *
+   * The request path is the second caller (after `scan()`), because a reading
+   * ages out while the pool is busy too: the shim calls this for the account that
+   * just served a request, which is the one whose spend is most likely to have
+   * moved its deadline. No timer is created — the existing balance refresh is
+   * already the natural heartbeat, and this rides on it.
+   *
+   * Every gate lives here rather than in the callers, so both paths obey exactly
+   * the same rules: no client, no account, a rejected sign-in, an already-running
+   * read, a finished "nothing expires" answer, a fresh reading, or an attempt
+   * made within the last minute all mean "do nothing".
+   */
+  warmExpiryReadingFor(accountId: string): void;
   /** All accounts, cooldown state included. */
   list(region?: WorkBuddyRegion): readonly WorkBuddyAccount[];
   /**
@@ -1338,6 +1462,14 @@ export declare class WorkBuddyAccountPool {
    * A pool where nobody has a known expiry therefore behaves exactly like
    * priority, which is the honest degradation: without a reading there is
    * nothing to sort by.
+   *
+   * What this method must NOT do is pretend. With only SOME readings in hand it
+   * still has to fall back to `pool[0]`, because picking the earliest of the
+   * accounts that happen to have answered would silently drop the account that
+   * really dies first — the failure mode S0 in `EXPIRY-ADVERSARIAL-20261111.md`
+   * called "worse than not fixing it", since the pick looks plausible and is
+   * wrong. So the incomplete case is announced instead: the caller keeps the old
+   * semantics and the log says which accounts were not read.
    */
   private pickByExpiry;
   /**
@@ -1430,10 +1562,50 @@ export declare class WorkBuddyAccountPool {
    * merged: a pack that has been spent or has died disappears from the next
    * reading, and keeping the stale deadline would pin the pool to an account
    * whose credits are already gone — the opposite of what `expiry` mode wants.
+   *
+   * "Nothing expires" is a real answer, not the absence of one: it is stored as
+   * {@link creditExpiryNone} so the account is not read again on every pass.
    */
   noteCredits(accountId: string, balance: number, nearestExpiryMs?: number): void;
+  /**
+   * Record ONLY the deadline, never the balance.
+   *
+   * The scan-triggered warm exists to fill `expiry` mode's sort key. Writing the
+   * balance as a side effect would change what the reserve floor decides — an
+   * account could be pulled out of rotation by a background read the user never
+   * asked for, which is a behaviour change outside this fix's scope (S7 in
+   * `EXPIRY-ADVERSARIAL-20261111.md`; the reserve's own cold-start hole is V4,
+   * fixed separately).
+   */
+  noteExpiryOnly(accountId: string, nearestExpiryMs?: number): void;
+  /**
+   * The three-state writer both entry points funnel through.
+   *
+   * One place, so the invariant "a finished reading always leaves a state" can be
+   * read off a single function: either a deadline is stored, or the account joins
+   * `creditExpiryNone`. Nothing here deletes the read stamp — that is what makes
+   * "read, found nothing" distinguishable from "never read".
+   */
+  private noteExpiryReading;
   /** Nearest one-off pack expiry for one account, or undefined when none known. */
   creditExpiryOf(accountId: string): number | undefined;
+  /**
+   * The full three-state reading for one account, including staleness.
+   *
+   * `stale` is evaluated against {@link EXPIRY_READING_TTL_MS} here rather than
+   * baked into the stored value, so the TTL stays a constant of the policy and
+   * not of the data.
+   *
+   * Only a real deadline can go stale. "We never asked" is not a reading, and
+   * "nothing here has a deadline" does not become less true with age: a monthly
+   * pack does not grow an expiry date by waiting. Keeping `none` permanently
+   * valid is what makes the S1 loop impossible — an account that answered once
+   * is never read again by the expiry machinery, so there is no predicate that
+   * can stay true forever and re-read it on every pass. If such an account does
+   * gain a one-off pack later, the card refresh (which writes through
+   * `noteCredits` on every poll) is what notices.
+   */
+  expiryReadingOf(accountId: string, now?: number): ExpiryReading;
   /** Last known balance for one account, or undefined when never read. */
   creditsOf(accountId: string): number | undefined;
   /** The credit floor the user set for one account; 0 when unset. */
