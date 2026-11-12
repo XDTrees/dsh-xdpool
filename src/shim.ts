@@ -34,6 +34,14 @@ import {
 import type { AggregateStore } from './store.ts'
 import { paidAlternativeFor } from './siblings.ts'
 import { inspectSseFrame, StreamTracker, type UsageRecorder } from './stats.ts'
+import {
+  bufferedFramesToCompletion,
+  createTurnAccumulator,
+  drainSsePayloads,
+  foldPayload,
+  turnToCompletion,
+  wantsNonStreaming,
+} from './non-streaming.ts'
 import { FREE_CHANNEL, FREE_MODEL_PREFIX } from './free-catalog.ts'
 import { ChannelRequestError, type ChannelLane } from './channel-lane.ts'
 export interface ShimLogger {
@@ -601,6 +609,10 @@ function withBareModelId(raw: string, modelId: string): string {
       writeOpenAIError(res, KIND_STATUS[kind], `${target.lane}_${kind}`, message)
       return
     }
+    if (wantsNonStreaming(raw)) {
+      writeJson(res, 200, bufferedFramesToCompletion(frames, modelId))
+      return
+    }
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -843,6 +855,10 @@ function withBareModelId(raw: string, modelId: string): string {
         return
       }
       writeOpenAIError(res, 500, 'aggregate_internal', error instanceof Error ? error.message : String(error))
+      return
+    }
+    if (wantsNonStreaming(raw)) {
+      writeJson(res, 200, bufferedFramesToCompletion(frames, modelId))
       return
     }
     res.writeHead(200, {
@@ -1232,6 +1248,10 @@ function withBareModelId(raw: string, modelId: string): string {
         }
         // Buffered payloads become the response, exactly as the aggregate branch
         // does below.
+        if (wantsNonStreaming(raw)) {
+          writeJson(res, 200, bufferedFramesToCompletion(hostFrames, member.modelId))
+          return
+        }
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
@@ -1274,17 +1294,23 @@ function withBareModelId(raw: string, modelId: string): string {
         const result = await client.chatStream(account.credential, prepared, memberSignal, conversationKey)
         if (result.ok) {
           const turnId = randomBytes(8).toString('hex')
-          await serveSuccessfulStream(
-            res,
-            account,
-            result,
-            logger,
-            refreshBalance,
-            pool,
-            usageRecorder === undefined
-              ? undefined
-              : { recorder: usageRecorder, region: region ?? 'cn', model: member.modelId, turnId },
-          )
+          const memberUsage = usageRecorder === undefined
+            ? undefined
+            : { recorder: usageRecorder, region: region ?? 'cn', model: member.modelId, turnId }
+          if (wantsNonStreaming(raw)) {
+            await serveSuccessfulJson(
+              res,
+              account,
+              result,
+              logger,
+              refreshBalance,
+              pool,
+              memberUsage,
+              member.modelId,
+            )
+            return
+          }
+          await serveSuccessfulStream(res, account, result, logger, refreshBalance, pool, memberUsage)
           return
         }
         last = { kind: result.kind, status: result.status, message: result.message }
@@ -1349,6 +1375,10 @@ function withBareModelId(raw: string, modelId: string): string {
           `dsh-xdpool: chain ${row.id} served by ${member.modelId} after skipping `
             + `${String(switches.length)}/${String(members.length)}: ${switches.join('; ')}`,
         )
+      }
+      if (wantsNonStreaming(raw)) {
+        writeJson(res, 200, bufferedFramesToCompletion(frames, member.modelId))
+        return
       }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -1637,6 +1667,10 @@ function withBareModelId(raw: string, modelId: string): string {
       if (result.ok) {
         // Success is filed by the stream forwarder, the only place that knows
         // when the stream really ended and what it cost.
+        if (wantsNonStreaming(raw)) {
+          await serveSuccessfulJson(res, account, result, logger, refreshBalance, pool, usageContext, modelId)
+          return
+        }
         await serveSuccessfulStream(res, account, result, logger, refreshBalance, pool, usageContext)
         return
       }
@@ -1766,6 +1800,19 @@ function withBareModelId(raw: string, modelId: string): string {
         })(),
       })
       if (recovered.ok) {
+        if (wantsNonStreaming(raw)) {
+          await serveSuccessfulJson(
+            res,
+            recovered.account,
+            recovered.result,
+            logger,
+            refreshBalance,
+            pool,
+            usageContext,
+            modelId,
+          )
+          return
+        }
         await serveSuccessfulStream(res, recovered.account, recovered.result, logger, refreshBalance, pool, usageContext)
         return
       }
@@ -1978,6 +2025,93 @@ async function serveSuccessfulStream(
     if (!sawDone && res.writable) res.end('data: [DONE]\n\n')
   })
   body.pipe(strip).pipe(res)
+}
+/**
+ * Answer one already-successful upstream stream as a single JSON document.
+ *
+ * The pool lane asks for SSE (`prepareChatBody` forces it), so the only way to
+ * honour `stream: false` is to consume the whole body here and reassemble it.
+ * Nothing is written until the body completes, which is also why a mid-flight
+ * failure can still become a proper HTTP error instead of a 200 that ends in a
+ * truncated answer.
+ *
+ * The bookkeeping deliberately mirrors `serveSuccessfulStream`: same
+ * `noteServed`, same background balance refresh, same once-only usage filing —
+ * a turn must not cost differently depending on how the caller asked to read it.
+ */
+async function serveSuccessfulJson(
+  res: ServerResponse,
+  account: WorkBuddyAccount,
+  result: Extract<ChatStreamResult, { ok: true }>,
+  logger: ShimLogger | undefined,
+  refreshBalance: (account: WorkBuddyAccount) => Promise<void>,
+  pool: WorkBuddyAccountPool,
+  usage: UsageContext | undefined,
+  modelId: string | undefined,
+): Promise<void> {
+  logger?.info?.(`dsh-xdpool: served by ${account.label} (non-streaming)`)
+  pool.noteServed(account.id)
+  void refreshBalance(account)
+  const tracker = new StreamTracker(Date.now())
+  const turn = createTurnAccumulator(modelId)
+  let recorded = false
+  const finish = (ok: boolean): void => {
+    if (recorded) return
+    recorded = true
+    if (usage?.recorder === undefined) return
+    usage.recorder.record({
+      channel: 'workbuddy',
+      region: usage.region,
+      model: usage.model,
+      account: account.label,
+      turnId: usage.turnId,
+      at: Date.now(),
+      ok,
+      ...(tracker.ttftMs === undefined ? {} : { ttftMs: tracker.ttftMs }),
+      ...(tracker.decodeMs === undefined ? {} : { decodeMs: tracker.decodeMs }),
+      ...(tracker.usage === undefined ? {} : { usage: tracker.usage }),
+    })
+  }
+  let buffer = Buffer.alloc(0)
+  let failure: unknown
+  try {
+    for await (const chunk of Readable.fromWeb(result.response.body as Parameters<typeof Readable.fromWeb>[0])) {
+      tracker.markFirstByte(Date.now())
+      buffer = buffer.length === 0 ? Buffer.from(chunk as Buffer) : Buffer.concat([buffer, chunk as Buffer])
+      const drained = drainSsePayloads(buffer)
+      buffer = drained.rest
+      for (const payload of drained.payloads) foldPayload(turn, payload)
+    }
+    // A trailing fragment without a blank line is still the last words of the
+    // answer; dropping it would truncate every reply that ends without one.
+    if (buffer.length > 0) {
+      for (const line of buffer.toString('utf8').split(/\r?\n/u)) {
+        const trimmed = line.trim()
+        if (trimmed.startsWith('data:')) foldPayload(turn, trimmed.slice(5).trim())
+      }
+    }
+    tracker.finish(Date.now())
+    if (turn.usage !== undefined) tracker.usage = turn.usage
+  } catch (error: unknown) {
+    failure = error
+    logger?.warn('dsh-xdpool: non-streaming reassembly failed mid-flight', error)
+  }
+  if (failure !== undefined) {
+    finish(false)
+    if (!res.headersSent) {
+      writeOpenAIError(
+        res,
+        502,
+        'upstream_stream_error',
+        `the upstream stream broke before the answer completed: `
+          + `${failure instanceof Error ? failure.message : String(failure)}`,
+      )
+    } else if (res.writable) res.end()
+    return
+  }
+  finish(true)
+  if (!res.headersSent) writeJson(res, 200, turnToCompletion(turn))
+  else if (res.writable) res.end()
 }
 export interface RecoverOptions {
   raw: string
