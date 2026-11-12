@@ -52353,6 +52353,25 @@ function hasZcodeUnusualActivity(body) {
   if (code !== void 0) return isZcodeUnusualActivityCode(code);
   return mentionsZcodeUnusualActivity(body);
 }
+/**
+ * [xdpool-local] Recognise the risk-control refusal that arrives with NO code and a
+ * non-401 status (#132).
+ *
+ * The reporter's screenshot showed `HTTP 405 · request has been blocked due to unusual
+ * activity` reaching the user as a generic HTTP error, while the same condition on another
+ * request produced the proper 3012 wording. The reason is that the body carries no
+ * `code` field and the status is neither 401 nor 403, so every existing branch missed it —
+ * `hasZcodeUnusualActivity` was consulted only AFTER the code checks, and the fallback
+ * printed `HTTP 405: …`.
+ *
+ * A 405 here is never a real method error: this lane sends one fixed POST. It is the WAF
+ * answering a request it decided not to inspect. Treated as risk control so the user gets
+ * the cooldown warning instead of a status they can do nothing with.
+ */
+function isZcodeBlockedWithoutCode(status, body) {
+  if (status !== 405 && status !== 403) return false;
+  return /blocked|unusual activity|forbidden/iu.test(body);
+}
 function looksLikeZcodeUnusualActivity(body) {
   return /(?<![0-9A-Za-z_-])3012(?![0-9A-Za-z_-])/.test(body);
 }
@@ -55690,7 +55709,7 @@ function describeUpstreamError(status, body, diagnostic) {
   if (code === 3007 || trimmed.includes("3007")) {
     return `\u963F\u91CC\u4E91 captcha \u6821\u9A8C\u5931\u8D25\uFF083007\uFF09\u3002\u8BF7\u91CD\u8BD5\uFF1B\u82E5\u6301\u7EED\u5931\u8D25\uFF0C\u68C0\u67E5\u6D4F\u89C8\u5668\u662F\u5426\u53EF\u7528\u3002`;
   }
-  if (hasZcodeUnusualActivity(trimmed)) {
+  if (hasZcodeUnusualActivity(trimmed) || isZcodeBlockedWithoutCode(status, trimmed)) {
     return formatZcodeUnusualActivityMessage({ diagnostic, rawResponse: suffix });
   }
   if (code === 1002 || status === 401) {
@@ -55701,7 +55720,7 @@ function describeUpstreamError(status, body, diagnostic) {
 function httpErrorCodeForZcode(status, body) {
   const trimmed = body.trim();
   if (trimmed.includes("3007")) return "RATE_LIMIT";
-  if (hasZcodeUnusualActivity(trimmed)) return "PERMISSION";
+  if (hasZcodeUnusualActivity(trimmed) || isZcodeBlockedWithoutCode(status, trimmed)) return "PERMISSION";
   if (trimmed.includes("1113") || trimmed.includes("\u4F59\u989D\u4E0D\u8DB3")) return "QUOTA_EXCEEDED";
   if (status === 401 || trimmed.includes("1002")) return "AUTH";
   if (status === 429) return "RATE_LIMIT";
@@ -66934,7 +66953,26 @@ function createChannelFetch(options = {}) {
   let system;
   let systemAt = 0;
   let closed = false;
-  const fetchImpl = (input, init) => (options.fetchImpl ?? globalThis.fetch)(input, init);
+  /**
+   * [xdpool-local] Capture the fetch implementation ONCE, not at every call (#140).
+   *
+   * `options.fetchImpl ?? globalThis.fetch` read the global lazily, at call time. When
+   * another plugin patches `globalThis.fetch` — billion-context does, to enforce an 8 MiB
+   * direct-upload gate — that patch became the outbound transport for EVERY channel
+   * request. It has no idea which conversation a request belongs to, so it either refused
+   * the body (422, which the outer layer renders as a 400) or lost the session attribution
+   * the channel needs.
+   *
+   * Binding here means this service uses the implementation that existed when it was
+   * created, so a later patch cannot silently intercept the channel's traffic. An explicit
+   * `options.fetchImpl` still wins — that is how a test or an embedder substitutes one on
+   * purpose.
+   */
+  const boundFetch = options.fetchImpl ?? (typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : undefined);
+  const fetchImpl = (input, init) => {
+    if (boundFetch === undefined) throw new Error("\u6E20\u9053\u51FA\u7F51\u670D\u52A1\u7F3A\u5C11 fetch \u5B9E\u73B0");
+    return boundFetch(input, init);
+  };
   const fetcher = async (input, init) => {
     if (closed) throw new Error("\u6E20\u9053\u51FA\u7F51\u670D\u52A1\u5DF2\u505C\u6B62");
     const target = new URL(input instanceof Request ? input.url : String(input));
