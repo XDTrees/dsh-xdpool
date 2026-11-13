@@ -112,3 +112,59 @@ describe('loading and failing are stated, not rendered as air', () => {
     expect(catchArm).toContain('poolSnapshot = { entries: entriesRef.current, error: message }')
   })
 })
+
+/**
+ * The claim badge (#claim-status).
+ *
+ * 2.5.1 moved the balance read off the draw path and, in the same edit, left the
+ * `statuses` writer hard-coded to `[]`. Wave 1 used to answer `credits.status`
+ * for the three channels that publish it; after that change nothing asked again,
+ * so `todayCheckedIn` was `undefined` forever: the claim button never reached
+ * "claimed" and pressing it twice looked like the button was dead even though
+ * the claim had succeeded. The section is the only path a claim goes through, so
+ * the assertions live here.
+ */
+describe('the claim badge is refreshed with the balances', () => {
+  /** The `refreshBalances` body, bounded by the `claim` helper that follows it. */
+  const refreshBody = section.slice(
+    section.indexOf('const refreshBalances = async ('),
+    section.indexOf('const claim = async ('),
+  )
+
+  it('asks credits.status wherever the channel publishes one', () => {
+    // Without this call the column cannot be filled by anything: no other site
+    // in the component ever writes a non-empty `statuses`.
+    expect(refreshBody).toContain("callPack('credits.status', { provider })")
+    // Gated on the capability, not called blind: the ten channels without a
+    // status answer `status: null` per account and would stay blank anyway.
+    expect(refreshBody).toMatch(/channel\.credits\?\.status === true/u)
+  })
+
+  it('has a writer that actually puts rows into the entry', () => {
+    // Wave 1 still starts the column empty — that part is correct. The regression
+    // was that it was the ONLY writer in the whole component, so it stayed empty
+    // for the life of the mount. Assert both halves: the initialiser, and a
+    // non-empty writer outside it.
+    expect(loadBody).toContain('statuses: [] as readonly ChannelCreditStatus[]')
+    expect(refreshBody).toContain('creditStatusesFrom(statusAnswer)')
+    expect(refreshBody).toMatch(/\{ \.\.\.entry, statuses \}/u)
+    // And only the refresh path may write rows, so the claim button's state and
+    // the balance it sits next to cannot disagree about when they were read.
+    expect(section.match(/statuses:/gu)?.length ?? 0).toBeGreaterThan(1)
+  })
+
+  it('never blanks a known badge because a read was refused', () => {
+    // A failed status read must leave the last good answer alone; overwriting it
+    // with `[]` would make the "claimed" badge flicker off on every flaky read.
+    expect(refreshBody).toMatch(/statusAnswer\.ok\s*\n\s*\? creditStatusesFrom\(statusAnswer\)\s*\n\s*: undefined/u)
+  })
+
+  it('keeps the same load-sequence and mounted guards as the balance read', () => {
+    // Two reads now land together, so the stale-answer guard has to cover both
+    // or an older load repaints a newer card.
+    const guard = refreshBody.indexOf('if (seq !== undefined && loadSeq.current !== seq) return')
+    expect(guard).toBeGreaterThan(-1)
+    expect(refreshBody.slice(guard)).toContain('if (!mountedRef.current) {')
+    expect(refreshBody.indexOf('creditStatusesFrom(statusAnswer)')).toBeLessThan(guard)
+  })
+})
