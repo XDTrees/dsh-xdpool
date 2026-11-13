@@ -688,17 +688,55 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     if (!quiet) markBusy(provider, true)
     setEntries(previous => previous.map(entry =>
       entry.channel.id === provider ? { ...entry, balancePending: true } : entry))
+    /**
+     * The daily-claim badge is a SECOND reading, taken on the same refresh.
+     *
+     * `statuses` was filled by wave 1 until 2.5.1 moved the balance read into
+     * wave 2 and left the writer hard-coded to `[]`. Nothing refilled it after
+     * that, so `todayCheckedIn` stayed `undefined` for the life of the mount:
+     * the claim button never flipped to "claimed", and pressing it again after a
+     * successful claim looked like the button did nothing at all. Reading it
+     * HERE — the one path every claim, every manual refresh and every wave-2
+     * load already goes through — is what puts the badge back under the button
+     * that changes it.
+     *
+     * Only for the channels that publish one (`credits.status`); the rest would
+     * answer `status: null` for every account and the column would stay empty
+     * however often it was asked.
+     *
+     * Which channels publish a badge is a property of the channel, so the lookup
+     * only needs a list that already holds the cards. The snapshot is the
+     * cold-start fallback: wave 2 is fired inside `load()` right after
+     * `setEntries(next)`, so on the very first pass `entriesRef.current` is still
+     * the empty array the mount began with.
+     */
+    const cards = entriesRef.current.length > 0 ? entriesRef.current : (poolSnapshot?.entries ?? [])
+    const wantsStatus = cards.find(entry => entry.channel.id === provider)?.channel.credits?.status === true
     try {
-      const envelope = await callPack('credits.balances', force ? { provider, force: true } : { provider })
+      const [envelope, statusAnswer] = await Promise.all([
+        callPack('credits.balances', force ? { provider, force: true } : { provider }),
+        wantsStatus
+          ? callPack('credits.status', { provider }).catch(() => refused('credits.status failed'))
+          : Promise.resolve(undefined),
+      ])
+      // Only a read that actually ANSWERED replaces the column. A refused one
+      // leaves the last good badge in place rather than blanking a known state.
+      const statuses = statusAnswer !== undefined && statusAnswer.ok
+        ? creditStatusesFrom(statusAnswer)
+        : undefined
+      const withStatuses = (entry: ChannelEntry): ChannelEntry =>
+        statuses === undefined ? entry : { ...entry, statuses }
       if (seq !== undefined && loadSeq.current !== seq) return
       if (!mountedRef.current) {
-        // Still record the answer for the next mount: the read cost a network
-        // round trip and the numbers are true regardless of who is watching.
-        if (envelope.ok) {
-          const rows = balancesFrom(envelope)
+        // Still record the answer for the next mount: the reads cost two network
+        // round trips and the numbers are true regardless of who is watching.
+        if (envelope.ok || statuses !== undefined) {
+          const rows = envelope.ok ? balancesFrom(envelope) : undefined
           poolSnapshot = {
             entries: (poolSnapshot?.entries ?? []).map(entry =>
-              entry.channel.id === provider ? { ...entry, balancePending: false, balances: rows } : entry),
+              entry.channel.id === provider
+                ? withStatuses({ ...entry, balancePending: false, ...rows === undefined ? {} : { balances: rows } })
+                : entry),
             error: poolSnapshot?.error,
           }
         }
@@ -707,14 +745,14 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
       if (!envelope.ok) {
         setEntries(previous => previous.map(entry =>
           entry.channel.id === provider
-            ? { ...entry, balancePending: false, balanceError: envelope.error?.message ?? 'credits.balances refused' }
+            ? withStatuses({ ...entry, balancePending: false, balanceError: envelope.error?.message ?? 'credits.balances refused' })
             : entry))
         return
       }
       const rows = balancesFrom(envelope)
       setEntries(previous => previous.map(entry =>
         entry.channel.id === provider
-          ? { ...entry, balancePending: false, balanceError: undefined, balances: rows }
+          ? withStatuses({ ...entry, balancePending: false, balanceError: undefined, balances: rows })
           : entry))
     } finally {
       if (mountedRef.current && !quiet) markBusy(provider, false)

@@ -131,6 +131,12 @@ function fakeUpstream(): FakeUpstream {
     firstUid: undefined,
     /** Make check-in answer "already checked in today". */
     alreadyCheckedIn: false,
+    /**
+     * Mirror the international gateway: the check-in ACTIVITY is closed, so
+     * the status read says `active: false` and a claim is refused with
+     * "签到活动未开启或已过期".
+     */
+    checkinActivityClosed: false,
     streak: {
       days: 1,
       monthTotalDays: 1,
@@ -189,14 +195,15 @@ function fakeUpstream(): FakeUpstream {
     // The read the scheduler now performs BEFORE claiming. Mirrors the upstream:
     // it reports whether today is already collected, so a repeat check-in can be
     // skipped instead of provoked into an error.
-    async fetchCheckinStatus(): Promise<{ todayCheckedIn: boolean }> {
-      return { todayCheckedIn: state.alreadyCheckedIn }
+    async fetchCheckinStatus(): Promise<{ todayCheckedIn: boolean; active: boolean }> {
+      return { todayCheckedIn: state.alreadyCheckedIn, active: !state.checkinActivityClosed }
     },
     async claimDailyCheckin(): Promise<{ credit: number; streakDays: number; isStreakDay: boolean }> {
       guard('checkin')
       // Mirrors the upstream: a repeat check-in answers a business error
       // whose message says "already checked in", which must be treated as success.
       if (state.alreadyCheckedIn) throw new Error('upstream (http 400): 今天已签到，请明天再来')
+      if (state.checkinActivityClosed) throw new Error('workbuddy upstream unknown (http 400): 签到活动未开启或已过期')
       return { credit: 100, streakDays: 1, isStreakDay: false }
     },
     async reportDesktopEvents(_credential: unknown, events: readonly Record<string, unknown>[]): Promise<void> {
@@ -722,11 +729,12 @@ describe('scheduler account gating', () => {
     await (scheduler as unknown as { tick(): Promise<void> }).tick()
   }
 
-  it('never calls a growth endpoint for a global account', async () => {
-    // Scope is PER JOB now, not a blanket "global does nothing". The growth jobs
-    // (tasks here) stay CN-only: the international gateway has no task centre, so
-    // calling it produced 404s and noise. Check-in is the deliberate exception
-    // and has its own case below.
+  it('never calls the TASK centre for a global account', async () => {
+    // Scope is PER JOB, not a blanket "global does nothing" and not "global may
+    // do everything" either. The task centre is the job that must stay CN-only:
+    // the international board keys on `task_id` + `code` with no `task_code`, no
+    // reward fields and no progress fields, so nothing parses and `tasks/accept`
+    // answers "task not found". Report/streak/check-in have their own cases.
     const { pool, upstream } = await harness(1, { domain: 'workbuddy.ai' })
     const when = beijing(2026, 8, 7, 11, 0, 0)
     const scheduler = new WorkBuddyScheduler(pool, upstream.client, {
@@ -739,11 +747,72 @@ describe('scheduler account gating', () => {
       logger: { info() {}, warn() {} },
     })
     await tickAt(scheduler, when)
-    // Check-in is allowed for a global account (its own case below), so the
-    // assertion is about GROWTH calls, not about "no calls at all" — which was
-    // what the old blanket exclusion made trivially true.
-    expect(upstream.calls.filter(call => call !== 'checkin')).toEqual([])
+    expect(upstream.calls.filter(call => call.startsWith('claim:'))).toEqual([])
     expect(scheduler.status().jobs.tasks.ok).toBe(0)
+  })
+
+  it('DOES send the activity report for a global account, which pays 30 credits', async () => {
+    // Measured on the live gateway 2026-11-10: `POST /v2/report` answers 200 and
+    // moves `GET /activity/growth/streak` from `days: 0` to `days: 1` on an
+    // account with no history. Each recorded active day is what earns the
+    // 30-credit daily-active Bonus Pack there — there is no claim endpoint, so
+    // the report IS the job. Wording elsewhere claiming the international
+    // gateway "has no activity report" is what this guards against regressing.
+    const { pool, upstream } = await harness(1, { domain: 'workbuddy.ai' })
+    const when = beijing(2026, 8, 7, 10, 0, 0)
+    const scheduler = new WorkBuddyScheduler(pool, upstream.client, {
+      enabled: true,
+      reportHours: [10],
+      accountDelayMs: 0,
+      now: () => when,
+      logger: { info() {}, warn() {} },
+    })
+    await tickAt(scheduler, when)
+    expect(upstream.calls).toContain('report')
+    expect(scheduler.status().jobs.report.ok).toBe(1)
+  })
+
+  it('records a closed check-in activity as a skip, not a failed account', async () => {
+    // The international gateway answers 200 with `active: false` and refuses any
+    // claim with `签到活动未开启或已过期`. Neither wording matched
+    // `isAlreadyCheckin`, so every healthy global account used to show up as
+    // `failed: +1` on every run — a red row for an activity the gateway simply
+    // does not run. The read-first path now skips before spending the write.
+    const { pool, upstream } = await harness(1, { domain: 'workbuddy.ai' })
+    upstream.checkinActivityClosed = true
+    const when = beijing(2026, 8, 7, 9, 0, 0)
+    const scheduler = new WorkBuddyScheduler(pool, upstream.client, {
+      enabled: true,
+      checkinHours: [9],
+      accountDelayMs: 0,
+      now: () => when,
+      logger: { info() {}, warn() {} },
+    })
+    await tickAt(scheduler, when)
+    expect(scheduler.status().jobs.checkin.failed).toBe(0)
+    expect(scheduler.status().jobs.checkin.ok).toBe(1)
+    // No claim was spent: the status read already answered the question.
+    expect(upstream.calls).not.toContain('checkin')
+    const items = scheduler.status().jobs.checkin.items ?? []
+    expect(items.some(item => item.status === 'skipped')).toBe(true)
+  })
+
+  it('DOES redeem the streak ladder for a global account', async () => {
+    // `growthStreakFull` reads `streak.days` + `redemption_status.tiers` and the
+    // international gateway returns that exact shape (verified live), so the
+    // 7d/14d/28d ladder works there too.
+    const { pool, upstream } = await harness(1, { domain: 'workbuddy.ai' })
+    const when = beijing(2026, 8, 7, 12, 0, 0)
+    const scheduler = new WorkBuddyScheduler(pool, upstream.client, {
+      enabled: true,
+      streakHours: [12],
+      accountDelayMs: 0,
+      now: () => when,
+      logger: { info() {}, warn() {} },
+    })
+    await tickAt(scheduler, when)
+    expect(upstream.calls).toContain('streakFull')
+    expect(scheduler.status().jobs.streak.ok).toBe(1)
   })
 
   it('DOES check a global account in, because that job pays there too', async () => {

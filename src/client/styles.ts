@@ -216,7 +216,7 @@ export const POOL_CARD_CSS = `
    like a headline. The total keeps its emphasis as a figure among figures. */
 .dsm-xdpool-stats{display:flex;align-items:center;gap:9px 15px;flex-wrap:wrap;min-width:0;margin-top:7px;padding-top:8px;border-top:1px dashed var(--dsw-alias-border-l2,#36373b)}
 .dsm-xdpool-panel{display:flex;align-items:center;gap:6px;min-width:0;padding:0}
-.dsm-xdpool-panel-title{color:var(--dsw-alias-label-tertiary,#999);font-size:11.5px;line-height:17px;font-weight:500}
+.dsm-xdpool-panel-title{color:var(--dsw-alias-label-tertiary,#999);font-size:11.5px;line-height:17px;font-weight:500}.dsm-xdpool-panel-expiry .dsm-xdpool-total-value{color:var(--dsw-alias-state-warning-primary,#b7791f);font-variant-numeric:tabular-nums}
 /* A rejected sign-in gets a compact chip: the upstream paragraph is long, and
    printed inline it pushed the neighbouring "Total" panel off screen. */
 .dsm-xdpool-panel-error-dead{display:inline-flex;align-items:center;align-self:flex-start;padding:1px 8px;border-radius:999px;background:var(--dsw-alias-state-error-subtle,rgba(239,68,68,.12));font-size:11px;line-height:18px;white-space:nowrap;cursor:help}

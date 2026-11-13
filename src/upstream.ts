@@ -308,6 +308,40 @@ const SESSION_DEAD_MARKERS = [
 const ALREADY_CHECKIN_MARKERS = ['已签到', 'already']
 
 /**
+ * Markers for "the check-in activity is not running on this gateway".
+ *
+ * Distinct from {@link ALREADY_CHECKIN_MARKERS}: "already collected" means the
+ * account got its reward, while this means there is nothing to collect on that
+ * gateway at all. Both are no-ops rather than failures, but only the first is
+ * evidence the account is working.
+ *
+ * Measured on the international gateway (`www.workbuddy.ai`, 2026-11-10):
+ * `checkin-activity-status` answers 200 with `active: false`, and claiming
+ * answers HTTP 400 `{"code":10001,"msg":"签到活动未开启或已过期"}`. Neither `已签到`
+ * nor `already` matches that wording, so the scheduler used to record a healthy
+ * global account as a failed job — a per-account `failed: +1` on every run, for
+ * an activity the gateway simply does not run.
+ */
+const CHECKIN_UNAVAILABLE_MARKERS = [
+  '签到活动未开启',
+  '活动未开启',
+  '活动已过期',
+  'not active',
+  'activity is not open',
+]
+
+/**
+ * Whether a claim failure means "this gateway runs no check-in activity".
+ *
+ * Callers treat this as a skipped no-op: the job reached the upstream and
+ * correctly found nothing to collect, which is not an account fault.
+ */
+export function isCheckinUnavailable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return CHECKIN_UNAVAILABLE_MARKERS.some(marker => message.includes(marker))
+}
+
+/**
  * Markers for "there is no compensation offer to collect".
  *
  * The offer is seasonal — an outage announcement opens one, and it closes on a

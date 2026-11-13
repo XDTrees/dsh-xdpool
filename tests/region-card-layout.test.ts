@@ -479,14 +479,40 @@ describe('the disclosures open in place', () => {
     }
   })
 
-  it('keeps the two tool buttons on the domestic lane only', () => {
-    // The international gateway has no growth system at all, so an automation
-    // switch there would be a control that can never do anything.
-    expect(card).toContain('dsm-xdpool-region-cntools')
-    expect(card).toMatch(/region === 'cn' \? here\?\.automation : undefined/)
-    // And the card it reads from must be this lane's status, not the focused one.
+  it('shows the account-usage switch on BOTH lanes but automation only on CN', () => {
+    // Two different reasons, and they used to be the same `region === 'cn'` gate:
+    //
+    // - `distribution` is ONE shared host setting and both region providers draw
+    //   from THE one pool, so a global-only user still needs to reach it. Gating
+    //   it to CN left them picking a mode from a card about accounts they were
+    //   not trying to spend.
+    // - `automation` is genuinely domestic-only here (`card.automation` is only
+    //   populated for that lane), so the same switch on the global card would be
+    //   a control that can never do anything.
+    //
+    // The tool strip itself must therefore be unconditional, with the CN gate
+    // moved onto the automation button alone.
+    const strip = card.indexOf('dsm-xdpool-region-cntools')
+    expect(strip).toBeGreaterThan(-1)
+    // No bare `{region === 'cn' ? <div className="dsm-xdpool-region-cntools">` any more.
+    expect(card).not.toMatch(/\{region === 'cn'\s*\?\s*<div className="dsm-xdpool-region-cntools">/)
+    // The account-usage button is rendered before any region gate.
+    const distButton = card.indexOf("t?.('row.distTitle')")
+    const autoGate = card.indexOf("{region === 'cn'\n                          ? <button")
+    expect(distButton).toBeGreaterThan(-1)
+    expect(autoGate).toBeGreaterThan(distButton)
+    // Automation still comes from this lane's status, not the focused card.
     expect(card).toContain('const here = card.status')
     expect(card).not.toContain('automation: status?.automation')
+  })
+
+  it('states the deadline the expiry distribution sorts by', () => {
+    // "Expiring first" is unfalsifiable from the card unless the card prints the
+    // date the pool is racing. A user picking it otherwise cannot tell whether
+    // the soonest-expiring pack was actually chosen.
+    expect(card).toContain('dsm-xdpool-panel-expiry')
+    expect(card).toContain("t?.('row.creditsNearestExpiry')")
+    expect(card).toContain('credits.nearestExpiryMs')
   })
 })
 
