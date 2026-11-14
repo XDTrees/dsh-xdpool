@@ -19,13 +19,17 @@
  *    Huawei signature is computed over a fixed header set that does not include
  *    them, so adding them earlier would either be overwritten by the signed map
  *    or (worse) silently change what gets signed.
- * 2. They are OFF unless explicitly enabled. billion-context is an
- *    `optionalDependency`: when it is absent these headers reach the upstream
+ * 2. They are attached only when the user opts in explicitly. billion-context is
+ *    an `optionalDependency`: when it is absent these headers reach the upstream
  *    verbatim, with `secret_access_key` inside (base64, trivially decodable).
- *    bili does strip both headers and re-sign with its own credential when it is
- *    present — verified against a local echo upstream — but the switch must not
- *    depend on that, and bili's in-process native client builds its own
- *    `resignExtra` regardless of what the pack sends.
+ *    An earlier revision armed them from bili's own `globalThis` presence, on the
+ *    theory that bili strips the markers and re-signs. It does strip them — and
+ *    then re-signs through its own `DEFAULT_BENEFIT_MODELS` fallback, stamping
+ *    `maas_type: benefit` back onto a request this plugin had deliberately
+ *    stopped sending it on, which restored the APIG.0101 404 from the far side
+ *    of the wire. So the gate is the explicit `codeartsResignHeaders === true`
+ *    and nothing infers it. `tests/codearts-bili-credential.test.ts` owns the
+ *    assertions; what stays HERE is signing ORDER, not policy.
  *
  * `pack.js` is a build artifact of another repository (`vendor/channel-pack/src`
  * is not even tracked here), so it cannot be imported and driven; a source
@@ -76,9 +80,19 @@ describe('the vendored pack can hand billion-context a re-sign credential', () =
     expect(stamped).toBeGreaterThan(signed)
   })
 
-  it('stays off unless explicitly enabled', () => {
-    // Default-off is the safety property, not a style choice: without bili
-    // stripping the header, the credential reaches the upstream.
-    expect(codeArtsChatWindow()).toContain('if (this.options.codeartsResignHeaders === true)')
+  it('is opt-in only — a probe-driven arm reintroduced the 404', () => {
+    // REVERSED, with the measurement that forced it. The arm used to switch on
+    // whenever bili's fetch chain was present, on the theory that bili would
+    // strip the markers and re-sign. It does strip them — and then re-signs
+    // using its OWN `DEFAULT_BENEFIT_MODELS` fallback, stamping `maas_type:
+    // benefit` back onto a request this plugin had deliberately stopped sending
+    // it on. Net effect: the 404 came back, from the far side of the wire.
+    //
+    // So the gate is now the user's explicit `codeartsResignHeaders: true`, and
+    // nothing infers it. See tests/codearts-bili-credential.test.ts for the
+    // full chain.
+    const window = codeArtsChatWindow()
+    expect(window).toContain('this.options.codeartsResignHeaders === true)')
+    expect(window).not.toContain('biliFetchChainPresent')
   })
 })

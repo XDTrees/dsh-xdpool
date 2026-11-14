@@ -31280,13 +31280,22 @@ function buildCanonicalRequest(method, uri, query, headers, payloadHash) {
   const headerLines = signedHeaders.map((k) => `${k}:${headers.get(k) ?? ""}`);
   return [method, uri, query, headerLines.join("\n"), "", signedHeaders.join(";"), payloadHash].join("\n");
 }
-async function signRequestHuawei(ak, sk, securityToken, method, urlStr, body, extraHeaders) {
+async function signRequestHuawei(ak, sk, securityToken, method, urlStr, body, extraHeaders, unsignedPayload) {
+  // [xdpool-local] UNSIGNED-PAYLOAD — CodeArts chat only. See
+  // tools/patch-pack-codearts-unsigned-payload.mjs.
+  //
+  // Huawei APIG verifies sha256(body) against x-sdk-content-sha256 unless that
+  // header reads UNSIGNED-PAYLOAD, in which case the body is not covered by the
+  // signature at all. A caller that lets something rewrite the body after
+  // signing (context compression) needs exactly that, because a rewritten body
+  // can never match the digest of the original. Omitted ⇒ historical
+  // behaviour: hash the bytes, sign the digest.
   const url = new URL(urlStr);
   let uri = url.pathname;
   if (!uri.endsWith("/")) uri += "/";
   const query = url.search.slice(1);
   const dateStamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-  const payloadHash = await sha256Hex(body);
+  const payloadHash = unsignedPayload === true ? "UNSIGNED-PAYLOAD" : await sha256Hex(body);
   const headers = /* @__PURE__ */ new Map();
   headers.set("host", url.host);
   headers.set("x-sdk-date", dateStamp);
@@ -31314,7 +31323,19 @@ var OPENGW_GATEWAY_CONFIG_URL = "https://opengw.developer.huaweicloud.com/api/v1
 var SNAP_MODEL_BUILTIN_URL = "https://snap-access.cn-north-4.myhuaweicloud.com/v1/model/builtin";
 var CODEARTS_MODELS_CACHE_FILENAME = "codearts_models.json";
 var CODEARTS_BENEFIT_CACHE_FILENAME = "codearts_benefit_models.json";
-var CODEARTS_BENEFIT_FALLBACK = ["glm-5.3-flash", "deepseek-v4.1-flash"];
+// [xdpool-local] no benefit-header guess — see tools/patch-pack-codearts-no-benefit-guess.mjs.
+//
+// Was ["glm-5.3-flash", "deepseek-v4.1-flash"]. That guess is what made the
+// benefit header unconditional, and the catalogue it stands in for is always
+// empty (opengw answers `result: null`). Measured: with the header the gateway
+// answers APIG.0101 for an account without the entitlement; without it, 200.
+//
+// The list is kept — empty — rather than deleted so `isCodeArtsBenefitModel`
+// keeps its shape and a restored entry is a one-line change.
+// DSH_CODEARTS_BENEFIT_GUESS=1 restores the historical guess.
+var CODEARTS_BENEFIT_FALLBACK = process.env.DSH_CODEARTS_BENEFIT_GUESS === "1"
+  ? ["glm-5.3-flash", "deepseek-v4.1-flash"]
+  : [];
 var FETCH_TIMEOUT_MS = 1e4;
 var MODEL_REFRESH_INTERVAL_MS = 2 * 36e5;
 var memoryCache;
@@ -31475,7 +31496,16 @@ function loadBenefitCache() {
 function setBenefitMemoryCache(ids) {
   benefitMemoryCache = ids;
 }
+// [xdpool-local] benefit-route memory — see tools/patch-pack-codearts-benefit-route.mjs.
+//
+// Models this process has already seen answer APIG.0101 on the benefit route.
+// The fallback list is a GUESS (see isCodeArtsBenefitModel); this table is
+// the measured answer, and it stops every later turn re-buying the same 404.
+var benefitRouteUnavailableModels = /* @__PURE__ */ new Set();
 function isCodeArtsBenefitModel(model) {
+  // [xdpool-local] no benefit-header guess: a CONFIRMED catalogue entry is the only reason to send
+  // `maas_type: benefit`. The guess is gone (see the constant above); guessing
+  // wrong does not degrade gracefully here, it turns every turn into a 404.
   if (benefitMemoryCache === void 0) benefitMemoryCache = loadBenefitCache();
   if (benefitMemoryCache !== void 0 && benefitMemoryCache.includes(model)) return true;
   return CODEARTS_BENEFIT_FALLBACK.includes(model);
@@ -32689,6 +32719,12 @@ var CHAT_API_BASE = "https://snap-access.cn-north-4.myhuaweicloud.com/api/v2";
 var PROVIDER = "codearts";
 var BENEFIT_NOT_FOUND_CODE = "BENEFIT_NOT_FOUND";
 var CODEARTS_BENEFIT_NOT_FOUND_ERROR_CODE = "InferHub.4004.200";
+// [xdpool-local] APIG.0101 means the benefit route is not published — see
+// tools/patch-pack-codearts-benefit-route.mjs. Measured 2026-11-14: the same
+// body signed with `maas_type: benefit` answers this on both fallback models,
+// while the identical body without the header answers 200.
+var CODEARTS_BENEFIT_ROUTE_ERROR_CODE = "APIG.0101";
+var BENEFIT_ROUTE_UNAVAILABLE_CODE = "BENEFIT_ROUTE_UNAVAILABLE";
 var DEFAULT_MODELS = [
   "GLM-5.2",
   "GLM-5.1",
@@ -32879,6 +32915,25 @@ function codeartsQuotaExhaustedMessage(model, resetAtMs, nowMs = Date.now()) {
   const when = formatResetIn(resetAtMs, nowMs);
   return `codearts: \u6A21\u578B ${model} \u7684\u514D\u8D39\u989D\u5EA6\uFF08benefit\uFF09\u5DF2\u7528\u5C3D\uFF0C\u9884\u8BA1 ${when}\u540E\u91CD\u7F6E\uFF08\u6309 UTC+8 \u81EA\u7136\u65E5\u7ED3\u7B97\uFF0C\u9884\u8BA1 ${new Date(resetAtMs).toISOString()}\uFF09\u3002\u53EF\u6539\u7528\u5176\u5B83\u6A21\u578B\uFF0C\u6216\u5728 Channel Pack \u7684 CodeArts \u9762\u677F\u5207\u6362/\u6DFB\u52A0\u8D26\u53F7\u3002`;
 }
+/**
+ * [xdpool-local] Did the gateway answer "no such route for this account"? — see
+ * tools/patch-pack-codearts-benefit-route.mjs.
+ *
+ * Huawei APIG uses `APIG.0101` when a path is not published in the environment at
+ * all, and the SSE variant prefixes it (`InferHub.APIG.0101.404`). Both spellings
+ * are matched on the code; the sentence is the fallback, because the gateway does
+ * not guarantee the code stays hyphen-for-dot across revisions.
+ */
+function isBenefitRouteUnavailable(body) {
+  if (typeof body !== "string" || body.length === 0) return false;
+  if (body.includes(CODEARTS_BENEFIT_ROUTE_ERROR_CODE)) return true;
+  if (!/the api does not exist|has not been published in the environment/i.test(body)) return false;
+  // The sentence alone is not enough to claim a vendor: an unrelated 404 could
+  // phrase it the same way. It only counts next to an APIG marker, which is what
+  // both observed spellings carry (`"error_code":"APIG.0101"` in the 404 body,
+  // `InferHub.APIG.0101.404` in the SSE frame).
+  return body.includes("APIG.") || body.includes("request_id");
+}
 function isQueueError(status, body) {
   return status === 400 && (body.includes("TM.00001041") || /peak\s+usage|try\s+again\s+after|peak\s+hours/i.test(body) || /high\s+demand|too\s+many\s+requests/i.test(body));
 }
@@ -32949,6 +33004,12 @@ function httpErrorCode(status, body) {
   if (status === 403 && (String(body).includes("APIG.0602")
     || /invalid\s+token|token\s+expired|token\s+is\s+invalid|signature\s+fail|Unauthorized/i.test(String(body)))) {
     return "AUTH";
+  }
+  // [xdpool-local] a benefit-route 404 is a terminal request problem, not a
+  // gateway outage or a dead key — see tools/patch-pack-codearts-benefit-route.mjs.
+  // Reported as INVALID_REQUEST so it is neither parked as AUTH nor retried.
+  if (isBenefitRouteUnavailable(typeof body === "string" ? body : JSON.stringify(body ?? ""))) {
+    return "INVALID_REQUEST";
   }
   const detail = errorDetail(body);
   if (isQuotaExceededError(detail)) return QUOTA_EXCEEDED_CODE;
@@ -33371,7 +33432,10 @@ var CodeArtsAdapter = class extends LlmAdapter {
     let benefitHeaderDropped = false;
     const rateLimitTried = /* @__PURE__ */ new Set();
     if (currentAccountId) rateLimitTried.add(currentAccountId);
-    const isBenefitModel = isCodeArtsBenefitModel(options.model);
+    // [xdpool-local] benefit-route memory: a model that already answered APIG.0101 stays off
+    // the benefit route for the rest of this process.
+    const isBenefitModel = isCodeArtsBenefitModel(options.model)
+      && !benefitRouteUnavailableModels.has(options.model);
     for (; ; ) {
       const extraSignedHeaders = isBenefitModel && !benefitHeaderDropped ? { maas_type: "benefit" } : void 0;
       const signed = await signRequestHuawei(
@@ -33381,7 +33445,14 @@ var CodeArtsAdapter = class extends LlmAdapter {
         "POST",
         url,
         new TextEncoder().encode(body),
-        extraSignedHeaders
+        extraSignedHeaders,
+        // [xdpool-local] UNSIGNED-PAYLOAD: billion-context compresses context by
+        // rewriting this body, and a body-covering signature cannot survive that.
+        // Huawei's own signer spec lets the body leave the signature: the gateway
+        // then authenticates method/path/query/headers and skips the body-hash
+        // comparison. Chat only — the catalog and queue-status GETs, and
+        // signedSnapRequest, keep their body-hash signatures.
+        true
       );
       const headers = new Headers(attributionHeaders());
       // [xdpool-local] Override the host USER-AGENT, or the gateway answers 403.
@@ -33420,6 +33491,25 @@ var CodeArtsAdapter = class extends LlmAdapter {
       // 默认为什么仍是关：billion-context 只在 optionalDependencies 里，未安装时这两个头
       // 会直达上游；且 bili 的进程内 native client 自己就会构造这两个头（resignExtra），
       // 那条路径加不加都不影响它。开关留给「xdpool 直接对接 bili 代理路径」的场合。
+      // [xdpool-local] NO bili re-sign markers — they re-introduce the 404.
+      //
+      // These two headers hand bili the AK/SK so it can re-sign a body it
+      // rewrites. Measured consequence: bili's resigner calls its OWN
+      // `apigBenefitFor()`, which falls back to
+      // `DEFAULT_BENEFIT_MODELS = ["glm-5.3-flash", "deepseek-v4.1-flash"]`,
+      // and stamps `maas_type: benefit` back onto the request. So arming the
+      // markers silently undid every fix made on THIS side of the wire:
+      //
+      //   pack.js: isBenefitModel=false, extraSignedHeaders=undefined  (probe)
+      //   wire   : x-bili-resign-credential present -> bili re-signs
+      //   upstream: APIG.0101 (no `maas_type` route for this account)
+      //
+      // Without the markers, bili does not re-sign and the request reaches the
+      // gateway exactly as signed here — which is the shape measured to work.
+      //
+      // Trade-off, stated plainly: bili will no longer rewrite this body, so
+      // context compression does not apply to CodeArts traffic. Correctness of
+      // the request outranks compression on a lane that cannot complete a turn.
       if (this.options.codeartsResignHeaders === true) {
         headers.set("x-bili-resign", "sdk-hmac-sha256");
         headers.set(
@@ -33472,8 +33562,16 @@ var CodeArtsAdapter = class extends LlmAdapter {
             throw new LlmError2(message2, QUOTA_EXCEEDED_CODE, { status: 200 });
           }
           if (error instanceof SseQueueRetryError) {
-          } else if (error instanceof LlmError2 && error.code === BENEFIT_NOT_FOUND_CODE && isBenefitModel && !benefitHeaderDropped) {
+          } else if (
+            error instanceof LlmError2 &&
+            // [xdpool-local] APIG.0101 sets the same latch — see
+            // tools/patch-pack-codearts-benefit-route.mjs.
+            (error.code === BENEFIT_NOT_FOUND_CODE || error.code === BENEFIT_ROUTE_UNAVAILABLE_CODE) &&
+            isBenefitModel &&
+            !benefitHeaderDropped
+          ) {
             benefitHeaderDropped = true;
+            benefitRouteUnavailableModels.add(options.model);
             continue;
           } else {
             throw error;
@@ -33481,6 +33579,25 @@ var CodeArtsAdapter = class extends LlmAdapter {
         }
       } else {
         const errorText = await response.text().catch(() => "");
+        // [xdpool-local] APIG.0101 on the benefit route — see
+        // tools/patch-pack-codearts-benefit-route.mjs.
+        //
+        // The account has no benefit entitlement for this model, so the gateway
+        // has no `maas_type: benefit` route to answer and reports the path as
+        // unpublished. Measured: the identical request WITHOUT the header is a
+        // 200 on the same credential, so the honest recovery is to drop it and
+        // retry, not to report a dead API key. Checked before isAuthError because
+        // a 404 is not auth, and before the queue probe because queueing the
+        // request would not make the route appear.
+        if (
+          isBenefitModel &&
+          !benefitHeaderDropped &&
+          isBenefitRouteUnavailable(errorText)
+        ) {
+          benefitHeaderDropped = true;
+          benefitRouteUnavailableModels.add(options.model);
+          continue;
+        }
         if (isAuthError(response.status, errorText) && !authRefreshed) {
           authRefreshed = true;
           // [xdpool-local] auth failure rotates the account, not just refresh it.
@@ -33731,6 +33848,14 @@ var CodeArtsAdapter = class extends LlmAdapter {
             if (data.error_code === CODEARTS_BENEFIT_NOT_FOUND_ERROR_CODE) {
               throw new LlmError2(`codearts: ${message2}`, BENEFIT_NOT_FOUND_CODE, { status: 200 });
             }
+            // [xdpool-local] the same benefit-route refusal can arrive as a 200 SSE
+            // frame instead of a 404 body — see
+            // tools/patch-pack-codearts-benefit-route.mjs. Left unmapped it would be
+            // rethrown as INVALID_REQUEST, which is terminal: no header drop, no retry,
+            // and a message that names neither the cause nor the recovery.
+            if (isBenefitRouteUnavailable(data.error_code) || isBenefitRouteUnavailable(message2)) {
+              throw new LlmError2(`codearts: ${message2}`, BENEFIT_ROUTE_UNAVAILABLE_CODE, { status: 200 });
+            }
             throw new LlmError2(`codearts: ${message2}`, "INVALID_REQUEST", { status: 200 });
           }
           const choice = data.choices?.[0];
@@ -33952,6 +34077,11 @@ var CodeArtsAdapter = class extends LlmAdapter {
     };
   }
 };
+// [xdpool-local] `biliFetchChainPresent()` used to live here. It armed the bili
+// re-sign markers automatically, and bili's resigner re-added `maas_type: benefit`
+// from its own fallback list — see the note at the marker site in `stream()`.
+// The markers are explicit opt-in now, so the probe has no caller; removed rather
+// than left dead, because a future reader would reasonably re-wire it.
 function registerCodeArtsLlm(ctx, options) {
   const adapter = new CodeArtsAdapter(options);
   registerAdapterIdempotent(ctx.llm, [PROVIDER], adapter);
