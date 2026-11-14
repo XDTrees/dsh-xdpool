@@ -1561,22 +1561,23 @@ export const CREDIT_DOT_CSS = `
 .dsm-xdpool-dot:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:3px}
 /* Measured coordinates, not flow: the composer sits at the bottom of the viewport, so a
    panel laid out downward would be clipped. */
-.dsm-xdpool-dotpanel{position:fixed;z-index:80;width:max-content;min-width:172px;max-width:min(280px,calc(100vw - 24px));display:flex;flex-direction:column;gap:7px;padding:10px 12px 11px;border-radius:14px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 92%, transparent);background:var(--dsw-alias-bg-layer-2,#1c1e22);box-shadow:0 18px 48px rgb(0 0 0 / 44%),0 3px 10px rgb(0 0 0 / 24%),inset 0 1px 0 rgb(255 255 255 / 7%);animation:dsm-xdpool-dotpanel-in .16s cubic-bezier(.16,1,.3,1)}
+/* The surface is stated in terms of the TEXT colour, not a fixed layer token. The layer-2 background is white in the light theme, so a card painted with it sat invisibly on the white composer — reported as "clicking the dot opens an empty box". Mixing 7% of the label colour into that layer gives a card that separates from the page in BOTH themes, and the border/shadow are derived the same way so neither depends on which theme is on. */
+.dsm-xdpool-dotpanel{position:fixed;z-index:80;width:max-content;min-width:172px;max-width:min(280px,calc(100vw - 24px));display:flex;flex-direction:column;gap:7px;padding:10px 12px 11px;border-radius:14px;border:1px solid color-mix(in srgb, var(--dsw-alias-label-primary,#e8eaf0) 16%, transparent);background:color-mix(in srgb, var(--dsw-alias-label-primary,#e8eaf0) 7%, var(--dsw-alias-bg-layer-2,#1c1e22));box-shadow:0 18px 48px rgb(0 0 0 / 28%),0 3px 10px rgb(0 0 0 / 16%),inset 0 1px 0 rgb(255 255 255 / 7%);animation:dsm-xdpool-dotpanel-in .16s cubic-bezier(.16,1,.3,1)}
 @keyframes dsm-xdpool-dotpanel-in{from{opacity:0;transform:translateY(5px) scale(.985)}to{opacity:1;transform:none}}
 .dsm-xdpool-dotpanel-head{display:flex;align-items:center;gap:8px;min-width:0}
 .dsm-xdpool-dotpanel-channel{font-size:12.5px;font-weight:600;letter-spacing:.01em;color:var(--dsw-alias-label-primary,#e8eaf0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.dsm-xdpool-dotpanel-chip{margin-left:auto;padding:1px 8px;border-radius:999px;font-size:10px;line-height:16px;font-weight:500}
-.dsm-xdpool-dotpanel-chip[data-state='alive']{color:#22c55e;background:rgb(34 197 94 / 15%)}
-.dsm-xdpool-dotpanel-chip[data-state='empty']{color:var(--dsw-alias-label-tertiary,#8a90a0);background:color-mix(in srgb, var(--dsw-alias-label-tertiary,#8a90a0) 15%, transparent)}
 .dsm-xdpool-dotpanel-sec{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:baseline;font-size:12px;line-height:18px}
 .dsm-xdpool-dotpanel-k{color:var(--dsw-alias-label-tertiary,#8a90a0);white-space:nowrap}
 .dsm-xdpool-dotpanel-v{text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#e8eaf0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* The spend bar. A fuller bar means MORE used, so it reads as a fuel gauge draining
-   toward the right; it turns amber past 90% because that is the point at which a long
-   task becomes a gamble. */
-.dsm-xdpool-dotbar{height:4px;border-radius:999px;overflow:hidden;background:color-mix(in srgb, var(--dsw-alias-label-tertiary,#8a90a0) 22%, transparent);margin:1px 0 2px}
+/* The allowance bar. It fills with what is LEFT, so a shrinking bar means shrinking
+   headroom — the direction a fuel gauge reads. Amber past 90% used because that is the
+   point at which a long task becomes a gamble. */
+.dsm-xdpool-dotbarwrap{display:flex;flex-direction:column;gap:3px;padding:1px 0 2px}
+.dsm-xdpool-dotbar{height:4px;border-radius:999px;overflow:hidden;background:color-mix(in srgb, var(--dsw-alias-label-tertiary,#8a90a0) 22%, transparent)}
 .dsm-xdpool-dotbar-fill{height:100%;border-radius:999px;background:#22c55e;transition:width .3s cubic-bezier(.16,1,.3,1),background-color .2s ease}
-.dsm-xdpool-dotbar-fill[data-full='true']{background:#f59e0b}
+.dsm-xdpool-dotbar-fill[data-low='true']{background:#f59e0b}
+/* Both numbers under the bar, because a length alone makes the reader guess the scale. */
+.dsm-xdpool-dotbarwrap-cap{display:flex;justify-content:space-between;gap:10px;font-size:10px;line-height:14px;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-tertiary,#8a90a0)}
 .dsm-xdpool-dotpanel-more{display:flex;flex-direction:column;gap:2px;padding-top:6px;margin-top:1px;border-top:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 62%, transparent)}
 .dsm-xdpool-dotpanel-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;font-size:11px;line-height:16px}
 .dsm-xdpool-dotpanel-rowname{color:var(--dsw-alias-label-tertiary,#8a90a0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

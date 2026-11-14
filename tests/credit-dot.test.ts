@@ -42,28 +42,28 @@ describe('the credit dot', () => {
     expect(styles).toContain('background-color:currentColor')
   })
 
-  it('reads the model caption beside it, so the two cannot disagree', () => {
-    // Reported: the panel said `hy4-preview` while the composer said
-    // `DeepSeek-V4.1-Flash`. `selection.enabledModelIds[0]` is the ENABLED list in picker
-    // order, not the current choice — and with three models enabled it always answered
-    // the same wrong name.
-    //
-    // The comment explaining that trap may mention the field; the CODE must not read it.
-    // Checked as an ACCESS (`selection['enabledModelIds']` / `.enabledModelIds`), which a
-    // prose mention cannot match.
+  it('no longer reads the composer DOM to name a model', () => {
+    // The panel used to carry a `Model` row, fed by scraping the composer's own caption
+    // (`<model> · x<rate>`) — a MutationObserver on `document.body` existed only to keep
+    // that row current. The row is gone, so the machinery went with it: polling the whole
+    // document to label a line nobody asked for is the expensive version of nothing.
+    expect(dot).not.toContain('readSelectedModel')
+    expect(dot).not.toContain('data-composer-seat')
+    expect(dot).not.toContain('MutationObserver')
+    expect(dot).not.toContain('requestAnimationFrame')
+    // And the trap the old reader existed to avoid is still not reintroduced: the ENABLED
+    // list in picker order is not the current choice.
     expect(dot).not.toMatch(/selection\??\.\[?['"]?enabledModelIds/iu)
-    expect(dot).toContain('readSelectedModel()')
-    // Read from the composer's own caption: a plugin cannot reach the host's
-    // model-selection service, but the trigger it renders is right beside this dot.
-    expect(dot).toContain('data-composer-seat')
-    expect(dot).toMatch(/·\\s\*x\\d/u)
   })
 
-  it('follows a model change without waiting for the next poll', () => {
-    // The 60s poll is right for a balance and wrong for the model, which changes the
-    // moment the user picks another one.
-    expect(dot).toContain('MutationObserver')
-    expect(dot).toContain('requestAnimationFrame')
+  it('prices token samples itself, from the shared rate table', () => {
+    // `credits.ts` is Node-free precisely so the browser can price tokens with the same
+    // arithmetic the host uses — a second copy of the rate table is how the two halves
+    // start disagreeing about the same money.
+    expect(dot).toContain("from '../credits.ts'")
+    expect(dot).toContain('creditsOf(')
+    expect(dot).toContain('ratesFor(')
+    expect(dot).not.toContain('RATE_TABLE')
   })
 
   it('shows only channels that actually served today', () => {
@@ -81,12 +81,21 @@ describe('the credit dot', () => {
     expect(body).not.toContain('requestsToday')
   })
 
-  it('draws a bar whose fill is the share SPENT', () => {
-    // A fuller bar means more used — it drains toward the right like a fuel gauge.
+  it('draws a bar whose fill is the share LEFT, and captions both numbers', () => {
+    // It used to fill with the share SPENT, computed as `spentToday / (total + spentToday)`
+    // — and `spentToday` came from a ledger that on some packs is empty on every request,
+    // so the numerator was always zero and the bar drew a bare track forever. The pack's
+    // package list carries `size` and `remain`, which is a real measurement, so the bar now
+    // reports headroom and shrinks as it is burned.
     expect(dot).toContain('dsm-xdpool-dotbar-fill')
-    expect(dot).toContain('baseline')
-    // Amber past 90%: the point at which a long task becomes a gamble.
-    expect(styles).toContain("[data-full='true']")
+    expect(dot).toContain('(1 - bar.share) * 100')
+    expect(dot).not.toContain('baseline')
+    // Both numbers under the bar: a length alone leaves the scale to be guessed.
+    expect(dot).toContain('dsm-xdpool-dotbarwrap-cap')
+    expect(dot).toContain('dot.barLeft')
+    // Amber past 90% used: the point at which a long task becomes a gamble.
+    expect(styles).toContain("[data-low='true']")
+    expect(dot).toContain("data-low={bar.share >= 0.9")
   })
 
   it('is green only when the serving channel actually has credits', () => {
@@ -174,10 +183,28 @@ describe('the credit dot', () => {
     expect(dot).not.toContain("'dot.channel'")
   })
 
-  it('still shows today\'s spend and the model', () => {
+  it('never presents an estimate as a measurement', () => {
+    // Two sources answer "what did today cost" and they are not interchangeable: cost-meter
+    // OBSERVES the balances fall, while pricing this process's own token samples only knows
+    // what it saw since it started. The measured figure is a plain number; the estimate is
+    // prefixed `≈` and explained in a tooltip. Drawing them the same way is how a restart
+    // gets read as a day with no spending.
     expect(dot).toContain("'dot.spentToday'")
-    expect(dot).toContain("'dot.model'")
-    // The multiplier travels with the model name, as the composer row shows it.
-    expect(dot).toContain('` · x${rate(snapshot.multiplier)}`')
+    expect(dot).toContain('dot.estimatedHint')
+    expect(dot).toContain('dot.measuredHint')
+    expect(dot).toContain("`≈ ${creditCount(snapshot.spentToday)}`")
+    // And it says so, rather than showing a zero, when nothing recorded the day.
+    expect(dot).toContain('dot.noSpend')
+  })
+
+  it('measures from the recorded day before it prices anything', () => {
+    // Order matters: the measured total must win, and the estimate may only run when the
+    // measured route answered `available: false`.
+    const measuredAt = dot.indexOf('POOL_CREDITS_TODAY_PATH')
+    const estimatedAt = dot.indexOf('creditsToday(usageEntries)')
+    expect(measuredAt).toBeGreaterThan(-1)
+    expect(estimatedAt).toBeGreaterThan(measuredAt)
+    expect(dot).toContain('spentMeasured = true')
+    expect(dot).toContain('spentEstimated = true')
   })
 })

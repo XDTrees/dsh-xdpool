@@ -14,17 +14,17 @@
  *
  * WHICH CHANNEL IS "THIS SESSION'S"
  *
- * The channel that serves the model the composer currently has selected. That is read
- * from the pool status (`selection` / the active account) rather than guessed, because
- * the dot is a claim about the model the user is about to send to; a dot describing some
- * other channel would be worse than no dot.
+ * The pool accounts serve every model, so the channel a request lands on is decided by
+ * `priority` — the richest one — and that is what the dot reports. It is read from the
+ * pool status, never guessed.
  *
  * THE PANEL ANSWERS THREE THINGS
  *
- * Remaining credits for that channel, credits used today, and how much of the model is
- * being consumed (its multiplier and the token totals). Those are the three numbers a
- * person checks before starting a long task, and they come from two sources: the balance
- * from the status document, the spend from the token ledger.
+ * What is left of the period's allowance (a bar plus both numbers), and how much was
+ * spent today, and whether that day figure is measured or estimated. Three numbers, and
+ * the sources are named where it matters: the allowance from the pack's package list,
+ * the day total from cost-meter's recorded balance drops (measured) or, when nothing
+ * recorded the day, from this process's own token samples (estimated, marked `≈`).
  *
  * POSITIONING AND DISMISSAL ARE DONE HERE
  *
@@ -36,7 +36,9 @@
  * @module dsh-xdpool/client/CreditDot
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
-import { POOL_CREDITS_SPEND_PATH, POOL_STATUS_PATH } from '../status-paths.ts'
+import { POOL_CREDITS_SPEND_PATH, POOL_CREDITS_TODAY_PATH, POOL_STATUS_PATH, POOL_USAGE_PATH } from '../status-paths.ts'
+import { creditsOf, ratesFor } from '../credits.ts'
+import type { UsageCall } from '../stats.ts'
 import { POOL_NAV_ICON_MASK_URL } from './nav-icon.ts'
 import { CREDIT_DOT_CSS } from './styles.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
@@ -49,6 +51,28 @@ interface ChannelBalance {
   name: string
   total: number
   accounts: number
+  /**
+   * Credits the channel's packages GRANTED this period, summed.
+   *
+   * Only the pack publishes this. `total` is a balance and says nothing about how much of
+   * the allowance has been burned, so a bar built on it can only be a guess — this is the
+   * measured half of the same question.
+   */
+  granted: number
+  /** Credits still unspent across those packages. */
+  remain: number
+}
+
+/** The bar under the channel name: how much of the period's allowance is LEFT. */
+interface BarState {
+  /** Credits granted this period. */
+  total: number
+  /** Credits still unspent. */
+  left: number
+  /** `left / total`, clamped to 0..1. */
+  share: number
+  /** Where the numbers came from, so the caption can say which. */
+  source: 'packages' | 'ledger'
 }
 
 /** Everything the panel renders. */
@@ -59,14 +83,16 @@ interface Snapshot {
   all: readonly ChannelBalance[]
   /** Credits used today, summed across channels. */
   spentToday: number | undefined
-  /** Requests made today, summed across channels. */
-  requestsToday: number | undefined
-  /** The model the composer has selected, read from the host's own selection. */
-  model: string
-  /** Its multiplier, when the catalog publishes one. */
-  multiplier: number | undefined
-  /** Credits that were available at the START of today, for the progress bar. */
-  baseline: number
+  /**
+   * `spentToday` was PRICED, not measured: it comes from this process's own token samples
+   * and restarts with DSH. The panel marks it with `≈` so the number is never mistaken for
+   * the account's own record.
+   */
+  spentEstimated: boolean
+  /** `spentToday` was measured from account balance drops, so it covers the whole day. */
+  spentMeasured: boolean
+  /** The period's allowance, when the pack published one. */
+  bar: BarState | undefined
   /** Channels that actually served a request today, richest first. */
   usedChannels: readonly ChannelBalance[]
 }
@@ -79,9 +105,52 @@ function grouped(value: number): string {
   return Number.isFinite(value) ? Math.round(value).toLocaleString('en-US') : '0'
 }
 
-/** `0.11` → `0.11`, `0` → `0`. Kept exact: a multiplier is a price, not a count. */
-function rate(value: number): string {
-  return Number.isFinite(value) ? String(value) : '—'
+/** Keep a measured coordinate inside the viewport instead of off it. */
+function clamp(value: number, low: number, high: number): number {
+  return Math.max(low, Math.min(high, value))
+}
+
+/**
+ * `12.5` → `12.5`, `21887.4` → `21,887`.
+ *
+ * An estimate is quoted to the cent while it is small and to the unit once it is large: two
+ * decimals on a four-figure number are noise dressed as precision.
+ */
+function creditCount(value: number): string {
+  return value >= 100 ? grouped(value) : String(Math.round(value * 100) / 100)
+}
+
+/**
+ * Price THIS PROCESS's own token samples for the local day.
+ *
+ * The last resort, used only when nothing measured the day. The recorder keeps its samples
+ * in memory, so this figure restarts at zero with DSH and undercounts a day that is already
+ * half spent. Returns undefined when no sample could be priced, which is a different
+ * statement from `you spent nothing`.
+ */
+function creditsToday(entries: readonly UsageCall[]): number | undefined {
+  const start = new Date()
+  start.setHours(0, 0, 0, 0)
+  const from = start.getTime()
+  let total = 0
+  let priced = 0
+  for (const entry of entries) {
+    if (typeof entry.at !== 'number' || entry.at < from) continue
+    const usage = entry.usage
+    if (usage === undefined) continue
+    /**
+     * `usage.inputTokens` INCLUDES the cached portion (see `TokenUsage.cachedTokens`),
+     * while `creditsOf` bills fresh and cached separately at different rates — passing the
+     * raw figure would bill every cached token twice, once at the full input rate. The
+     * pack's ledger keeps the two apart, which is why the host never has to subtract.
+     */
+    const fresh = Math.max(0, usage.inputTokens - usage.cachedTokens)
+    const credits = creditsOf(fresh, usage.cachedTokens, usage.outputTokens, ratesFor(entry.model))
+    if (credits === undefined) continue
+    total += credits
+    priced += 1
+  }
+  return priced === 0 ? undefined : Math.round(total * 10_000) / 10_000
 }
 
 /**
@@ -116,19 +185,39 @@ function channelsOf(value: unknown): ChannelBalance[] {
   if (value === null || typeof value !== 'object') return []
   const accounts = (value as { accounts?: unknown }).accounts
   if (!Array.isArray(accounts)) return []
-  const byRegion = new Map<string, { total: number; accounts: number }>()
+  const byRegion = new Map<string, { total: number; accounts: number; granted: number; remain: number }>()
   for (const raw of accounts) {
     if (raw === null || typeof raw !== 'object') continue
     const row = raw as Record<string, unknown>
     const credits = row['credits']
     if (credits === null || typeof credits !== 'object') continue
-    const total = (credits as Record<string, unknown>)['total']
+    // Bound once as an indexable record: `credits` is only known to be an object, and a
+    // second narrowing would not carry the index signature into the package loop below.
+    const wallet = credits as Record<string, unknown>
+    const total = wallet['total']
     if (typeof total !== 'number' || !Number.isFinite(total)) continue
     const domain = typeof row['domain'] === 'string' ? row['domain'] : ''
     const id = regionOfDomain(domain)
-    const current = byRegion.get(id) ?? { total: 0, accounts: 0 }
+    const current = byRegion.get(id) ?? { total: 0, accounts: 0, granted: 0, remain: 0 }
     current.total += total
     current.accounts += 1
+    /**
+     * Sum the pack's package ledger as well.
+     *
+     * `size` is what the package granted and `remain` what is left of it, so the pair is the
+     * ONLY consumption figure this endpoint normally carries: `total` is a balance and says
+     * nothing about how much of the period has been burned. Without it the bar had no
+     * numerator and rendered as a bare track forever.
+     */
+    const packages = Array.isArray(wallet['packages']) ? wallet['packages'] : []
+    for (const entry of packages) {
+      if (entry === null || typeof entry !== 'object') continue
+      const record = entry as Record<string, unknown>
+      const size = record['size']
+      const left = record['remain']
+      if (typeof size === 'number' && Number.isFinite(size) && size > 0) current.granted += size
+      if (typeof left === 'number' && Number.isFinite(left) && left >= 0) current.remain += left
+    }
     byRegion.set(id, current)
   }
   return [...byRegion.entries()]
@@ -137,49 +226,10 @@ function channelsOf(value: unknown): ChannelBalance[] {
       name: id === 'global' ? 'WorkBuddy 国际版' : 'WorkBuddy 国内版',
       total: value2.total,
       accounts: value2.accounts,
+      granted: value2.granted,
+      remain: value2.remain,
     }))
     .sort((a, b) => b.total - a.total)
-}
-
-/**
- * The model the composer currently has selected.
- *
- * WHY THIS READS THE DOM
- *
- * The pool's status document has no "current model" field — only `selection`, which lists
- * the models the user has ENABLED. Reading its first entry always reported `hy4-preview`
- * no matter what was selected, which is the reported bug.
- *
- * The live choice lives in the host's model-selection store, which is owned by the
- * `conversation.input.model` slot's `inject`. A plugin cannot reach that service, but the
- * trigger it renders is right next to this dot and displays exactly the answer we want —
- * `DeepSeek-V4.1-Flash · x0.11 High`. Reading it means the dot and the row can never
- * disagree, which is the whole requirement.
- *
- * The multiplier and effort are stripped off, because only the model id is used: the
- * caption appends them with a middle dot, and they must not end up inside the id.
- *
- * Returns '' when the row is not rendered yet (a fresh session, or the hero screen), and
- * the panel then shows an em dash rather than naming a model it cannot see.
- */
-function readSelectedModel(): string {
-  if (typeof document === 'undefined') return ''
-  // The trigger lives in the composer's own row. Scoped to the composer so a model name
-  // in the message transcript cannot be picked up instead.
-  const roots = document.querySelectorAll('[data-composer-seat], [data-composer-dock]')
-  for (const root of roots) {
-    // The model trigger is a button whose caption reads `<model> · x<rate> <effort>`.
-    for (const button of root.querySelectorAll('button')) {
-      const text = (button.textContent ?? '').trim()
-      if (text === '') continue
-      // A caption carries the rate suffix; that is what distinguishes the model trigger
-      // from the back button or the send button beside it.
-      if (!/·\s*x\d/u.test(text)) continue
-      const model = text.split('·')[0]?.trim() ?? ''
-      if (model !== '') return model
-    }
-  }
-  return ''
 }
 
 export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactElement | null {
@@ -193,61 +243,59 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
 
   const load = useCallback(async (): Promise<void> => {
     try {
-      const [statusRes, spendRes] = await Promise.all([
+      /**
+       * Four documents, because they answer four different questions and none is optional in
+       * the same way: the status is the only one the panel cannot render without, so its
+       * failure is fatal; the other three degrade to `undefined` and the panel says so.
+       *
+       *   - status  — balances, and the packages the bar is built from;
+       *   - spend   — the pack's own credit roll-up (empty on a pack that stopped writing);
+       *   - usage   — this process's token samples, the last-resort estimate;
+       *   - today   — cost-meter's per-account balance drops, the only MEASURED day total.
+       */
+      const [statusRes, spendRes, usageRes, todayRes] = await Promise.all([
         fetch(POOL_STATUS_PATH, { headers: { accept: 'application/json' } }),
         fetch(`${POOL_CREDITS_SPEND_PATH}?days=1`, { headers: { accept: 'application/json' } }).catch(() => undefined),
+        fetch(POOL_USAGE_PATH, { headers: { accept: 'application/json' } }).catch(() => undefined),
+        fetch(POOL_CREDITS_TODAY_PATH, { headers: { accept: 'application/json' } }).catch(() => undefined),
       ])
       if (!statusRes.ok) throw new Error(String(statusRes.status))
       const status = await statusRes.json() as Record<string, unknown>
       if (!mounted.current) return
 
       const all = channelsOf(status)
-      /**
-       * The model the composer is actually on.
-       *
-       * NOT the first entry of `selection`'s enabled list — that is the set of models the
-       * user has ENABLED, in picker order, so reading its first item always reported
-       * `hy4-preview` no matter what was selected. The reported symptom was exactly that:
-       * the panel said hy4-preview while the composer said DeepSeek-V4.1-Flash.
-       *
-       * The host keeps the live choice in `localStorage` under the model-selection
-       * store; its `current` field is what the composer renders. Reading it is the only
-       * way to see the same answer the row shows, because the pool's own status document
-       * does not carry a "currently selected" field at all.
-       */
-      const chosen = readSelectedModel()
-      const models = Array.isArray(status['models']) ? status['models'] as Record<string, unknown>[] : []
-      const row = chosen === '' ? undefined : models.find(candidate => candidate['id'] === chosen)
-      const multiplier = typeof row?.['multiplier'] === 'number' ? row['multiplier'] as number : undefined
-      // Which channel serves it: the pool accounts are the same pool regardless of model,
-      // so the channel with the most credits is the one a request would land on — that is
-      // exactly how `priority` distributes.
+      // Which channel serves a request: the pool accounts are the same pool regardless of
+      // model, so the channel with the most credits is where `priority` sends it.
       const channel = all[0]
 
       let spentToday: number | undefined
-      let requestsToday: number | undefined
+      /** `spentToday` was priced from token samples rather than measured from balances. */
+      let spentEstimated = false
+      /** `spentToday` came from cost-meter's recorded balance drops. */
+      let spentMeasured = false
+      /** This process's own samples, kept for the estimate fallback below. */
+      let usageEntries: readonly UsageCall[] | undefined
       /** Channel ids that served at least one request today. */
       const activeChannels = new Set<string>()
       if (spendRes !== undefined && spendRes.ok) {
         const spend = await spendRes.json() as { channels?: unknown }
         const rows = Array.isArray(spend.channels) ? spend.channels : []
         let total = 0
-        let requests = 0
         let any = false
         for (const raw of rows) {
           if (raw === null || typeof raw !== 'object') continue
           const record = raw as Record<string, unknown>
           const credits = record['credits']
           if (typeof credits === 'number' && Number.isFinite(credits)) { total += credits; any = true }
+          // Only a channel that actually served is listed below, and only the fact that it
+          // served matters — the request COUNT is not drawn, so it is not carried any further.
           const count = record['requests']
           if (typeof count === 'number' && Number.isFinite(count) && count > 0) {
-            requests += count
             const id = record['channel']
             if (typeof id === 'string' && id !== '') activeChannels.add(id)
           }
         }
         if (any) spentToday = Math.round(total * 100) / 100
-        if (requests > 0) requestsToday = requests
       }
 
       /**
@@ -260,19 +308,71 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
       const usedChannels = all.filter(channel => activeChannels.has(channel.id))
 
       /**
-       * The bar's denominator: what was available at the start of the period.
+       * Measure before estimating.
        *
-       * `remaining + spent` is the only baseline the data supports. The vendor reports a
-       * remainder, the ledger reports a flow, and adding them reconstructs the opening
-       * balance without inventing an allocation the vendor never published. A remainder
-       * that has been topped up mid-period makes the bar conservative, which is the
-       * honest direction for a "how much is left" gauge.
+       * cost-meter samples every pooled account's balance and books each DROP under the
+       * local day, so its total is observed rather than derived — and it survives a DSH
+       * restart, which the recorder below does not. Only ask when the pack ledger had
+       * nothing, because the ledger is the pool's own account of the same money.
        */
-      const remaining = channel?.total ?? 0
-      const baseline = remaining + (spentToday ?? 0)
+      if (spentToday === undefined && todayRes !== undefined && todayRes.ok) {
+        const today = await todayRes.json().catch(() => undefined) as
+          | { available?: unknown; total?: unknown }
+          | undefined
+        if (today !== undefined && today !== null && today.available === true
+          && typeof today.total === 'number' && Number.isFinite(today.total)) {
+          spentToday = today.total
+          spentMeasured = true
+        }
+      }
+
+      /**
+       * The last resort: price this process's own samples for today.
+       *
+       * An empty ledger and no cost-meter file means nothing measured the day, so the
+       * estimate is all there is. It is labelled with `≈` in the panel and it restarts at
+       * zero with DSH, which is exactly why it is the fallback and not the answer.
+       */
+      if (usageRes !== undefined && usageRes.ok) {
+        const ledger = await usageRes.json().catch(() => undefined) as { entries?: unknown } | undefined
+        if (ledger !== undefined && ledger !== null && Array.isArray(ledger.entries)) {
+          usageEntries = ledger.entries as readonly UsageCall[]
+        }
+      }
+      if (spentToday === undefined && usageEntries !== undefined) {
+        const estimate = creditsToday(usageEntries)
+        if (estimate !== undefined) {
+          spentToday = estimate
+          spentEstimated = true
+        }
+      }
+
+      /**
+       * What the 4px bar measures: how much of the period's allowance is LEFT.
+       *
+       * It used to be `spentToday / (channel.total + spentToday)`, and `spentToday` comes from
+       * the pack's credit ledger, which on a pack that has stopped writing is empty on every
+       * request. A numerator of zero drew a bare grey track forever — indistinguishable from
+       * a broken bar. The pack's own package list IS populated and carries both the granted
+       * and the remaining amount, so `sum(size)` and `sum(remain)` are real figures; the
+       * ledger ratio stays only as a fallback for packs that ship no packages.
+       */
+      const granted = all.reduce((sum, row) => sum + (Number.isFinite(row.granted) ? row.granted : 0), 0)
+      const leftCredits = all.reduce((sum, row) => sum + (Number.isFinite(row.remain) ? row.remain : 0), 0)
+      let bar: BarState | undefined
+      if (granted > 0) {
+        const share = clamp(leftCredits / granted, 0, 1)
+        bar = { total: granted, left: Math.min(granted, leftCredits), share, source: 'packages' }
+      } else {
+        const remaining = channel?.total ?? 0
+        if (remaining > 0 || spentToday !== undefined) {
+          const total = remaining + (spentToday ?? 0)
+          bar = { total, left: remaining, share: clamp(total > 0 ? remaining / total : 0, 0, 1), source: 'ledger' }
+        }
+      }
 
       if (!mounted.current) return
-      setSnapshot({ channel, all, spentToday, requestsToday, model: chosen, multiplier, baseline, usedChannels })
+      setSnapshot({ channel, all, spentToday, spentEstimated, spentMeasured, bar, usedChannels })
       setFailed(false)
     } catch {
       if (mounted.current) setFailed(true)
@@ -288,43 +388,6 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
       window.clearInterval(timer)
     }
   }, [load])
-
-  /**
-   * Watch the composer's model caption and follow it.
-   *
-   * The 60s poll is right for a BALANCE (it moves only when something spends) and wrong
-   * for the MODEL (it changes the moment the user picks another one). Re-reading the
-   * caption on a MutationObserver keeps the panel honest without polling the network:
-   * a caption swap is a DOM change, so the observer fires exactly when there is news.
-   *
-   * Debounced to the next frame so a burst of mutations during a re-render collapses into
-   * one read.
-   */
-  useEffect(() => {
-    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return undefined
-    let scheduled = false
-    const sync = (): void => {
-      scheduled = false
-      if (!mounted.current) return
-      const next = readSelectedModel()
-      if (next === '') return
-      setSnapshot(current => {
-        if (current === undefined || current.model === next) return current
-        // The multiplier is looked up from the catalog already in the snapshot's channel
-        // data; leaving it as-is until the next poll is fine, because it only labels the
-        // caption and never enters the arithmetic.
-        return { ...current, model: next }
-      })
-    }
-    const observer = new MutationObserver(() => {
-      if (scheduled) return
-      scheduled = true
-      // One frame: a composer re-render mutates several nodes in a row.
-      window.requestAnimationFrame(sync)
-    })
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true })
-    return () => { observer.disconnect() }
-  }, [])
 
   /**
    * Place the panel above the dot.
@@ -356,7 +419,13 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
     // Above the dot by default; if there is no room, below it.
     const panelHeight = panelRef.current?.offsetHeight ?? 240
     const above = box.top - panelHeight - 8
-    const top = above >= margin ? above : box.bottom + 8
+    // Clamped BOTH ways: a composer at the top of a short window used to push the panel
+    // off the 0px edge, where `position: fixed` renders it off-screen rather than scrolling.
+    const top = clamp(
+      above >= margin ? above : box.bottom + 8,
+      margin,
+      Math.max(margin, window.innerHeight - panelHeight - margin),
+    )
     setPos({ top, left })
   }, [open])
 
@@ -366,8 +435,8 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
    * `width: max-content` means the first pass measures a zero-width element: the panel is
    * attached but `pos` is still undefined, so it is laid out at its min-width. Re-running
    * after the content exists is what makes the width follow the text rather than the
-   * placeholder. Keyed on the model and the channel so a longer name (a real possibility
-   * with a `· 14,031` suffix) triggers a fresh measurement.
+   * placeholder. Keyed on the channel and the bar so a longer name or a five-digit
+   * balance (a real possibility with a `· 14,031` suffix) triggers a fresh measurement.
    */
   useLayoutEffect(() => {
     if (!open) return
@@ -384,12 +453,16 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
     const above = box.top - panel.offsetHeight - 8
     setPos(current => {
       if (current === undefined) return current
-      const top = above >= margin ? above : box.bottom + 8
+      const top = clamp(
+        above >= margin ? above : box.bottom + 8,
+        margin,
+        Math.max(margin, window.innerHeight - panel.offsetHeight - margin),
+      )
       // Skip the write when nothing moved: an identical setState still schedules a render.
       if (current.top === top && current.left === left) return current
       return { top, left }
     })
-  }, [open, snapshot?.model, snapshot?.channel?.total, snapshot?.spentToday])
+  }, [open, snapshot?.channel?.total, snapshot?.bar?.total, snapshot?.spentToday])
 
   /** Outside click and Escape, the two ways any popover on this host closes. */
   useEffect(() => {
@@ -438,6 +511,8 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
    * be read is grey — the dot must not claim "you are fine" on missing data.
    */
   const alive = ready && snapshot.channel !== undefined && snapshot.channel.total > 0
+  /** Bound once so the JSX below narrows a plain const instead of a property path. */
+  const bar = snapshot?.bar
   const label = alive    ? (t?.('dot.alive') ?? '还有积分')
     : (t?.('dot.empty') ?? '没有积分了')
 
@@ -479,8 +554,7 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
             "还有积分" was a chip that said what the green dot already says — redundant,
             and it pushed the one fact worth reading off to a separate row. The channel
             line carries both the pool and its balance, so the header alone answers
-            "which pool, how much", and the rows below only need today's spend and the
-            model.
+            "which pool, how much", and the one row below only needs today's spend.
 
             The state still reaches an assistive reader through the dot's own
             `aria-label`, so dropping the chip costs no information for a screen reader.
@@ -523,30 +597,52 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
           </div>
           {/* The bar comes first: it is the one element that answers "am I close to the
               edge" without reading any number, which is what makes it worth the space.
-              The width is the SPENT share, so a fuller bar means more has been used. */}
-          {snapshot.baseline <= 0 ? null : (
-            <div className="dsm-xdpool-dotbar" role="img" aria-label={t?.('dot.barLabel') ?? '今日已用占比'}>
+              It fills with what is LEFT, so a shrinking bar means shrinking headroom, and
+              the caption underneath spells the two numbers out rather than making the
+              reader infer them from a length. */}
+          {bar === undefined ? null : (
+            <div className="dsm-xdpool-dotbarwrap">
               <div
-                className="dsm-xdpool-dotbar-fill"
-                data-full={snapshot.spentToday !== undefined && snapshot.baseline > 0
-                  && (snapshot.spentToday / snapshot.baseline) >= 0.9 ? 'true' : 'false'}
-                style={{ width: `${String(Math.min(100, Math.max(0, snapshot.baseline > 0 ? (snapshot.spentToday ?? 0) / snapshot.baseline * 100 : 0)))}%` }}
-              />
+                className="dsm-xdpool-dotbar"
+                role="img"
+                aria-label={t?.('dot.barLabel') ?? '本期剩余额度占比'}
+              >
+                <div
+                  className="dsm-xdpool-dotbar-fill"
+                  data-low={bar.share >= 0.9 ? 'true' : 'false'}
+                  style={{ width: `${String(Math.min(100, Math.max(0, (1 - bar.share) * 100)))}%` }}
+                />
+              </div>
+              <div className="dsm-xdpool-dotbarwrap-cap">
+                <span>{t?.('dot.barLeft') ?? '本期剩余'}</span>
+                <span>{`${grouped(bar.left)} / ${grouped(bar.total)}`}</span>
+              </div>
             </div>
           )}
-          {/* The channel lives in the header now, so it is not repeated here. This row
-              and the one below are the two things the header does not carry. */}
+          {/* The channel lives in the header now, so it is not repeated here. */}
+          {/*
+            Today's spend, and the only row left: the channel is in the header and the bar
+            above it already carries the period's allowance, so a third row would be the
+            same money counted twice.
+
+            The value is MEASURED or ESTIMATED and the two are not interchangeable, so they
+            are not drawn the same way: a measured figure is a plain number (cost-meter
+            observed the balances fall), an estimate is prefixed `≈` and explained in the
+            tooltip (this process priced its own samples — the figure restarts with DSH and
+            undercounts a day already half spent). Presenting an estimate as a measurement
+            is the one thing this row must never do.
+          */}
           <div className="dsm-xdpool-dotpanel-sec">
-            <span className="dsm-xdpool-dotpanel-k">{t?.('dot.spentToday') ?? '今日已用'}</span>
-            <span className="dsm-xdpool-dotpanel-v">
-              {snapshot.spentToday === undefined ? '—' : grouped(snapshot.spentToday)}
-            </span>
-          </div>
-          <div className="dsm-xdpool-dotpanel-sec">
-            <span className="dsm-xdpool-dotpanel-k">{t?.('dot.model') ?? '模型'}</span>
-            <span className="dsm-xdpool-dotpanel-v">
-              {snapshot.model === '' ? '—' : snapshot.model}
-              {snapshot.multiplier === undefined ? '' : ` · x${rate(snapshot.multiplier)}`}
+            <span className="dsm-xdpool-dotpanel-k">{t?.('dot.spentToday') ?? '今日消耗积分'}</span>
+            <span
+              className="dsm-xdpool-dotpanel-v"
+              title={snapshot.spentEstimated
+                ? (t?.('dot.estimatedHint') ?? '按本进程 token 用量估算')
+                : snapshot.spentMeasured ? (t?.('dot.measuredHint') ?? '按账号余额变动实测') : undefined}
+            >
+              {snapshot.spentToday === undefined
+                ? (t?.('dot.noSpend') ?? '今日暂无记录')
+                : snapshot.spentEstimated ? `≈ ${creditCount(snapshot.spentToday)}` : grouped(snapshot.spentToday)}
             </span>
           </div>
           {/* Only when there really is more than one LANE. With a single region the
