@@ -55,6 +55,21 @@ export const POOL_CREDIT_RESERVE_PATH = '/plugins/dsh-xdpool/accounts/credit-res
  */
 export const POOL_CREDITS_SPEND_PATH = '/plugins/dsh-xdpool/credits/spend'
 /**
+ * Credits actually spent TODAY, measured rather than priced.
+ *
+ * A different question from {@link POOL_CREDITS_SPEND_PATH}, and the difference is
+ * the reason this route exists: the spend document is built from the pack's token
+ * ledger, and a pack that has stopped writing it returns an empty window — which
+ * reads, on screen, as "you used nothing". This route instead asks cost-meter what it
+ * OBSERVED: that plugin samples every pooled account's balance and books each drop
+ * under the local day, so its total survives a DSH restart and covers work done by
+ * anything else using the same accounts.
+ *
+ * GET only, no parameters. `available: false` means nothing has been recorded for the
+ * day, which is not the same answer as `total: 0`.
+ */
+export const POOL_CREDITS_TODAY_PATH = '/plugins/dsh-xdpool/credits/today'
+/**
  * Name the account to try first, or hand the choice back to the strategy.
  *
  * A route rather than a settings write for the reason the ignore list is a file:
@@ -685,6 +700,26 @@ export interface PoolWebAggregateProbe {
  * instead of a second one that could quietly drift.
  */
 export const POOL_USAGE_PATH = '/plugins/dsh-xdpool/usage'
+/**
+ * Response of {@link POOL_CREDITS_TODAY_PATH}.
+ *
+ * `available` is the only field a caller must branch on: when it is false the day has
+ * no record at all and `total` is absent, because a zero would claim the day was spent
+ * and observed to be nothing. `source` names the observer so a future second observer
+ * can be added without the client having to guess which one answered.
+ */
+export interface PoolWebCreditsToday {
+  /** Local calendar day, `YYYY-MM-DD`. */
+  day: string
+  /** Credits booked that day, summed over every observed account. */
+  total?: number
+  /** How many accounts carried a figure for that day. */
+  accounts: number
+  /** Which observer produced the figure. */
+  source: 'cost-meter'
+  /** False when nothing recorded the day; `total` is then absent. */
+  available: boolean
+}
 /** Body of the reserve route: exactly one account per request. */
 export interface PoolWebCreditReserve {
   /** Pool account id, as reported in `PoolWebAccount.id`. */

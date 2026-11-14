@@ -48,6 +48,7 @@ import {
   POOL_COMBOS_PATH,
   POOL_COMBOS_SAVE_PATH,
   POOL_CREDITS_SPEND_PATH,
+  POOL_CREDITS_TODAY_PATH,
   POOL_RELAY_PATH,
   POOL_MODELS_SAVE_PATH,
   POOL_MODEL_PROBE_PATH,
@@ -61,6 +62,7 @@ import {
   type PoolWebAccountPrefer,
   type PoolWebAutomationJob,
   type PoolWebCreditReserve,
+  type PoolWebCreditsToday,
   type PoolWebAutomationRun,
   type PoolWebCheckin,
   type PoolWebModel,
@@ -286,6 +288,15 @@ export interface PoolStatusRouteOptions {
    * own cadence.
    */
   creditsSpend?: (days: number | undefined) => Promise<unknown>
+  /**
+   * Credits MEASURED as spent today, for the composer strip.
+   *
+   * Deliberately separate from {@link creditsSpend}: that one is priced from token
+   * samples, so it restarts with the process and reads zero whenever the pack stops
+   * writing its ledger. This one is observed from account balances and is the figure
+   * the strip prefers.
+   */
+  creditsToday?: () => Promise<PoolWebCreditsToday>
   /**
    * The relay's current state, or undefined when this build has no relay.
    *
@@ -1593,6 +1604,30 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
       },
     })
     /**
+     * Credits measured as spent TODAY.
+     *
+     * GET, no parameters. Read-only: one small JSON file that another plugin keeps
+     * updated, so the strip can refresh it on its normal cadence. The answer is
+     * `available: false` when nothing recorded the day — an observer that has not run
+     * must not be reported as a measured zero.
+     */
+    const disposeCreditsToday = ctx.webServer.register({
+      kind: 'exact',
+      path: POOL_CREDITS_TODAY_PATH,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        if (deps.creditsToday === undefined) {
+          return json(res, 503, { error: 'measured credit accounting is not available in this build' })
+        }
+        try {
+          json(res, 200, await deps.creditsToday())
+        } catch (error: unknown) {
+          json(res, 500, { error: safeMessage(error) })
+        }
+      },
+    })
+    /**
      * Replace the whole chain table.
      *
      * POST only, one table per request (see `POOL_COMBOS_SAVE_PATH`). The write
@@ -1671,6 +1706,7 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
       disposeCombosSave()
       disposeCombos()
       disposeCreditsSpend()
+      disposeCreditsToday()
       disposeChannels()
       disposeAggregate()
       disposeAggregateDiscover()

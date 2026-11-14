@@ -2144,6 +2144,26 @@ interface PoolWebAggregateProbe {
   /** How many ids the discover action wrote back. Absent on a plain probe. */
   committed?: number;
 }
+/**
+ * Response of {@link POOL_CREDITS_TODAY_PATH}.
+ *
+ * `available` is the only field a caller must branch on: when it is false the day has
+ * no record at all and `total` is absent, because a zero would claim the day was spent
+ * and observed to be nothing. `source` names the observer so a future second observer
+ * can be added without the client having to guess which one answered.
+ */
+interface PoolWebCreditsToday {
+  /** Local calendar day, `YYYY-MM-DD`. */
+  day: string;
+  /** Credits booked that day, summed over every observed account. */
+  total?: number;
+  /** How many accounts carried a figure for that day. */
+  accounts: number;
+  /** Which observer produced the figure. */
+  source: 'cost-meter';
+  /** False when nothing recorded the day; `total` is then absent. */
+  available: boolean;
+}
 /** One account's row, token-free. */
 interface PoolWebAccount {
   id: string;
@@ -4528,6 +4548,15 @@ interface PoolStatusRouteOptions {
    * own cadence.
    */
   creditsSpend?: (days: number | undefined) => Promise<unknown>;
+  /**
+   * Credits MEASURED as spent today, for the composer strip.
+   *
+   * Deliberately separate from {@link creditsSpend}: that one is priced from token
+   * samples, so it restarts with the process and reads zero whenever the pack stops
+   * writing its ledger. This one is observed from account balances and is the figure
+   * the strip prefers.
+   */
+  creditsToday?: () => Promise<PoolWebCreditsToday>;
   /**
    * The relay's current state, or undefined when this build has no relay.
    *

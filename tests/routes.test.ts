@@ -23,6 +23,7 @@ import {
   POOL_CHANNEL_MODELS_PATH,
   POOL_CHECKIN_PATH,
   POOL_CREDIT_RESERVE_PATH,
+  POOL_CREDITS_TODAY_PATH,
   POOL_MODEL_PROBE_PATH,
   POOL_RESCAN_PATH,
   POOL_RESET_COOLDOWN_PATH,
@@ -543,3 +544,106 @@ describe('the per-model routes', () => {
     }
   })
 })
+
+/**
+ * The measured day total, which the composer strip prefers over its own estimate.
+ *
+ * GET-only: it reads a file another plugin keeps updated, so there is nothing to protect
+ * from a prefetch -- but a POST has no meaning here, and a route that answers one is a
+ * route that will eventually be called with a body nobody validated.
+ */
+describe('the measured credit day route', () => {
+  /** Mount with the reader wired or not, so both the 200 and the 503 are reachable. */
+  async function mountToday(
+    creditsToday?: () => Promise<{ day: string; total?: number; accounts: number; source: 'cost-meter'; available: boolean }>,
+  ): Promise<Map<string, unknown>> {
+    const pool = new WorkBuddyAccountPool({ authDirs: [await fakeAuthDir(1)], logger: { warn() {} } })
+    await pool.scan()
+    const routes = new Map<string, unknown>()
+    const { ctx } = fakeContext(routes)
+    registerPoolStatusRoute(ctx as never, {
+      pool,
+      catalogs: { cn: new WorkBuddyCatalog(), global: new WorkBuddyCatalog() },
+      client: new WorkBuddyUpstreamClient(),
+      saveSelection() {},
+      setCreditReserve() {},
+      ...creditsToday === undefined ? {} : { creditsToday },
+    })
+    return routes
+  }
+
+  function getReq(origin?: string): unknown {
+    return {
+      method: 'GET',
+      headers: origin === undefined ? {} : { origin },
+      on() {},
+      destroy() {},
+    }
+  }
+
+  function fakeRes(): { res: unknown; read: () => { status: number; body: Record<string, unknown> } } {
+    const state = { status: 0, body: undefined as unknown }
+    const res = {
+      writeHead(status: number) { state.status = status },
+      end(payload: string) { state.body = JSON.parse(payload) },
+    }
+    return { res, read: () => ({ status: state.status, body: state.body as Record<string, unknown> }) }
+  }
+
+  it('answers with the day document the reader produced', async () => {
+    const routes = await mountToday(async () => ({
+      day: '2026-11-14', total: 86, accounts: 4, source: 'cost-meter', available: true,
+    }))
+    const handler = routes.get(POOL_CREDITS_TODAY_PATH) as (req: unknown, res: unknown) => Promise<void>
+    const { res, read } = fakeRes()
+    await handler(getReq('http://localhost:3000'), res)
+    expect(read().status).toBe(200)
+    expect(read().body).toEqual({
+      day: '2026-11-14', total: 86, accounts: 4, source: 'cost-meter', available: true,
+    })
+  })
+
+  it('passes `available: false` through, rather than turning it into a zero', async () => {
+    // The whole point of the route: "nothing recorded the day" is an answer the panel
+    // renders as a sentence, and a zero would make it print a measured 0 instead.
+    const routes = await mountToday(async () => ({
+      day: '2026-11-14', accounts: 0, source: 'cost-meter', available: false,
+    }))
+    const handler = routes.get(POOL_CREDITS_TODAY_PATH) as (req: unknown, res: unknown) => Promise<void>
+    const { res, read } = fakeRes()
+    await handler(getReq(), res)
+    expect(read().status).toBe(200)
+    expect(read().body['available']).toBe(false)
+    expect(read().body['total']).toBeUndefined()
+  })
+
+  it('answers 503 when the host wired no reader, rather than an empty day', async () => {
+    const routes = await mountToday()
+    const handler = routes.get(POOL_CREDITS_TODAY_PATH) as (req: unknown, res: unknown) => Promise<void>
+    const { res, read } = fakeRes()
+    await handler(getReq(), res)
+    expect(read().status).toBe(503)
+  })
+
+  it('refuses POST and a foreign origin', async () => {
+    const routes = await mountToday(async () => ({
+      day: '2026-11-14', total: 1, accounts: 1, source: 'cost-meter', available: true,
+    }))
+    const handler = routes.get(POOL_CREDITS_TODAY_PATH) as (req: unknown, res: unknown) => Promise<void>
+    const post = fakeRes()
+    await handler({ method: 'POST', headers: { origin: 'http://localhost:3000' }, on() {}, destroy() {} }, post.res)
+    expect(post.read().status).toBe(405)
+    const foreign = fakeRes()
+    await handler(getReq('http://192.168.1.50:3000'), foreign.res)
+    expect(foreign.read().status).toBe(403)
+  })
+
+  it('surfaces a throwing reader instead of an empty document', async () => {
+    const routes = await mountToday(async () => { throw new Error('home is unreadable') })
+    const handler = routes.get(POOL_CREDITS_TODAY_PATH) as (req: unknown, res: unknown) => Promise<void>
+    const { res, read } = fakeRes()
+    await handler(getReq(), res)
+    expect(read().status).toBe(500)
+  })
+})
+

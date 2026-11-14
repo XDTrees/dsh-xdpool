@@ -226,6 +226,7 @@ import { WorkBuddyScheduler, type AutomationJobKind, type AutomationLedger, type
 import { channelListableAsRows, createWorkBuddyShim, type WorkBuddyShim } from './shim.ts'
 import { createChannelLane, type ChannelLaneLlm } from './channel-lane.ts'
 import { backfillUsageFromLedger, readCreditSpend } from './credit-report.ts'
+import { readCreditsToday } from './credit-today.ts'
 import { ratesFor, type CreditRates } from './credits.ts'
 import { createPoolRelay, newRelayKey, relayDocumentOf, RELAY_DEFAULT_PORT, RELAY_HOSTS, type RelaySettings } from './relay.ts'
 import { UsageRecorder } from './stats.ts'
@@ -1760,6 +1761,15 @@ function canonicalJson(value: unknown): string {
     },
     /** Estimated credit spend per channel, for the composer strip. */
     creditsSpend: async (days: number | undefined) => await creditSpend(days),
+    /**
+     * Credits MEASURED as spent today, for the composer strip.
+     *
+     * cost-meter, not this plugin, owns the observation: it samples each pooled
+     * account's balance and books the drop under the local day, so this figure
+     * survives a restart and includes quota burned by anything else on the same
+     * accounts. The strip prefers it over its own token-price estimate.
+     */
+    creditsToday: async () => await readCreditsToday(dshHome()),
       /**
      * Relay state plus the gateway's model picker.
      *
