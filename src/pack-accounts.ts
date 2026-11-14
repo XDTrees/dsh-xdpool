@@ -20,6 +20,8 @@
  */
 
 import type { WorkBuddyCredential } from './accounts.ts'
+import { ensureCodeArtsRouteDeclarations } from './bili-routes.ts'
+import { publishCodeArtsRefsToJetHub, syncCodeArtsRefsIfPoolChanged } from './jet-hub-bridge.ts'
 
 /**
  * Channel ids whose accounts this plugin serves itself.
@@ -213,7 +215,34 @@ export async function adoptChannelPackAccounts(
   // Registered even when `pack` is undefined: cordis resolves `accountPool`
   // lazily, so a later scan may well find it, and re-registering on every call
   // is cheap.
-  pool.applyExternalSource(() => readPackCredentials(readPackAccountPool(ctx)))
+  pool.applyExternalSource(async () => {
+    // Re-publish CodeArts refs when the pool document changed since the last
+    // sync — see `syncCodeArtsRefsIfPoolChanged`.
+    //
+    // This is the ONLY place that runs on every scan, and every sign-in since
+    // mount ends up producing a scan (the card re-reads the pool, and any model
+    // request lazily loads it). Hooking here is what makes a sign-in that
+    // happened at 11:49 reach jet-hub's file, instead of leaving bili to resolve
+    // the ref the PREVIOUS account was written under. One `stat` when nothing
+    // changed, so the per-scan cost stays flat.
+    //
+    // Deliberately not awaited-for-failure: the bridge never throws, and its own
+    // warning is more specific than anything this layer could add.
+    const bridged = await syncCodeArtsRefsIfPoolChanged({ logger })
+    if (bridged?.error !== undefined) {
+      logger?.warn?.(
+        `[xdpool] could not mirror CodeArts credential refs for billion-context: ${bridged.error}`,
+      )
+    } else if (bridged?.wrote === true) {
+      const pruned = bridged.pruned !== undefined && bridged.pruned > 0
+        ? `, pruned ${String(bridged.pruned)} stale ref(s)`
+        : ''
+      logger?.info?.(
+        `[xdpool] published ${String(bridged.refs.length)} CodeArts credential ref(s) where billion-context looks (${bridged.path}${pruned})`,
+      )
+    }
+    return readPackCredentials(readPackAccountPool(ctx))
+  })
   if (pack === undefined) {
     logger?.warn?.('[xdpool] channel-pack account pool not visible yet; pool stays on desktop sign-ins')
     return
@@ -225,5 +254,35 @@ export async function adoptChannelPackAccounts(
   } catch (error: unknown) {
     logger?.warn?.('[xdpool] could not merge channel-pack accounts', error)
   }
+  // Publish the CodeArts credential refs where billion-context looks for them.
+  //
+  // A CodeArts sign-in through THIS pack lands in `channel-pack/state.json`, but
+  // bili's native lane only discovers CodeArts accounts in
+  // `jet-hub/state.json` — so without this it finds no credential, refuses the
+  // body-signed chat with `403 bili_resign_unavailable`, and the UI reports a
+  // bad API key. Only the reference is mirrored; the AK/SK stays in the
+  // credential store. See `src/jet-hub-bridge.ts`.
+  //
+  // The pool scan above already ran the bridge through the external-source
+  // callback, so this call is the belt-and-braces case: a mount where `pack` is
+  // visible but no scan has happened yet. It is stamped, so it stays one `stat`
+  // when the scan already did the work.
+  //
+  // Best-effort on purpose: a bridge failure must not turn a successful sign-in
+  // into an error, and bili being absent makes this a harmless no-op file write.
+  void publishCodeArtsRefsToJetHub({ logger })
+
+  // Teach billion-context what CodeArts actually accepts.
+  //
+  // Handing bili a credential (above) is only half of making the CodeArts lane
+  // work: once bili re-signs a rewritten body it also re-derives the request
+  // limits, and its two defaults are wrong for this gateway — it raises
+  // `max_tokens` to a registry ceiling of 384000 (the gateway refuses above
+  // 65536) and stamps `maas_type: benefit` from its own fallback list (an
+  // account without that entitlement gets APIG.0101). Both surface as opaque
+  // failures AFTER the credential was accepted, which reads as a broken key.
+  // Declaring the real ceiling and the explicit benefit answer removes both
+  // guesses. See `src/bili-routes.ts` for the measurements.
+  void ensureCodeArtsRouteDeclarations({ logger })
 }
 
