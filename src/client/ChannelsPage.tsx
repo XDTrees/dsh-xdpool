@@ -85,10 +85,17 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
   const mounted = useRef(true)
   /** Timers for in-flight logins, keyed by channel id. */
   const timers = useRef(new Map<string, number>())
-  useEffect(() => () => {
-    mounted.current = false
-    for (const handle of timers.current.values()) window.clearInterval(handle)
-    timers.current.clear()
+  useEffect(() => {
+    // Set on MOUNT, not only cleared on unmount: a ref keeps its value across a re-mount of
+    // the same component in React's StrictMode, so a flag that is only cleared stays false
+    // forever after the first unmount — and every `if (!mounted.current) return` below then
+    // returns before touching state, leaving the page stale for a reason no log explains.
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      for (const handle of timers.current.values()) window.clearInterval(handle)
+      timers.current.clear()
+    }
   }, [])
   const load = useCallback(async (signal?: AbortSignal): Promise<void> => {
     try {
@@ -370,6 +377,16 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
           t={t}
           ui={ui[channel.id] ?? IDLE}
           connectedCount={connectedFor(channel).length}
+          /**
+           * When the pack is mounted ELSEWHERE, this page cannot log anybody in.
+           *
+           * `account.create` is answered by the pack, and the pack that owns it lives in
+           * another plugin — so pressing the button produced the host's "not supported"
+           * line for a channel that works perfectly well, on a page the user was told to
+           * use. The row says where the sign-in actually is instead of offering a button
+           * that cannot work.
+           */
+          ownedElsewhere={status?.reason === ROUTE_OWNED_ELSEWHERE}
           onSignIn={() => { void signIn(channel) }}
           onCancel={() => cancel(channel.id)}
         />
@@ -384,6 +401,13 @@ interface ChannelRowProps {
   connectedCount: number
   onSignIn: () => void
   onCancel: () => void
+  /**
+   * True when the pack that owns this channel's sign-in lives in another plugin.
+   *
+   * Then the button cannot work from here, and saying so is better than a button that
+   * fails with the host's own "not supported" wording.
+   */
+  ownedElsewhere?: boolean | undefined
 }
 function ChannelRow({
   channel,
@@ -392,6 +416,7 @@ function ChannelRow({
   connectedCount,
   onSignIn,
   onCancel,
+  ownedElsewhere,
 }: ChannelRowProps) {
   const busy = ui.phase === 'signing-in'
   const icon = channelIcon(channel.id)
@@ -450,9 +475,15 @@ function ChannelRow({
                status line instead of replacing it. Replacing it (the earlier
                shape) left a channel with no way to add a second account and no
                way to see what the click had done. */}
-            <button type="button" className="dsm-xdpool-btn" onClick={onSignIn}>
-              {t?.('chan.login') ?? 'Add account'}
-            </button>
+            {ownedElsewhere === true ? (
+              <span className="dsm-xdpool-channel-hint">
+                {t?.('chan.ownedElsewhereRow') ?? '在「我们的免费模型」里登录'}
+              </span>
+            ) : (
+              <button type="button" className="dsm-xdpool-btn" onClick={onSignIn}>
+                {t?.('chan.login') ?? 'Add account'}
+              </button>
+            )}
             {/* Raccoon's own login page shows the QR and the phone-code form on
                 one screen, and its QR is the one that goes stale while the user
                 reads the message. The plugin cannot switch which door it opens —

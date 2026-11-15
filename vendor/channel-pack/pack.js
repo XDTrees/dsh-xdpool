@@ -33373,7 +33373,22 @@ var CodeArtsAdapter = class extends LlmAdapter {
     if (currentAccountId) rateLimitTried.add(currentAccountId);
     const isBenefitModel = isCodeArtsBenefitModel(options.model);
     for (; ; ) {
-      const extraSignedHeaders = isBenefitModel && !benefitHeaderDropped ? { maas_type: "benefit" } : void 0;
+      /**
+       * [xdpool-local] The benefit header is NEVER sent — issue #150.
+       *
+       * `maas_type: benefit` routes the request onto a lane the upstream has retired: with it
+       * the first frame is `InferHub.APIG.0101.404`, which surfaces as
+       * "The API does not exist or has not been published in the environment". Without it the
+       * SAME model, account, body and endpoint answer normally — measured both ways on
+       * `glm-5.3-flash` and `deepseek-v4.1-flash`.
+       *
+       * #149 read the same failure as "these model ids are no longer published" and proposed
+       * switching them off. Its control group changed the ID rather than the header, and every
+       * id it compared happened to be outside the benefit list — so the variable it meant to
+       * isolate was never isolated, and disabling the ids would have removed two working
+       * models while leaving the real cause in place.
+       */
+      const extraSignedHeaders = void 0;
       const signed = await signRequestHuawei(
         credential.access_key_id,
         credential.secret_access_key,

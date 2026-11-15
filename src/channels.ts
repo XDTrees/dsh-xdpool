@@ -65,6 +65,7 @@ export type ChannelProviderId =
   | 'minimax'
   | 'zcode'
   | 'gemini'
+  | 'doubao'
 export interface ChannelDescriptor {
   id: ChannelProviderId
   name: string
@@ -292,6 +293,23 @@ export const REGISTERED_CHANNELS: readonly ChannelDescriptor[] = [
     login: 'browser',
     // Quota, not credits: Gemini reports percentage windows, so a total is
     // the wrong number to print even though the pack returns one.
+    credits: { quota: true },
+  },
+  {
+    id: 'doubao',
+    /**
+     * Doubao, served by this plugin's own lane.
+     *
+     * Unlike every other row here, the pack has no Doubao adapter — the session, the
+     * catalogue and the wire are all this plugin's. What makes it a channel anyway is the
+     * login: one browser sign-in, then the models are in the picker like any other vendor's.
+     */
+    name: '豆包',
+    org: '字节跳动',
+    domain: 'www.doubao.com',
+    accent: '#325AB4',
+    note: '浏览器扫码登录一次；对话与「工作任务」模型、生图、活动赠送额度都在这里',
+    login: 'browser',
     credits: { quota: true },
   },
 ]

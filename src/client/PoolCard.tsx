@@ -53,6 +53,7 @@ import { AggregatePage } from './AggregatePage.tsx'
 import { ChannelsPage } from './ChannelsPage.tsx'
 import { RoutingPage } from './RoutingPage.tsx'
 import { GatewayPage } from './GatewayPage.tsx'
+import { DoubaoPage } from './DoubaoPage.tsx'
 import { RegionCardPane, RegionCardTile, RegionCardTrigger, regionCardStyle } from './region-card.tsx'
 import type { RegionCardState } from './region-card.tsx'
 import { REGION_CHANNEL_BY_REGION } from './region-card.tsx'
@@ -566,6 +567,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
     { id: 'ledger', label: t?.('shell.tabLedger') ?? 'Dashboard' },
     { id: 'routing', label: t?.('shell.tabRouting') ?? 'Routing' },
     { id: 'gateway', label: t?.('shell.tabGateway') ?? 'Gateway' },
+    { id: 'doubao', label: t?.('shell.tabDoubao') ?? 'Doubao' },
     { id: 'backup', label: t?.('shell.tabBackup') ?? 'Backup' },
   ] as const
   const [page, setPage] = useState<string>(
@@ -617,7 +619,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
    * Whether a region's model pane is showing the WHOLE roster.
    *
    * Per region, and default off, because the pane opens on a card the user
-   * scrolled to reach: fourteen full rows of mostly-disabled models pushed
+   * scrolled to reach: thirteen full rows of mostly-disabled models pushed
    * everything else a screen and a half further down (the reported "无限往下
    * 续"). The enabled rows are what "my models" means; the rest are one click
    * away and the button says how many there are.
@@ -1548,6 +1550,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
         : page === 'channels' ? <ChannelsPage t={t} />
           : page === 'ledger' ? <LedgerPage t={t} usage={usage} />
                   : page === 'routing' ? <RoutingPage t={t} />
+                : page === 'doubao' ? <DoubaoPage t={t} />
                 : page === 'gateway' ? <GatewayPage t={t} />
                   : page === 'backup' ? <BackupPanel t={t} />
                   : <>

@@ -127,7 +127,10 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
   useEffect(() => {
     if (shared !== undefined) setOwn(shared)
   }, [shared])
-  useEffect(() => () => { mounted.current = false }, [])
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   /**
    * Poll only while this page is mounted.
    *

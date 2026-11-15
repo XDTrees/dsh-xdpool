@@ -40,7 +40,9 @@ const pack = readFileSync(new URL('../vendor/channel-pack/pack.js', import.meta.
 
 /** The CodeArts adapter's chat loop, bounded by anchors unique to it. */
 function codeArtsChatWindow(): string {
-  const started = pack.indexOf('const extraSignedHeaders = isBenefitModel && !benefitHeaderDropped')
+  // The anchor moved when the benefit header was retired (issue #150): the loop now sets
+  // `extraSignedHeaders` to undefined, so the line is found by the plain assignment.
+  const started = pack.indexOf('const extraSignedHeaders = void 0')
   expect(started).toBeGreaterThan(-1)
   const fetched = pack.indexOf('response = await this.fetchImpl(url, {', started)
   expect(fetched).toBeGreaterThan(started)
