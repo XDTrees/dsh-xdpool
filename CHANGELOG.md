@@ -1,6 +1,68 @@
 # Changelog
 本项目的所有重要变更都会记录在此文件。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+## 2.7.3 — 豆包进模型选择器，开关能记住了
+
+> 两个问题：豆包的模型在选择器里完全看不到；勾选和全开全关关掉面板就失效。
+
+### 豆包为什么不在模型选择器里
+
+模型选择器读的是**宿主的 adapter 注册表**（`ctx.llm.registerAdapter`），而豆包只走了
+channelLane 的 HTTP 路由 —— 那条路让模型可用，但不会让它们出现在列表里。所以一个已登录、
+十个模型全勾的账号，在选择器里一片空白。
+
+现在按其他渠道的方式注册：
+
+```ts
+ctx.llm.registerAdapter([DOUBAO_PROVIDER_ID], new DoubaoHostAdapter({ ... }))
+```
+
+实现了 `LlmAdapter` 要求的五个方法（`providerInfo` / `listModels` / `resolveModel` /
+`prepareCall` / `stream`），请求细节仍由 `doubao-upstream.ts` 决定。
+
+### 模型参数、倍率、免费标注
+
+`brief_list` 接口只返回功能入口，**不含**任何模型字段。倍率和上下文在**桌面客户端的
+IndexedDB 记录里**：
+
+```
+model_item_key: person-kimi-k3-261111
+name: Kimi K3
+total_window_size: 300000
+tag.text: "1.48x"
+```
+
+解析后卡片和选择器都能显示：
+
+| 模型 | 倍率 |
+| --- | --- |
+| Kimi K3 | `1.48x` |
+| GLM 5.3 | `0.80x` |
+| Kimi K3.1 Pro 高速 | `1.44x` |
+
+上下文窗口 256k，推理三档（低/中/高）。倍率写成字符串而不是数字 —— `1.48x` 是费率、
+`免费` 根本不是倍率、`x0.12→x0.06` 是进行中的促销，压平成数字就等于替厂商改口径。
+没有倍率数据的模型（例如某些套餐下的 DeepSeek）就不显示，不编造。
+
+### 模型开关为什么记不住
+
+`model.setDisabled` 和 `model.setAllDisabled` 都是 pack 的 RPC，指向 pack 自己的模型记录。
+豆包在那里没有条目，所以两个调用都回答 `unknown provider`，接着 catch 回滚本地状态：
+
+```js
+setEnabled(previous => { const restored = new Map(previous); restored.delete(provider); return restored })
+```
+
+于是「全关 → 重新打开面板 → 又是全开」。
+
+现在豆包自己存（其他渠道由 pack 存，因为 pack 拥有它们的目录）：
+
+- 单个开关：`saveDoubaoSkipped(modelId, disabled)`
+- 全开全关：一次写入整个名单
+
+读取端区分两种状态：`undefined` 是「从未配置」（全开），`[]` 是「配置为全关」。
+混在一起会让新账号看起来像已经被配置过。
+
 ## 2.7.2 — 一个账号池，一组模型
 
 > 模型选择器里同一个账号池出现了四个分组（XD Pool 国内版/国际版 + WorkBuddy 国内版/国际版）。

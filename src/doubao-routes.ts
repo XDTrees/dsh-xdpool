@@ -203,6 +203,8 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
          */
         try {
           const models = await fetchLiveModels(deps.session())
+          // The rate and the window travel with the row: the card prints them, and neither is
+          // available from any HTTP endpoint this lane can call.
           return json(res, 200, { ok: true, models })
         } catch (error: unknown) {
           return json(res, 200, {

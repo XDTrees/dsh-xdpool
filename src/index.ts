@@ -9,6 +9,7 @@ import { creditReservesWith } from './credit-reserve.ts'
 import { createDoubaoLlm, DOUBAO_CHANNEL as DOUBAO_LANE_CHANNEL } from './doubao-llm.ts'
 import { registerDoubaoRoutes } from './doubao-routes.ts'
 import { createDoubaoAutomation } from './doubao-automation.ts'
+import { DoubaoHostAdapter, DOUBAO_PROVIDER_ID } from './doubao-host-adapter.ts'
 import { DOUBAO_MODELS } from './doubao-catalog.ts'
 import { readStoredSession, removeStoredSession, writeStoredSession } from './doubao-store.ts'
 import { setDoubaoSession } from './doubao-upstream.ts'
@@ -2061,6 +2062,7 @@ function canonicalJson(value: unknown): string {
         let releaseAdapterGlobal: AdapterHandle | undefined
         let releaseAdapterAggregate: AdapterHandle | undefined
         let releaseAdapterFree: AdapterHandle | undefined
+        let releaseAdapterDoubao: AdapterHandle | undefined
         let releaseDirectory: (() => void) | undefined
         // Adapters first, in a try of their own, and ONLY THEN the directory.
         //
@@ -2113,6 +2115,17 @@ function canonicalJson(value: unknown): string {
             [XDPOOL_FREE_PROVIDER],
             adaptersByRegion.free.adapter,
           )
+          /**
+           * Doubao, registered the same way every other channel is.
+           *
+           * The lane over HTTP is not enough: the model PICKER reads the host's adapter
+           * registry, so a signed-in Doubao account with ten models enabled appeared nowhere in
+           * the list. This is the registration the pack performs for each of its own channels.
+           */
+          releaseAdapterDoubao = ctx.llm.registerAdapter(
+            [DOUBAO_PROVIDER_ID],
+            new DoubaoHostAdapter({ session: () => doubaoSession }),
+          )
         } catch (error: unknown) {
           // An adapter that cannot be created is not survivable — the picker
           // would advertise a provider with nothing behind it — so this is the
@@ -2123,6 +2136,7 @@ function canonicalJson(value: unknown): string {
           releaseAdapterGlobal?.()
           releaseAdapterAggregate?.()
           releaseAdapterFree?.()
+          releaseAdapterDoubao?.()
           return
         }
         try {
@@ -2237,6 +2251,7 @@ function canonicalJson(value: unknown): string {
           releaseAdapterGlobal?.()
           releaseAdapterAggregate?.()
           releaseAdapterFree?.()
+          releaseAdapterDoubao?.()
           releaseDirectory?.()
         }
         try {

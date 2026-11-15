@@ -24,6 +24,16 @@ export interface DoubaoModelInfo {
   badge?: string
   /** Whether the model exposes reasoning levels. */
   reasoning?: boolean
+  /** The context window the vendor publishes, when it publishes one. */
+  contextWindow?: number
+  /**
+   * The billing multiplier, exactly as the vendor writes it.
+   *
+   * A string rather than a number on purpose: `1.48x` is a rate, `免费` is not a multiplier at
+   * all, and `x0.12→x0.06` is a promotion in progress. Flattening any of them into a number
+   * would state something the vendor did not.
+   */
+  rate?: string
 }
 
 /**
