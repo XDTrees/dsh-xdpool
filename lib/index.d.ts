@@ -2144,6 +2144,53 @@ interface PoolWebAggregateProbe {
   /** How many ids the discover action wrote back. Absent on a plain probe. */
   committed?: number;
 }
+/**
+ * Response of {@link POOL_CREDITS_TODAY_PATH}.
+ *
+ * `available` is the only field a caller must branch on: when it is false the day has
+ * no record at all and `total` is absent, because a zero would claim the day was spent
+ * and observed to be nothing. `source` names the observer so a future second observer
+ * can be added without the client having to guess which one answered.
+ */
+interface PoolWebCreditsToday {
+  /** Local calendar day, `YYYY-MM-DD`. */
+  day: string;
+  /**
+   * The day's bounds, `[00:00:00.000, 24:00:00.000)` local, in epoch milliseconds.
+   *
+   * Spelled out rather than implied: "today" is a local calendar day, not a rolling 24h
+   * window, and a caller must be able to CHECK the reset at 0:00 instead of trusting it.
+   */
+  window?: {
+    from: number;
+    to: number;
+    zone: 'local';
+  };
+  /** Credits booked that day, summed over every observed account. */
+  total?: number;
+  /** How many accounts carried a figure for that day. */
+  accounts: number;
+  /**
+   * Which observer produced the figure.
+   *
+   * `cost-meter` is the sampler's booked drops, `balance-baseline` adds back the drops no
+   * sample witnessed, and the two ledger sources are PRICED from recorded token counts.
+   */
+  source: 'cost-meter' | 'balance-baseline' | 'cost-meter-ledger' | 'pack-ledger';
+  /**
+   * `total` was priced from recorded token counts, not observed as a balance drop.
+   *
+   * The strip draws a priced figure with a `≈` for the same reason this flag exists: an
+   * estimate and a measurement are not interchangeable.
+   */
+  priced?: boolean;
+  /** Credits the day-start baseline recovered that no sample booked. */
+  recovered?: number;
+  /** How many accounts that recovery came from. */
+  recoveredAccounts?: number;
+  /** False when nothing recorded the day; `total` is then absent. */
+  available: boolean;
+}
 /** One account's row, token-free. */
 interface PoolWebAccount {
   id: string;
@@ -4528,6 +4575,15 @@ interface PoolStatusRouteOptions {
    * own cadence.
    */
   creditsSpend?: (days: number | undefined) => Promise<unknown>;
+  /**
+   * Credits MEASURED as spent today, for the composer strip.
+   *
+   * Deliberately separate from {@link creditsSpend}: that one is priced from token
+   * samples, so it restarts with the process and reads zero whenever the pack stops
+   * writing its ledger. This one is observed from account balances and is the figure
+   * the strip prefers.
+   */
+  creditsToday?: () => Promise<PoolWebCreditsToday>;
   /**
    * The relay's current state, or undefined when this build has no relay.
    *
