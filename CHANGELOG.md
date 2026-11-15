@@ -32,18 +32,6 @@
 
 **同一个修复也解决了 #154**（TRAE 的模型列表永远回退到兜底表），因为那是同一个根因。
 
-### 合并了 3 个只存在于桌面端的账号
-
-删掉区域 adapter 前先做了数据合并，避免丢账号：
-
-| 账号 | 去向 |
-| --- | --- |
-| 神总是咕噜的 | `BUDDY_ACCOUNT_30646139` |
-| qingche526@gmail.com（国际） | `WORKBUDDY_ACCOUNT_66643536` |
-| aosi526（国际） | `WORKBUDDY_ACCOUNT_38646636` |
-
-改前备份：`.credentials.yaml.bak-20261116-004413`、`.xdpool/accounts.json.bak-20261116-004414`。
-
 ### 卡片布局统一
 
 渠道卡片的头部、统计行、折叠按钮都换成 WorkBuddy 那套 markup：
