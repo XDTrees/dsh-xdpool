@@ -54,24 +54,49 @@ export function browserProfileDir(): string {
 /** The port the sign-in browser listens on. Unusual enough to avoid a real session. */
 const DEBUG_PORT = 9333
 
-/** Browsers that can be driven, in the order they are preferred. */
-const CANDIDATES = [
+/**
+ * Browsers this can drive, and where they actually live.
+ *
+ * EVERY Chromium-based browser speaks the same DevTools protocol, so this is not "Chrome
+ * only". Edge ships with Windows, and users install Chrome, Brave, Vivaldi and Chromium into
+ * their own profile directory rather than into `Program Files` — a user who has one of those
+ * but not a machine-wide Chrome was told "no browser found", which reads as a broken feature.
+ *
+ * The per-user entries matter most: a machine-wide install needs administrator rights, so the
+ * browser a normal user actually has is often under `%LOCALAPPDATA%`.
+ */
+const MACHINE_BROWSERS: readonly string[] = [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+  'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+  'C:\\Program Files\\Vivaldi\\Application\\vivaldi.exe',
 ]
 
-/** The first installed browser, or undefined. */
+/** Per-user install locations, which the machine-wide list above cannot know about. */
+const PER_USER_BROWSERS: readonly string[] = [
+  'Google\\Chrome\\Application\\chrome.exe',
+  'Microsoft\\Edge\\Application\\msedge.exe',
+  'BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+  'Vivaldi\\Application\\vivaldi.exe',
+]
+
+/**
+ * The first driveable browser, or undefined.
+ *
+ * Machine-wide installs are tried first because that is the common case on a work machine;
+ * per-user installs are the fallback, and they are what a user without administrator rights
+ * will have.
+ */
 function findBrowser(): string | undefined {
-  for (const candidate of CANDIDATES) {
+  for (const candidate of MACHINE_BROWSERS) {
     if (existsSync(candidate)) return candidate
   }
-  // The per-user install locations, which the fixed list above cannot know about.
   const local = process.env['LOCALAPPDATA']
   if (local !== undefined) {
-    for (const name of ['Google\\Chrome\\Application\\chrome.exe', 'Microsoft\\Edge\\Application\\msedge.exe']) {
-      const path = join(local, name)
+    for (const relative of PER_USER_BROWSERS) {
+      const path = join(local, relative)
       if (existsSync(path)) return path
     }
   }
@@ -260,6 +285,21 @@ export async function browserLogin(options: {
   onProgress?: (message: string) => void
 } = {}): Promise<BrowserLoginResult> {
   const say = options.onProgress ?? (() => {})
+
+  /**
+   * A SIGN-IN WINDOW OF OUR OWN, and that is the arrangement the reference implementation
+   * uses for the same reason.
+   *
+   * The other channels in this plugin return a `loginUrl` and let the page call
+   * `window.open`, so their buttons always produce a window — the browser is the user's own
+   * default. Doubao cannot use that door: a window opened that way has no debugging port, so
+   * the cookies it collects cannot be read, and the session is lost the moment the tab
+   * closes.
+   *
+   * So the window is started here, with a dedicated profile the user's own browser never
+   * touches, and the debugging port is what makes the result readable. Nothing is asked of
+   * the user beyond signing in once.
+   */
   const exe = findBrowser()
   if (exe === undefined) {
     return { ok: false, reason: '没找到 Chrome 或 Edge。浏览器扫码登录需要一个 Chromium 内核的浏览器。' }

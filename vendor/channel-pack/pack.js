@@ -30066,7 +30066,76 @@ var AccountPool = class {
   /** 读取账号列表（进程内权威副本）。 */
   readAccounts() {
     this.ensureLoaded();
-    return this.cache;
+    /**
+     * [xdpool-local] Bring in accounts the CREDENTIAL STORE knows and the pool document does
+     * not — the missing half of the four-group report (#148).
+     *
+     * A scan login writes `<PREFIX>_ACCOUNT_<hash>` into the host's credentials. The pool
+     * document is written separately, and the two can drift: a reinstall, a pool reset, or an
+     * account created by a DIFFERENT plugin that shares the prefix leaves a live credential with
+     * no pool row. `readAccounts` then answers "no accounts", the catalogue gate hides the
+     * provider, and the card shows hard-coded fallbacks while a valid session sits unused.
+     *
+     * The merge is lazy and cached: the credential file is read once per load, and an account is
+     * only synthesised when its ref is not already present. Nothing is persisted — the pool
+     * document stays the source of truth for anything the user changed (enabled, limits, names),
+     * and a synthesised row exists only to make the credential reachable.
+     */
+    if (this.orphanCache === void 0) {
+      this.orphanCache = this.collectOrphanAccounts();
+    }
+    return this.orphanCache.length === 0 ? this.cache : [...this.cache, ...this.orphanCache];
+  }
+  /** Cached result of {@link collectOrphanAccounts}; `undefined` means "not computed yet". */
+  orphanCache = void 0;
+  /**
+   * Accounts that exist as credentials but not as pool rows.
+   *
+   * Runs synchronously because `readAccounts` is called from synchronous paths all over the
+   * adapter code; the credential file is small and this happens once per load.
+   */
+  collectOrphanAccounts() {
+    var out = [];
+    try {
+      var fs = require("node:fs");
+      var os = require("node:os");
+      var path = require("node:path");
+      var home = process.env.DSH_HOME ?? path.join(os.homedir(), ".dsh");
+      var file = path.join(home, ".credentials.yaml");
+      var text;
+      try {
+        text = fs.readFileSync(file, "utf8");
+      } catch {
+        return out;
+      }
+      var seen = new Set(this.cache.map((a) => a.credentialRef).filter(Boolean));
+      var providers = /* @__PURE__ */ new Set(this.cache.map((a) => a.provider));
+      var lines = text.split(String.fromCharCode(10));
+      for (var i = 0; i < lines.length; i += 1) {
+        var match = /^\s{0,4}([A-Z][A-Z0-9_]*):/u.exec(lines[i]);
+        if (match === null) continue;
+        var ref = match[1];
+        var at = ref.indexOf("_ACCOUNT_");
+        if (at <= 0 || seen.has(ref)) continue;
+        var provider = ref.slice(0, at).toLowerCase();
+        // Only for providers this pool already knows about: a ref for a vendor the pack has no
+        // adapter for would produce a row nothing can serve.
+        if (!providers.has(provider)) continue;
+        seen.add(ref);
+        out.push({
+          id: "cred-" + ref.slice(at + 9).toLowerCase(),
+          provider,
+          credentialRef: ref,
+          enabled: true,
+          refreshable: false,
+          nickname: provider + " account",
+          createdAt: 0
+        });
+      }
+    } catch {
+      return out;
+    }
+    return out;
   }
   /**
    * 串行化状态文档的落盘，并在**轮到本次时**重新取一次快照。
@@ -30757,7 +30826,61 @@ var AccountPool = class {
       const credential = await this.resolveCredentialByRef(entry.credentialRef);
       if (credential !== void 0) return true;
     }
+    /**
+     * [xdpool-local] A signed-in account may exist as a CREDENTIAL without a pool entry.
+     *
+     * A scan login writes `<PREFIX>_ACCOUNT_<hash>` into the host's credential store and tells
+     * the pack about it through `account.create`. When the pool document and the credential
+     * store disagree — the case after a pool reset, a plugin reinstall, or an account created by
+     * a DIFFERENT plugin that shares the prefix — this method answered "not logged in", and the
+     * gate above answered it by hiding the whole provider: the card showed five hard-coded
+     * fallback models while eighteen real ones sat behind a session that was perfectly valid.
+     *
+     * So the credential store is consulted too, by prefix. Anything that resolves counts: the
+     * question this answers is "may the catalogue be shown", and one usable credential is
+     * enough for that.
+     */
+    const prefix = `${provider.toUpperCase().replace(/[^A-Z0-9]/gu, '_')}_ACCOUNT_`;
+    for (const ref of await this.credentialRefsWithPrefix?.(prefix) ?? []) {
+      const credential = await this.resolveCredentialByRef(ref);
+      if (credential !== void 0) return true;
+    }
     return false;
+  }
+  /**
+   * Credential refs that start with `prefix`.
+   *
+   * The host's credential service resolves by EXACT ref and does not enumerate, so the store
+   * file is read directly. Absent or unreadable means "no evidence either way" — the caller
+   * then answers from the pool alone, which is the old behaviour.
+   */
+  async credentialRefsWithPrefix(prefix) {
+    try {
+      const { readFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const { homedir } = await import("node:os");
+      const candidates = [
+        join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), ".credentials.yaml"),
+        join(process.env.DSH_HOME ?? join(homedir(), ".dsh"), ".credentials.json")
+      ];
+      for (const file of candidates) {
+        let text;
+        try {
+          text = await readFile(file, "utf8");
+        } catch {
+          continue;
+        }
+        const matches = [];
+        for (const line of text.split(String.fromCharCode(10))) {
+          const match = /^\s{0,4}([A-Z][A-Z0-9_]*):/u.exec(line);
+          if (match !== null && match[1].startsWith(prefix)) matches.push(match[1]);
+        }
+        if (matches.length > 0) return [...new Set(matches)];
+      }
+      return [];
+    } catch {
+      return [];
+    }
   }
   /**
    * 按账号 id 解析凭据（**不检查 enabled**）。

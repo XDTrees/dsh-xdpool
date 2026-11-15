@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   POOL_CHANNELS_PATH,
+  POOL_DOUBAO_SESSION_PATH,
   ROUTE_OWNED_ELSEWHERE,
   type PoolWebChannel,
   type PoolWebChannelsStatus,
@@ -213,6 +214,55 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
   const signIn = useCallback(
     async (channel: PoolWebChannel): Promise<void> => {
       setUi(prev => ({ ...prev, [channel.id]: { phase: 'signing-in' } }))
+      /**
+       * Doubao is not a pack channel.
+       *
+       * Every other row here is served by the vendored pack, which drives its own login page
+       * and reports the account back through `account.create`. Doubao has no adapter there —
+       * the pack answers `unknown provider: doubao` — because its lane is this plugin's own:
+       * one browser session, the catalogue read from the vendor, the wire its own.
+       *
+       * So the button calls the plugin's own sign-in, which opens a Chromium window and
+       * harvests the jar over the DevTools protocol.
+       */
+      if (channel.id === 'doubao') {
+        // The window opens server-side, so the user is told what to expect before the request
+        // returns — the sign-in can run for minutes while they scan.
+        setUi(prev => ({
+          ...prev,
+          [channel.id]: {
+            phase: 'signing-in',
+            message: '已打开浏览器，请在弹出的窗口里扫码或短信登录…',
+          },
+        }))
+        try {
+          const response = await fetch(POOL_DOUBAO_SESSION_PATH, { method: 'POST', credentials: 'same-origin' })
+          const body = await response.json().catch(() => undefined) as
+            | { ok?: boolean; signedIn?: boolean; message?: string }
+            | undefined
+          if (!mounted.current) return
+          if (body?.signedIn === true) {
+            setUi(prev => ({ ...prev, [channel.id]: { phase: 'done' } }))
+            void load()
+            void loadConnected()
+            return
+          }
+          setUi(prev => ({
+            ...prev,
+            [channel.id]: {
+              phase: 'failed',
+              message: body?.message ?? '没有等到登录完成，可以再点一次',
+            },
+          }))
+        } catch (cause: unknown) {
+          if (!mounted.current) return
+          setUi(prev => ({
+            ...prev,
+            [channel.id]: { phase: 'failed', message: cause instanceof Error ? cause.message : String(cause) },
+          }))
+        }
+        return
+      }
       let envelope: ChannelRpcEnvelope
       try {
         envelope = await callPack('account.create', { provider: channel.id })
@@ -491,6 +541,10 @@ function ChannelRow({
                 button instead. */}
             {channel.smsHint === true && (
               <span className="dsm-xdpool-channel-hint">{t?.('chan.loginSmsHint') ?? ''}</span>
+            )}
+            {/* What the button will actually do, before it is pressed. */}
+            {channel.loginHint === 'doubao' && (
+              <span className="dsm-xdpool-channel-hint">{t?.('chan.doubaoHint') ?? ''}</span>
             )}
             {ui.phase === 'done' && (
               <span className="dsm-xdpool-channel-ok">{t?.('chan.done') ?? 'Account added'}</span>
