@@ -170,6 +170,15 @@ export function parseCacheBuffer(buf: Buffer): DoubaoModelInfo[] {
     if (!/^person-[a-z0-9-]+-\d{6}$/u.test(slug)) continue
     if (out.has(slug)) continue
     const name = nameForSlug(buf, slug)
+    /**
+     * The window and the multiplier travel WITH the model in this cache.
+     *
+     * Measured on a real record: `total_window_size: 300000` and a `tag.text` of `"1.48x"` sit
+     * beside `model_item_key` and `name`. Neither is on any HTTP endpoint this lane can call —
+     * `brief_list` returns feature entries and no model fields at all — so the cache is the only
+     * source for the two numbers the picker wants to print.
+     */
+    const meta = metaNear(buf, slug)
     out.set(slug, {
       id: slug,
       // A readable name from the slug when the bytes do not yield one: `person-deepseek-v4-1-flash`
@@ -178,6 +187,8 @@ export function parseCacheBuffer(buf: Buffer): DoubaoModelInfo[] {
       name: name ?? nameFromSlug(slug),
       badge: '工作任务',
       reasoning: true,
+      ...(meta.contextWindow === undefined ? {} : { contextWindow: meta.contextWindow }),
+      ...(meta.rate === undefined ? {} : { rate: meta.rate }),
     })
   }
 
@@ -248,6 +259,49 @@ function nameForSlug(buf: Buffer, slug: string): string | undefined {
   return undefined
 }
 
+
+/**
+ * The window and multiplier recorded beside a model key.
+ *
+ * Both live in the same V8 record as the key, a few hundred bytes after it, so they are read
+ * from the same window the name is: `total_window_size` (or `context_window`) as a number, and
+ * the first `tag.text` that reads like a multiplier. Either may be absent — a model on a plan
+ * that publishes no figure simply has neither, and printing an invented one would be worse than
+ * printing nothing.
+ */
+export function metaNear(buf: Buffer, slug: string): { contextWindow?: number; rate?: string } {
+  const at = buf.indexOf(Buffer.from(slug, 'latin1'))
+  if (at < 0) return {}
+  /**
+   * The window the fields are read from, and why the search is binary-tolerant.
+   *
+   * The record is V8-serialised, so a field name and its value are separated by bytes that
+   * decode to control characters — `"text"1.48x` is one measured example. A pattern that
+   * expects a space or a quote between them matches nothing, which is how the first version of
+   * this function returned empty for every model.
+   */
+  const window = buf.subarray(at, Math.min(buf.length, at + 1200))
+  const text = window.toString('latin1')
+  const out: { contextWindow?: number; rate?: string } = {}
+  // A multiplier: "1.48x", "0.65x", "x0", or the Chinese words the promotions use.
+  // A multiplier reads `1.48x` or `0.65x`; the Chinese promotions have no number at all.
+  const rate = /(\d+(?:\.\d+)?x|免费|限时免费)/iu.exec(text)
+  if (rate?.[1] !== undefined) out.rate = rate[1].trim()
+  /**
+   * A context window: `total_window_size` followed by its digits.
+   *
+   * Matched loosely on the boundary between the name and the number because the serialised form
+   * has no separator to anchor on — any non-digit run of up to 24 bytes is allowed between them.
+   */
+  const size = /total_window_size[^0-9]{1,24}(\d{4,7})/u.exec(text)
+    ?? /context_window[^0-9]{1,24}(\d{4,7})/u.exec(text)
+    ?? /(\d{3})k_\d{3}/u.exec(text)
+  if (size?.[1] !== undefined) {
+    // The `300k_230` shape records the window in kilobytes rather than as a full count.
+    out.contextWindow = size[0].includes('k_') ? Number(size[1]) * 1000 : Number(size[1])
+  }
+  return out
+}
 
 /**
  * A presentable name derived from a model slug.

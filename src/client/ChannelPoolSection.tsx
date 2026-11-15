@@ -110,6 +110,37 @@ let poolSnapshot: ChannelPoolSnapshot | undefined
  */
 const COUNTS_STORE_KEY = 'dsh-xdpool.channel-counts.v1'
 
+/** Where Doubao's own model selection lives. Versioned for the same reason as the counts. */
+const DOUBAO_SKIP_KEY = 'dsh-xdpool.doubao-skipped-models.v1'
+
+/**
+ * The Doubao models the user switched off.
+ *
+ * `undefined` means "never configured", which is different from "none switched off": the first
+ * shows everything, the second shows nothing. Collapsing them would make a fresh account look
+ * as though the user had already made choices.
+ */
+function readDoubaoSkipped(): ReadonlySet<string> | undefined {
+  try {
+    const raw = globalThis.localStorage?.getItem(DOUBAO_SKIP_KEY)
+    if (raw === null || raw === undefined) return undefined
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return undefined
+    return new Set(parsed.filter((id): id is string => typeof id === 'string'))
+  } catch {
+    return undefined
+  }
+}
+
+/** Record one model as switched off, or back on. */
+async function saveDoubaoSkipped(modelId: string, disabled: boolean): Promise<void> {
+  const current = readDoubaoSkipped() ?? new Set<string>()
+  const next = new Set(current)
+  if (disabled) next.add(modelId)
+  else next.delete(modelId)
+  globalThis.localStorage?.setItem(DOUBAO_SKIP_KEY, JSON.stringify([...next]))
+}
+
 /** What is stored per channel: counts, not accounts. */
 interface StoredCounts {
   /** Epoch ms of the read that produced these numbers. */
@@ -320,15 +351,24 @@ async function readDoubaoModels(): Promise<readonly { id: string; name: string; 
   try {
     const response = await fetch(POOL_DOUBAO_MODELS_PATH, { credentials: 'same-origin' })
     const body = await response.json().catch(() => undefined) as
-      | { models?: { id?: string; name?: string; badge?: string }[] }
+      | { models?: { id?: string; name?: string; badge?: string; rate?: string; contextWindow?: number }[] }
       | undefined
     const models = Array.isArray(body?.models) ? body.models : []
     return models
       .filter(model => typeof model.id === 'string' && typeof model.name === 'string')
       .map(model => ({
         id: model.id as string,
-        name: model.name as string,
+        /**
+         * The multiplier is joined onto the name because that is the shape the card already
+         * understands — every other channel writes it there (`DeepSeek-V4.1-Flash · x0.11`), and
+         * `multiplierOf` splits it back out into its own badge. Doing it here keeps ONE rule for
+         * every vendor instead of a Doubao-shaped exception in the renderer.
+         */
+        name: typeof model.rate === 'string' && model.rate !== ''
+          ? `${model.name as string} · ${model.rate}`
+          : model.name as string,
         ...(typeof model.badge === 'string' && model.badge !== '' ? { description: model.badge } : {}),
+        ...(typeof model.contextWindow === 'number' ? { contextWindow: model.contextWindow } : {}),
       }))
   } catch {
     return doubaoListing()
@@ -837,9 +877,25 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     })
   }
 
-  const enabledFor = (provider: string, models: readonly ChannelModel[]): ReadonlySet<string> =>
-    enabled.get(provider) ??
-    new Set(models.filter(model => model.disabled !== true).map(model => model.id))
+  const enabledFor = (provider: string, models: readonly ChannelModel[]): ReadonlySet<string> => {
+    const live = enabled.get(provider)
+    if (live !== undefined) return live
+    /**
+     * Doubao remembers its own selection.
+     *
+     * The pack keeps every other channel's disabled list; this lane has no entry there, so its
+     * choice is stored beside the counts it already keeps. `undefined` means "never touched" and
+     * the default (all enabled) applies — a channel the user has not configured must not look
+     * half-configured.
+     */
+    if (provider === 'doubao') {
+      const saved = readDoubaoSkipped()
+      if (saved !== undefined) {
+        return new Set(models.filter(model => !saved.has(model.id)).map(model => model.id))
+      }
+    }
+    return new Set(models.filter(model => model.disabled !== true).map(model => model.id))
+  }
 
   const queryFor = (provider: string): string => queries.get(provider) ?? ''
 
@@ -893,9 +949,22 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     setEnabled(previous => new Map(previous).set(provider, next))
     markBusy(provider, true)
     try {
-      const envelope = await callPack('model.setDisabled', { provider, modelId, disabled: !on })
-      if (!envelope.ok) {
-        throw new Error(envelope.error?.message ?? 'model.setDisabled refused')
+      /**
+       * Doubao's selection is saved HERE, not through the pack.
+       *
+       * `model.setDisabled` is a pack RPC addressed to the pack's own model record, and Doubao
+       * has no entry there — so the call answered "unknown provider", the catch below rolled the
+       * local state back, and the checkbox snapped to its old value the moment the panel was
+       * reopened. Every other channel persists through the pack because the pack owns its
+       * catalogue; this lane owns its own, so it persists its own.
+       */
+      if (provider === 'doubao') {
+        await saveDoubaoSkipped(modelId, !on)
+      } else {
+        const envelope = await callPack('model.setDisabled', { provider, modelId, disabled: !on })
+        if (!envelope.ok) {
+          throw new Error(envelope.error?.message ?? 'model.setDisabled refused')
+        }
       }
     } catch (cause) {
       setNotice(t?.('channelpool.saveError', {
@@ -970,7 +1039,20 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     ))
     markBusy(provider, true)
     try {
-      await callPack('model.setAllDisabled', { provider, disabled: !on })
+      /**
+       * Doubao persists its own all-on / all-off.
+       *
+       * Same reason as the single toggle: `model.setAllDisabled` is a pack RPC and Doubao has no
+       * entry in the pack's model record. Calling it answered "unknown provider", the catch
+       * rolled the state back — which is exactly the "I turned them all off, reopened the panel,
+       * they were all on again" report.
+       */
+      if (provider === 'doubao') {
+        const skipped = on ? [] : entry.models.map(model => model.id)
+        globalThis.localStorage?.setItem(DOUBAO_SKIP_KEY, JSON.stringify(skipped))
+      } else {
+        await callPack('model.setAllDisabled', { provider, disabled: !on })
+      }
       setNotice(t?.('channelpool.modelsSaved') ?? 'Model selection saved.')
     } catch (cause) {
       setNotice(t?.('channelpool.saveError', {

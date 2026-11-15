@@ -51,7 +51,7 @@ describe('a rejected directory entry cannot take the adapters down with it', () 
     const adapterCalls = block.match(/ctx\.llm\.registerAdapter\(/g) ?? []
     const directoryCall = block.match(/ctx\.llm\.registerConfigurableProviders\(/g) ?? []
     /**
-     * Two providers: the aggregate lane and the credential-free lane.
+     * Three providers: the aggregate lane, the credential-free lane, and Doubao.
      *
      * The two pool lanes used to register here as well, under ids `xdpool` / `xdpool-global`,
      * while the scan-login lanes registered `buddy` / `workbuddy` — two idents for one account
@@ -59,7 +59,7 @@ describe('a rejected directory entry cannot take the adapters down with it', () 
      * built and still serve the loopback shims; only the duplicate listing entry is gone, so
      * the count here drops to two.
      */
-    expect(adapterCalls).toHaveLength(2)
+    expect(adapterCalls).toHaveLength(3)
     expect(directoryCall).toHaveLength(1)
     // The four adapter calls must all precede the directory call: the adapters
     // have to be LIVE before the directory is offered, so a directory rejection
