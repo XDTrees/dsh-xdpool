@@ -6,6 +6,18 @@
  * @module dsh-xdpool/client/locales
  */
 export const en = {
+  'channelpool.reloadModels': 'Reload models',
+  'channelpool.reloadModelsBusy': 'Reading…',
+  'channelpool.reloadModelsHint': 'Read the model list (and multipliers) from the vendor again',
+
+  'channelpool.statAccounts': 'accounts',
+  'channelpool.statModels': 'models',
+  'channelpool.statCredit': 'credit left',
+
+  'channelpool.autoOn': 'Turn automation on',
+  'channelpool.autoOff': 'Turn automation off',
+
+  'channelpool.claimCredits': 'Claim credits',
   // The Settings nav row. Short by design: the nav column is narrow and the
   // card body already carries the full product name.
   'row.navLabel': 'XD Pool',
@@ -352,7 +364,7 @@ export const en = {
   'route.missingHint': 'These members left the roster. The chain keeps its text, but calls will not reach them — the user thinks their order was obeyed while a different model answered.',
   'route.chainDisabled': 'Disabled',
   'route.strategyLabel': '{strategy} · {members}',
-  // Login channels (the vendored pack's thirteen QR/browsers logins).
+  // Login channels (the vendored pack's thirteen QR/browser logins, plus Doubao).
   'chan.tab': 'Login channels',
   'chan.title': 'Login channels',
   'chan.sub': 'Thirteen vendors that sign you in with a browser or a QR code — scan once and their free models join the same picker.',
@@ -369,9 +381,10 @@ export const en = {
   'chan.loginBrowser': 'Signs in through its web page.',
   'chan.loginSmsHint': 'the QR on that page goes stale fast — use the phone-code option on the same screen',
   'chan.autoCheckin': 'Claim daily credits automatically',
+  'chan.doubaoHint': 'Pressing “Add account” opens a browser window — scan or enter a phone number there. Doubao has closed its third-party QR endpoint, so this is the only door.',
   'chan.pending': 'The login channels are still loading…',
   'chan.unavailable': 'The login channels could not start on this host.',
-  'chan.ownedElsewhere': 'These login channels are already served by another plugin — the same thirteen sign-in methods are one click away on that build’s own page.',
+  'chan.ownedElsewhere': 'These login channels are already served by another plugin — the same fourteen sign-in methods are one click away on that build’s own page.',
   'chan.ownedElsewhereRow': 'Sign in on the “Our Free Model” page',
 
   'chan.empty': 'No channel is connected yet.',
@@ -627,6 +640,18 @@ export const en = {
 } as const
 export type XdPoolSettingsKey = keyof typeof en
 export const zh: Record<XdPoolSettingsKey, string> = {
+  'channelpool.reloadModels': '重新加载模型',
+  'channelpool.reloadModelsBusy': '正在读取…',
+  'channelpool.reloadModelsHint': '从上游重新读取这个渠道的模型列表（含倍率）',
+
+  'channelpool.statAccounts': '账号',
+  'channelpool.statModels': '模型',
+  'channelpool.statCredit': '剩余积分',
+
+  'channelpool.autoOn': '开启自动化',
+  'channelpool.autoOff': '关闭自动化',
+
+  'channelpool.claimCredits': '领取积分',
   'row.navLabel': 'XD Pool',
   'row.title': '账号池',
   'row.desc': '',
@@ -966,10 +991,10 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   'route.missingHint': '链原样保留着这些成员，但调不通——你以为自己下的指令被照做了，其实是别的模型在答。',
   'route.chainDisabled': '已停用',
   'route.strategyLabel': '{strategy} · {members}',
-  // 扫码登录页（vendored pack 的十三家）
+  // 扫码登录页（vendored pack 的十三家 + 豆包）
   'chan.tab': '扫码登录',
   'chan.title': '扫码登录',
-  'chan.sub': '十三家支持网页或扫码登录的厂商：登一次，它们的免费模型就出现在同一个选择器里。',
+  'chan.sub': '十四家支持网页或扫码登录的厂商：登一次，它们的免费模型就出现在同一个选择器里。',
   'chan.login': '添加账号',
   'chan.loginSms': '登录（短信）',
   'chan.signingIn': '等待登录…',
@@ -983,6 +1008,7 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   'chan.loginBrowser': '通过网页登录。',
   'chan.loginSmsHint': '该页二维码很快就会失效——建议用同屏的短信验证码登录',
   'chan.autoCheckin': '自动领取每日积分',
+  'chan.doubaoHint': '点「添加账号」会弹出一个浏览器窗口，在里面扫码或填手机号即可；豆包已关闭第三方扫码接口，所以只能这样登。',
   'chan.pending': '扫码登录通道正在加载…',
   'chan.unavailable': '本机上扫码登录通道没能启动。',
   'chan.ownedElsewhere': '这些扫码登录通道已经由另一个插件接管了——同样这十三种登录方式，在它自己的页面上点一下就能用。',

@@ -219,3 +219,31 @@ export function modelFigureLine(facts: ModelFacts): {
   if (facts.supportedEfforts !== undefined) out.efforts = facts.supportedEfforts.join(' / ')
   return out
 }
+/**
+ * The model name without the trailing price.
+ *
+ * Vendor names are `Name · x0.11` (or `· 免费`, or a range `· x0.12→x0.06`). The price is
+ * rendered as its own badge, so it is removed here rather than printed twice.
+ */
+export function baseName(name: string): string {
+  return name.replace(/\s*[·・]\s*(?:x\s*[\d.]+(?:\s*→\s*x?[\d.]+)?|免费|限时免费|正式版.*)$/iu, '').trim()
+}
+
+/**
+ * The multiplier text, or undefined when the vendor published none.
+ *
+ * Returning the raw string rather than a number is deliberate: `x0.12→x0.06` is a promotion in
+ * progress and `免费` is not a multiplier at all, and flattening either into a number would state
+ * something the vendor did not.
+ */
+export function multiplierOf(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined
+  const match = /[·・]\s*(x\s*[\d.]+(?:\s*→\s*x?[\d.]+)?|免费|限时免费)/iu.exec(name)
+  return match?.[1]?.trim()
+}
+
+/** How a multiplier reads at a glance: free is its own colour, everything else stays quiet. */
+export function multiplierTone(text: string): 'free' | 'price' {
+  return /免费/u.test(text) || /^x\s*0*\.?0+$/iu.test(text) ? 'free' : 'price'
+}
+
