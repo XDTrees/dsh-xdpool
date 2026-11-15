@@ -1965,6 +1965,8 @@ interface PoolWebChannel {
    * the user reads the message.
    */
   smsHint?: boolean;
+  /** A sentence shown beside the button, for a login that needs explaining. */
+  loginHint?: 'doubao';
   /**
    * What the pack can report about this vendor's credits, when it can report
    * something at all.

@@ -66,15 +66,18 @@ export const POOL_PROVIDER_BY_REGION = {
   global: XDPOOL_GLOBAL_PROVIDER,
 } as const
 /**
- * Display name each region registers under, so the picker can group them.
+ * The name each pool region shows in the model picker.
  *
- * "XD Pool" rather than the old "WorkBuddy XD Pool": the picker row is the only
- * place this string surfaces, and the brand the user asked for is XD Pool. The
- * REGION suffix stays because both lanes register real providers under different
- * ids — dropping it would leave two identically-named groups in the dropdown.
+ * It is the CHANNEL's name, not the plugin's.
  *
- * Display name only. The provider ids above are what the host matches on when it
- * persists a selection, so renaming a group must never touch them.
+ * Every account in these two pools arrived through a scan sign-in on the channel card, so the
+ * reader who picked a model here was working with "WorkBuddy 国内版" a moment earlier. Calling
+ * the group "XD Pool" asked them to learn a second name for the same accounts — and, because
+ * the vendored pack registers the same two pools under its own ids, it produced FOUR groups
+ * where two belonged.
+ *
+ * The provider IDS are untouched: the host persists a selection by id, so renaming a group
+ * must never move it. Only what the reader sees changes.
  */
 export const POOL_NAME_BY_REGION = {
   cn: 'XD Pool（国内版）',

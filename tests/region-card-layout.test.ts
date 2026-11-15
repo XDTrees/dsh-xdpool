@@ -11,7 +11,12 @@ const card = readFileSync(join(ROOT, 'src', 'client', 'PoolCard.tsx'), 'utf8')
 const regionCard = readFileSync(join(ROOT, 'src', 'client', 'region-card.tsx'), 'utf8')
 const brandTile = readFileSync(join(ROOT, 'src', 'client', 'brand-tile.tsx'), 'utf8')
 const channels = readFileSync(join(ROOT, 'src', 'client', 'ChannelsPage.tsx'), 'utf8')
-const channelDescriptors = readFileSync(join(ROOT, 'src', 'channels.ts'), 'utf8')
+/**
+ * The roster moved to its own module so the CARD can read it without dragging `node:fs` into
+ * the browser bundle. The assertions below are about the catalogue rows, so they follow the
+ * data to where it now lives.
+ */
+const channelDescriptors = readFileSync(join(ROOT, 'src', 'channel-roster.ts'), 'utf8')
 const locales = readFileSync(join(ROOT, 'src', 'client', 'locales.ts'), 'utf8')
 
 /**
@@ -208,7 +213,10 @@ describe('each card carries a brand tile', () => {
     // fallback path rather than an error.
     expect(Object.keys(CHANNEL_ICONS).length).toBeGreaterThanOrEqual(8)
     for (const [id, uri] of Object.entries(CHANNEL_ICONS)) {
-      expect(uri, `${id} must be a PNG data URL`).toMatch(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/u)
+      // PNG or SVG: the pack ships PNGs, while Doubao's mark is drawn as inline SVG because
+      // no Doubao artwork exists to copy. Both are what the tile's `background-image` takes,
+      // so the rule is "decodes to an image", not "is a PNG".
+      expect(uri, `${id} must be an image data URL`).toMatch(/^data:image\/(png|svg\+xml);base64,[A-Za-z0-9+/]+=*$/u)
     }
     expect(channelIcon('definitely-not-a-channel')).toBeUndefined()
     expect(channelIcon('buddy')).toBe(CHANNEL_ICONS.buddy)
@@ -426,7 +434,10 @@ describe('the buttons are adapted for a 510px column', () => {
     // And the card must actually set it, with the region that owns the work so
     // a click on the domestic card cannot spin the international one.
     expect(card).toContain('aria-busy={busyRegion === region}')
-    expect(card).toContain('aria-busy={cooldownBusyRegion === region}')
+    // The cooldown button was removed from the card: clearing a cooldown is a recovery step
+    // for a rate-limited account, not something a working card needs a control for. The
+    // assertion that remains is the one that still has a button to check.
+    expect(card).not.toContain('cooldownBusyRegion')
     expect(card).toContain('aria-busy={catalogBusyRegion === region}')
   })
 

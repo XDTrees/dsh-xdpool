@@ -31,7 +31,7 @@ import { useEffect, useRef, useState, type ReactElement } from 'react'
 import { BrandTile } from './brand-tile.tsx'
 import { channelIcon, channelInitials } from './channel-icons.ts'
 import { ModelFactsRow } from './model-facts-row.tsx'
-import { modelFactsFor, formatModelCapacity, type ModelFacts } from './model-facts.ts'
+import { modelFactsFor, formatModelCapacity, type ModelFacts, baseName, multiplierOf, multiplierTone } from './model-facts.ts'
 import { recommendUse } from './recommend-use.ts'
 import {
   accountsFrom,
@@ -55,10 +55,18 @@ import {
   type ChannelProviderStatus,
 } from './channel-rpc.ts'
 import type { ChannelAccount, ChannelRpcEnvelope } from '../channels.ts'
-import { POOL_DOUBAO_QUOTA_PATH, POOL_DOUBAO_SESSION_PATH } from '../status-paths.ts'
+import {
+  POOL_CATALOG_REFRESH_PATH,
+  POOL_DOUBAO_CLAIM_PATH,
+  POOL_DOUBAO_MODELS_PATH,
+  POOL_DOUBAO_QUOTA_PATH,
+  POOL_DOUBAO_SESSION_PATH,
+} from '../status-paths.ts'
 // The DATA module, not `doubao-llm.ts`: the latter reaches `node:fs`/`node:child_process`
 // through the auth module, and a client bundle containing those does not load at all.
 import { doubaoListing } from '../doubao-models.ts'
+import { REGISTERED_CHANNELS } from '../channel-roster.ts'
+import { DoubaoAutomationPane } from './DoubaoAutomationPane.tsx'
 import type { PoolWebChannel, PoolWebChannelModel } from '../status-paths.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
 
@@ -86,6 +94,62 @@ interface ChannelPoolSnapshot {
   error?: string | undefined
 }
 let poolSnapshot: ChannelPoolSnapshot | undefined
+
+/**
+ * The last answered counts, kept on disk so a RESTART does not start from zero.
+ *
+ * The in-memory snapshot above survives a tab switch; it does not survive the process, so
+ * every launch of DSH re-walked thirteen account pools before the cards could show a number —
+ * which is the "why is it loading again" a reader feels on each start.
+ *
+ * Only the counts and the balances are stored, never credentials: the card draws a number
+ * whose worst case is being stale, and a stale number is what the reader already expects on
+ * the first frame. The first successful read replaces it.
+ *
+ * Versioned, because the shape will change and a stale blob must not be fed to new code.
+ */
+const COUNTS_STORE_KEY = 'dsh-xdpool.channel-counts.v1'
+
+/** What is stored per channel: counts, not accounts. */
+interface StoredCounts {
+  /** Epoch ms of the read that produced these numbers. */
+  at: number
+  channels: Record<string, { accounts: number; models: number; balance?: number; unit?: string }>
+}
+
+/** Read the stored counts, or undefined when there is nothing usable. */
+function readStoredCounts(): StoredCounts | undefined {
+  try {
+    const raw = globalThis.localStorage?.getItem(COUNTS_STORE_KEY)
+    if (raw === null || raw === undefined) return undefined
+    const parsed = JSON.parse(raw) as Partial<StoredCounts>
+    if (typeof parsed.at !== 'number' || typeof parsed.channels !== 'object' || parsed.channels === null) {
+      return undefined
+    }
+    return parsed as StoredCounts
+  } catch {
+    return undefined
+  }
+}
+
+/** Store the counts as they are now. Failure is ignored: a full quota must not break a card. */
+function writeStoredCounts(entries: readonly ChannelEntry[]): void {
+  try {
+    const channels: StoredCounts['channels'] = {}
+    for (const entry of entries) {
+      const enabled = entry.accounts.filter(account => account.enabled !== false).length
+      const total = balancesTotal(entry.balances)
+      channels[entry.channel.id] = {
+        accounts: entry.accounts.length === 0 ? enabled : entry.accounts.length,
+        models: entry.models.length,
+        ...(total === undefined ? {} : { balance: total }),
+      }
+    }
+    globalThis.localStorage?.setItem(COUNTS_STORE_KEY, JSON.stringify({ at: Date.now(), channels }))
+  } catch {
+    // Private mode, a full quota, or no DOM: the counts simply are not remembered.
+  }
+}
 /**
  * `provider.status` answered recently, kept across unmounts.
  *
@@ -225,13 +289,14 @@ async function readDoubaoAccount(): Promise<ChannelAccount | undefined> {
   try {
     const response = await fetch(POOL_DOUBAO_SESSION_PATH, { credentials: 'same-origin' })
     const body = await response.json().catch(() => undefined) as
-      | { signedIn?: boolean; savedAt?: string }
+      | { signedIn?: boolean; savedAt?: string; name?: string }
       | undefined
     if (body?.signedIn !== true) return undefined
     return {
       id: 'doubao:session',
       provider: 'doubao',
-      nickname: body.savedAt === undefined ? '豆包账号' : `豆包（${String(body.savedAt).slice(0, 10)} 登录）`,
+      // The vendor's own name for the user, so two Doubao accounts are distinguishable.
+      nickname: typeof body.name === 'string' && body.name !== '' ? body.name : '豆包账号',
       enabled: true,
     }
   } catch {
@@ -245,11 +310,47 @@ async function readDoubaoAccount(): Promise<ChannelAccount | undefined> {
  * The card prints one number per account, so it is the NARROWEST window: that is the one
  * that stops the next request, and reporting the widest would overstate what is left.
  */
+/**
+ * The models Doubao's account may use, from the plugin's own route.
+ *
+ * The card used to build this list from the static catalogue while the picker read the
+ * account's live roster, so the two could disagree — six on the card, twelve in the picker.
+ */
+async function readDoubaoModels(): Promise<readonly { id: string; name: string; description?: string }[]> {
+  try {
+    const response = await fetch(POOL_DOUBAO_MODELS_PATH, { credentials: 'same-origin' })
+    const body = await response.json().catch(() => undefined) as
+      | { models?: { id?: string; name?: string; badge?: string }[] }
+      | undefined
+    const models = Array.isArray(body?.models) ? body.models : []
+    return models
+      .filter(model => typeof model.id === 'string' && typeof model.name === 'string')
+      .map(model => ({
+        id: model.id as string,
+        name: model.name as string,
+        ...(typeof model.badge === 'string' && model.badge !== '' ? { description: model.badge } : {}),
+      }))
+  } catch {
+    return doubaoListing()
+  }
+}
+
 async function readDoubaoBalance(): Promise<readonly ChannelBalance[]> {
   try {
     const response = await fetch(POOL_DOUBAO_QUOTA_PATH, { credentials: 'same-origin' })
     const body = await response.json().catch(() => undefined) as
-      | { signedIn?: boolean; error?: string; windows?: { usedPercent?: number }[] }
+      | {
+        signedIn?: boolean
+        error?: string
+        windows?: {
+          type?: string
+          label?: string
+          usedPercent?: number
+          remainingPercent?: number
+          usedAmount?: number
+          totalAmount?: number
+        }[]
+      }
       | undefined
     if (body?.signedIn !== true) return []
     const windows = Array.isArray(body.windows) ? body.windows : []
@@ -260,14 +361,92 @@ async function readDoubaoBalance(): Promise<readonly ChannelBalance[]> {
         ...(typeof body.error === 'string' && body.error !== '' ? { error: body.error } : {}),
       }]
     }
-    const lowest = windows.reduce((low, window) => {
-      const used = typeof window.usedPercent === 'number' ? window.usedPercent : 0
-      return Math.min(low, Math.max(0, 100 - used))
-    }, 100)
-    return [{ accountId: 'doubao:session', nickname: '豆包账号', balance: Math.round(lowest), extra: { unit: '%' } }]
+    /**
+     * One package per quota window, so the card's own expander lists them the way it lists a
+     * WorkBuddy account's several credit buckets.
+     *
+     * The headline figure is the points actually left, summed across windows — that is what a
+     * user reads as "my credits". Each package also carries its own remaining percentage and
+     * total for the expanded view.
+     */
+    const packages = windows.map(window => {
+      const remainingPercent = typeof window.remainingPercent === 'number'
+        ? window.remainingPercent
+        : Math.max(0, 100 - (typeof window.usedPercent === 'number' ? window.usedPercent : 0))
+      const total = typeof window.totalAmount === 'number' ? window.totalAmount : undefined
+      const used = typeof window.usedAmount === 'number' ? window.usedAmount : undefined
+      const points = total !== undefined && used !== undefined ? Math.max(0, total - used) : undefined
+      return {
+        name: typeof window.label === 'string' && window.label !== '' ? window.label : '额度',
+        unit: '点',
+        remaining: remainingPercent,
+        ...(total === undefined ? {} : { total }),
+        ...(points === undefined ? {} : { points }),
+      }
+    })
+    const pointsLeft = packages.reduce((sum, entry) => sum + (typeof entry.points === 'number' ? entry.points : 0), 0)
+    const lowestPercent = packages.reduce((low, entry) => Math.min(low, entry.remaining), 100)
+    return [{
+      accountId: 'doubao:session',
+      nickname: '豆包账号',
+      balance: pointsLeft > 0 ? pointsLeft : Math.round(lowestPercent),
+      extra: { unit: pointsLeft > 0 ? '点' : '%', windows: windows.length },
+      packages,
+    }]
   } catch {
     return []
   }
+}
+/**
+ * The catalogue as cards, with no counts.
+ *
+ * Built from the same constant the host serves, so the placeholder is never a different list
+ * from the real one — only a list without measurements. Every action is absent, which is what
+ * makes it safe: a button on a card whose data has not arrived would act on nothing.
+ */
+function placeholderEntries(): readonly ChannelEntry[] {
+  /**
+   * Counts from the last run are fed in as SYNTHETIC rows.
+   *
+   * A card needs an account row to print a number, and inventing four of them would put four
+   * sign-ins on screen that do not exist. Instead each stored count becomes ONE row standing
+   * for the group, which the card renders as "4" — and the first real answer replaces the whole
+   * entry, so the placeholder never outlives a successful read.
+   */
+  const stored = readStoredCounts()
+  return REGISTERED_CHANNELS
+    .filter(channel => !REGION_OWNED_CHANNELS.has(channel.id))
+    .map(channel => {
+      const known = stored?.channels[channel.id]
+      const accountRows = known === undefined || known.accounts <= 0
+        ? []
+        : Array.from({ length: known.accounts }, (unused, index) => ({
+          id: `cached-${channel.id}-${String(index)}`,
+          provider: channel.id,
+          // A placeholder row is numbered, not named: naming it would claim an identity the
+          // cache does not hold.
+          nickname: `—`,
+          enabled: true,
+        })) as ChannelAccount[]
+      return {
+        // The roster row IS the card's catalogue half: same name, note, accent and icon.
+        channel: { ...channel, loginKind: channel.login, ownedByPool: channel.ownedByPool === true } as PoolWebChannel,
+        accounts: accountRows,
+        models: known === undefined || known.models <= 0
+          ? []
+          : Array.from({ length: known.models }, (unused, index) => ({
+            id: `cached-${channel.id}-m${String(index)}`,
+            name: '',
+          })) as PoolWebChannelModel[],
+        facts: new Map(),
+        balances: known?.balance === undefined
+          ? []
+          : [{ accountId: `cached-${channel.id}-0`, balance: known.balance }] as ChannelBalance[],
+        statuses: [],
+        status: undefined,
+        balancePending: known?.balance === undefined,
+      }
+    })
 }
 
 function dedupeAccounts(accounts: readonly ChannelAccount[]): readonly ChannelAccount[] {
@@ -363,7 +542,23 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
   // Seeded from the cross-mount snapshot: a remount paints the last good cards
   // on its very first frame, then revalidates. Only a genuinely cold start
   // begins empty — and that one says so, instead of rendering air.
-  const [entries, setEntries] = useState<readonly ChannelEntry[]>(() => poolSnapshot?.entries ?? [])
+  /**
+   * The cards start from a STATIC roster and fill in.
+   *
+   * `fetchChannels()` waits on the pack, which waits on the host's plugin graph — so the
+   * whole page used to show "reading scan channels…" even though the thirteen names are
+   * compile-time constants. A reader who has six accounts saw an empty page and concluded the
+   * plugin was broken.
+   *
+   * The placeholder carries the catalogue rows only: names, notes, accents and icons. Counts
+   * and balances stay blank until the real answer arrives, because a number that appears and
+   * then changes is worse than one that appears a moment late.
+   */
+  const [entries, setEntries] = useState<readonly ChannelEntry[]>(() => {
+    const snapshot = poolSnapshot?.entries
+    if (snapshot !== undefined && snapshot.length > 0) return snapshot
+    return placeholderEntries()
+  })
   const [error, setError] = useState<string | undefined>(() => poolSnapshot?.error)
   /**
    * True until the first wave has answered once.
@@ -382,6 +577,8 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
   const [enabled, setEnabled] = useState<ReadonlyMap<string, ReadonlySet<string>>>(new Map())
   /** provider → true while one of its actions is in flight. */
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
+  /** Channels whose model catalogue is being re-read. */
+  const [catalogBusy, setCatalogBusy] = useState<ReadonlySet<string>>(new Set())
   /** provider → what the reader typed into that card's model search box. */
   const [queries, setQueries] = useState<ReadonlyMap<string, string>>(new Map())
   const entriesRef = useRef(entries)
@@ -408,6 +605,35 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
       else next.delete(provider)
       return next
     })
+  }
+
+  /**
+   * Re-read one channel's model catalogue.
+   *
+   * Each adapter caches its catalogue for the life of the process, so a vendor that renames a
+   * model — or changes its multiplier, which is part of the NAME — only reached the card after
+   * a restart. The host exposes a refresh for exactly that; this is its button.
+   */
+  const refreshChannelModels = async (provider: string): Promise<void> => {
+    setCatalogBusy(previous => new Set(previous).add(provider))
+    try {
+      await fetch(POOL_CATALOG_REFRESH_PATH, {
+        method: 'POST',
+        headers: { accept: 'application/json' },
+        credentials: 'same-origin',
+      })
+      invalidatePoolSnapshot()
+      await load()
+      setNotice(`${provider} 的模型列表已重新读取`)
+    } catch (cause: unknown) {
+      setNotice(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setCatalogBusy(previous => {
+        const next = new Set(previous)
+        next.delete(provider)
+        return next
+      })
+    }
   }
 
   const load = async (): Promise<void> => {
@@ -473,16 +699,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
           ? Promise.resolve({ ok: true, value: { accounts: doubaoAccount === undefined ? [] : [doubaoAccount] } } as ChannelRpcEnvelope)
           : callPack('account.list', { provider })
         const modelsPromise = provider === 'doubao'
-          ? Promise.resolve({
-            ok: true,
-            value: {
-              models: doubaoListing().map(model => ({
-                id: model.id,
-                name: model.name,
-                ...(model.description === undefined ? {} : { description: model.description }),
-              })),
-            },
-          } as ChannelRpcEnvelope)
+          ? readDoubaoModels().then(models => ({ ok: true, value: { models } } as ChannelRpcEnvelope))
           : callPack('model.list', { provider })
         // `callPack` answers an `ok: false` envelope as a value rather than a
         // rejection, so the catch arms only cover the transport itself.
@@ -534,6 +751,10 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
       // result discarded because the reader happened to switch tabs mid-flight
       // is a result that has to be fetched again (#102).
       poolSnapshot = { entries: next, error: undefined }
+      // Remember the counts so the NEXT LAUNCH paints them on its first frame. Only counts
+      // travel — the accounts themselves are re-read, because a cached credential is worse
+      // than a stale number.
+      writeStoredCounts(next)
       if (!mountedRef.current) return
       const seq = loadSeq.current
 
@@ -933,7 +1154,9 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
   const accountAction = async (
     provider: string,
     accountId: string,
-    action: 'refresh' | 'test' | 'toggle' | 'delete',
+    // `claim` is Doubao's own: its credits come from campaign tasks, which the generic pack
+    // actions know nothing about.
+    action: 'refresh' | 'test' | 'toggle' | 'delete' | 'claim',
   ): Promise<void> => {
     if (action === 'delete' && typeof window !== 'undefined') {
       const prompt = t?.('channelpool.deleteConfirm') ?? 'Remove this account?'
@@ -955,6 +1178,28 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
           await fetch(POOL_DOUBAO_QUOTA_PATH, { credentials: 'same-origin' })
         } else if (action === 'test') {
           await fetch(POOL_DOUBAO_SESSION_PATH, { credentials: 'same-origin' })
+        } else if (action === 'claim') {
+          /**
+           * Collect the account's credit tasks.
+           *
+           * The claim endpoint takes one item at a time, so the route loops over everything
+           * the campaign reports as claimable and answers how many landed. That is what makes
+           * this a single button rather than a per-task checklist.
+           */
+          const response = await fetch(POOL_DOUBAO_CLAIM_PATH, { method: 'POST', credentials: 'same-origin' })
+          const body = await response.json().catch(() => undefined) as
+            | { claimed?: number; failed?: number; reason?: string }
+            | undefined
+          if (!mountedRef.current) return
+          const claimedCount = typeof body?.claimed === 'number' ? body.claimed : 0
+          setNotice(
+            claimedCount > 0
+              ? `已领取 ${String(claimedCount)} 项积分`
+              : (body?.reason ?? '没有可领取的积分'),
+          )
+          invalidatePoolSnapshot()
+          await load()
+          return
         }
         if (!mountedRef.current) return
         invalidatePoolSnapshot()
@@ -1045,42 +1290,66 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
             <article
               key={channel.id}
               className="dsm-xdpool-cpool-card"
-              data-state={accounts.length > 0 ? 'on' : 'idle'}
+              /**
+               * `ok` / `idle`, matching the WorkBuddy cards.
+               *
+               * The status pill's colours are selected by the ARTICLE's `data-state`, so a card
+               * that said `on` drew a grey pill with a green "connected" label — the same
+               * component in two different states depending on which list rendered it.
+               */
+              data-state={accounts.length > 0 ? 'ok' : 'idle'}
               style={{ '--dsm-xdpool-cpool-accent': channel.accent } as Record<string, string>}
             >
-              <div className="dsm-xdpool-cpool-head">
+              {/*
+                The header and the stat row are the SAME markup the WorkBuddy cards use.
+                Two card designs for one job was the reason a channel's layout depended on
+                which list it happened to be in, and the reason the model picker carried a
+                duplicate group: two renderers owned one account pool.
+              */}
+              <div className="dsm-xdpool-region-head">
                 <BrandTile accent={channel.accent} glyph="login" {...tileMark} />
-                <span className="dsm-xdpool-cpool-id">
-                  <b>{channel.name}</b>
-                  <span>{channel.org}</span>
-                </span>
-                <span className="dsm-xdpool-cpool-state" data-on={accounts.length > 0}>
+                <div className="dsm-xdpool-region-titles">
+                  <h3 className="dsm-xdpool-region-title">{channel.name}</h3>
+                  <p className="dsm-xdpool-region-sub">{channel.org}</p>
+                </div>
+                <span className="dsm-xdpool-region-state" data-on={accounts.length > 0}>
                   {accounts.length > 0
-                    ? (t?.('channelpool.stateReady') ?? 'connected')
-                    : (t?.('channelpool.stateNone') ?? 'not connected')}
+                    ? (t?.('channelpool.stateReady') ?? '已接入')
+                    : (t?.('channelpool.stateNone') ?? '未接入')}
                 </span>
               </div>
-              <p className="dsm-xdpool-cpool-note">{channel.note}</p>
-              <div className="dsm-xdpool-cpool-meta">
-                <span>
-                  {t?.('channelpool.metaAccounts', {
-                    enabled: accounts.filter(account => account.enabled !== false).length,
-                    total: accounts.length,
-                  }) ?? `${accounts.filter(account => account.enabled !== false).length}/${accounts.length}`}
+              <p className="dsm-xdpool-region-note">{channel.note}</p>
+              <div className="dsm-xdpool-region-stats">
+                <span className="dsm-xdpool-region-stat">
+                  <span className="dsm-xdpool-region-label">
+                    {t?.('channelpool.statAccounts') ?? '账号'}
+                  </span>{' '}
+                  <b className="dsm-xdpool-region-num">
+                    {accounts.length === 0
+                      ? '–'
+                      : String(accounts.filter(account => account.enabled !== false).length)}
+                  </b>
                 </span>
-                <span>
-                  {models.length === 0
-                    ? (t?.('channelpool.metaModelsUnknown') ?? 'models —')
-                    : (t?.('channelpool.metaModels', { enabled: modelsEnabled, total: models.length })
-                      ?? `${modelsEnabled}/${models.length}`)}
+                <span className="dsm-xdpool-region-stat">
+                  <span className="dsm-xdpool-region-label">
+                    {t?.('channelpool.statModels') ?? '模型'}
+                  </span>{' '}
+                  <b className="dsm-xdpool-region-num">
+                    {models.length === 0 ? '–' : `${String(modelsEnabled)}/${String(models.length)}`}
+                  </b>
                 </span>
                 {channel.credits === undefined ? null : (
-                  <span className="dsm-xdpool-cpool-credit">
-                    {entry.balancePending && total === undefined
-                      ? (t?.('channelpool.balanceLoading') ?? '…')
-                      : total === undefined
-                        ? (t?.('channelpool.balanceNone') ?? '—')
-                        : `${amount(total)} ${unit}`}
+                  <span className="dsm-xdpool-region-stat">
+                    <span className="dsm-xdpool-region-label">
+                      {t?.('channelpool.statCredit') ?? '剩余积分'}
+                    </span>{' '}
+                    <b className="dsm-xdpool-region-num" data-tone="quiet">
+                      {entry.balancePending && total === undefined
+                        ? (t?.('channelpool.balanceLoading') ?? '…')
+                        : total === undefined
+                          ? (t?.('channelpool.balanceNone') ?? '–')
+                          : `${amount(total)} ${unit}`}
+                    </b>
                   </span>
                 )}
               </div>
@@ -1092,6 +1361,23 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     The claim button leads and is the only solid one on the row:
                     it is the single action here that pays the reader back, so it
                     should not have to compete with "reload the number". */}
+                {/*
+                  Re-read the catalogue. Each adapter caches its model list for the life of the
+                  process, so a renamed model — and the multiplier is part of the NAME — only
+                  reached the card after a restart until this existed.
+                */}
+                <button
+                  type="button"
+                  className="dsm-xdpool-btn"
+                  disabled={catalogBusy.has(channel.id)}
+                  onClick={() => { void refreshChannelModels(channel.id) }}
+                  title={t?.('channelpool.reloadModelsHint')
+                    ?? '从上游重新读取这个渠道的模型列表（含倍率）'}
+                >
+                  {catalogBusy.has(channel.id)
+                    ? (t?.('channelpool.reloadModelsBusy') ?? '正在读取…')
+                    : (t?.('channelpool.reloadModels') ?? '重新加载模型')}
+                </button>
                 {/* One-off rewards live behind their own endpoint, so they get
                     their own button rather than being folded into the daily claim.
                     Raccoon is the case that made this necessary: its daily points
@@ -1144,25 +1430,44 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     pushed to the far edge: reading order runs credit → refresh →
                     accounts → models, and the model list is what most readers
                     came for in the first place. */}
-                <span className="dsm-xdpool-cpool-acts-gap" />
-                <button
-                  type="button"
-                  className="dsm-xdpool-cpool-fold"
-                  aria-expanded={fold === 'accounts'}
-                  disabled={accounts.length === 0}
-                  onClick={() => toggleFold(channel.id, 'accounts')}
-                >
-                  {t?.('channelpool.accounts') ?? 'Accounts'} ({accounts.length})
-                </button>
-                <button
-                  type="button"
-                  className="dsm-xdpool-cpool-fold"
-                  aria-expanded={fold === 'models'}
-                  disabled={models.length === 0}
-                  onClick={() => toggleFold(channel.id, 'models')}
-                >
-                  {t?.('channelpool.models') ?? 'Models'} ({modelsEnabled}/{models.length})
-                </button>
+                {/*
+                  The same segmented triggers the WorkBuddy cards use: a caret, a word, and
+                  the count as its own small chip. The previous `账号 (2)` / `模型 (3/13)` text
+                  read as a caption rather than as a control, and it sat at the far edge where
+                  the other cards put nothing.
+                */}
+                <div className="dsm-xdpool-region-seg">
+                  <button
+                    type="button"
+                    className="dsm-xdpool-region-seg-btn"
+                    aria-expanded={fold === 'accounts'}
+                    disabled={accounts.length === 0}
+                    onClick={() => toggleFold(channel.id, 'accounts')}
+                  >
+                    <span className="dsm-xdpool-region-seg-glyph" aria-hidden="true">▶</span>
+                    <span className="dsm-xdpool-region-seg-text">
+                      {t?.('row.accountsTitle') ?? '池中账号'}
+                    </span>
+                    {accounts.length === 0 ? null : (
+                      <span className="dsm-xdpool-region-seg-count">{accounts.length}</span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="dsm-xdpool-region-seg-btn"
+                    aria-expanded={fold === 'models'}
+                    disabled={models.length === 0}
+                    onClick={() => toggleFold(channel.id, 'models')}
+                  >
+                    <span className="dsm-xdpool-region-seg-glyph" aria-hidden="true">▸</span>
+                    <span className="dsm-xdpool-region-seg-text">
+                      {t?.('row.modelsTitle') ?? '模型'}
+                    </span>
+                    {models.length === 0 ? null : (
+                      <span className="dsm-xdpool-region-seg-count">{models.length}</span>
+                    )}
+                  </button>
+                </div>
               </div>
               {entry.balanceError !== undefined && (
                 <p className="dsm-xdpool-cpool-balanceerror" role="status">
@@ -1205,6 +1510,17 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                             )
                             : null}
                         <span className="dsm-xdpool-cpool-acctacts">
+                          {/* Collecting Doubao's campaign credits, beside the other row actions. */}
+                          {channel.id === 'doubao' && (
+                            <button
+                              type="button"
+                              className="dsm-xdpool-minibtn"
+                              disabled={isBusy}
+                              onClick={() => { void accountAction(channel.id, account.id, 'claim') }}
+                            >
+                              {t?.('channelpool.claimCredits') ?? '领取积分'}
+                            </button>
+                          )}
                           <button
                             type="button"
                             className="dsm-xdpool-minibtn"
@@ -1377,8 +1693,25 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                                 onChange={() => { void toggleModel(channel.id, model.id, !on) }}
                               />
                               <span className="dsm-xdpool-cpool-modelname" title={model.id}>
-                                {model.name ?? model.id}
+                                {baseName(model.name ?? model.id)}
                               </span>
+                              {/*
+                                The multiplier as its own badge.
+
+                                Every vendor here writes the price INTO the model name —
+                                `DeepSeek-V4.1-Flash · x0.11`, `Hy3 · x0.00`, `Qwen3.8-Flash ·
+                                免费` — so a reader comparing two channels had to read a sentence
+                                to find the number that decides which one they can afford. Split
+                                out, the price is the thing the eye lands on.
+                              */}
+                              {multiplierOf(model.name) === undefined ? null : (
+                                <span
+                                  className="dsm-xdpool-cpool-tag"
+                                  data-tone={multiplierTone(multiplierOf(model.name) ?? '')}
+                                >
+                                  {multiplierOf(model.name)}
+                                </span>
+                              )}
                               {model.isFree === true && (
                                 <span className="dsm-xdpool-cpool-tag" data-tone="free">
                                   {t?.('channelpool.modelFree') ?? 'free'}
@@ -1451,6 +1784,9 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     ?? `All ${status.modelsTotal} models are switched off.`}
                 </p>
               )}
+              {/* Doubao's credits come from campaign tasks, so its automation pane sits at
+                  the bottom of the card — the same place, and the same shape, as WorkBuddy's. */}
+              {channel.id === 'doubao' && <DoubaoAutomationPane t={t} />}
             </article>
           )
         })}
