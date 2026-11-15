@@ -1253,8 +1253,8 @@ This is cosmetic only — the card itself still works. Please report this line�
 **你会看到**：国际版用 hy4 时，偶尔弹出「API 密钥无效」。你重新登录、换账号，都不一定管用。
 **为什么**：看日志就清楚了（时间连着三行）：
 ```
-14:50:22  qingche526  rate-limited on hy4-preview-f  → cooling + rotating
-14:50:23  aosi526     rate-limited on hy4-preview-f  → cooling + rotating
+14:50:22  account-a  rate-limited on hy4-preview-f  → cooling + rotating
+14:50:23  account-b  rate-limited on hy4-preview-f  → cooling + rotating
 14:50:25  401: "no WorkBuddy credential found; sign in on the desktop app"
 ```
 两个账号的 hy4-preview-f 都被限流**冷却**了（一小时），于是池子里暂时没有可用账号。可插件判断「有没有被限流」用的是**本次请求内**的临时记录 —— 上次请求造成的冷却，它看不见。于是它以为「一个账号都没有 → 你没登录」→ 报 **401**。
