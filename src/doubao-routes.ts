@@ -18,8 +18,19 @@
  * @module dsh-xdpool/doubao-routes
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { DoubaoAutomation } from './doubao-automation.ts'
 import type { Context } from '@deepseek-ai/cordis'
-import { POOL_DOUBAO_QUOTA_PATH, POOL_DOUBAO_SESSION_PATH } from './status-paths.ts'
+import {
+  POOL_DOUBAO_AUTOMATION_PATH,
+  POOL_DOUBAO_CAMPAIGN_PATH,
+  POOL_DOUBAO_CLAIM_PATH,
+  POOL_DOUBAO_MODELS_PATH,
+  POOL_DOUBAO_QUOTA_PATH,
+  POOL_DOUBAO_SESSION_PATH,
+} from './status-paths.ts'
+import { claimTasks, fetchCampaign } from './doubao-campaign.ts'
+import { fetchAccountName } from './doubao-upstream.ts'
+import { fetchLiveModels } from './doubao-catalog-live.ts'
 import { browserLogin, readExistingSession, sessionUsable, type DoubaoSession } from './doubao-auth.ts'
 import { fetchQuota } from './doubao-quota.ts'
 import { setDoubaoSession } from './doubao-upstream.ts'
@@ -32,6 +43,21 @@ export interface DoubaoRouteOptions {
   save: (session: DoubaoSession) => void
   /** Forget the session. */
   clear: () => void
+  /** The credit automation, so the card can read and flip it. */
+  automation: () => DoubaoAutomation
+}
+
+/** Read a JSON body, or an empty object when there is none. */
+async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = []
+  for await (const chunk of req) chunks.push(chunk as Buffer)
+  if (chunks.length === 0) return {}
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+    return parsed !== null && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
 }
 
 /** Write a JSON response. */
@@ -109,10 +135,21 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
             return json(res, 200, { ok: true, signedIn: true, savedAt: live.savedAt })
           }
           const stored = deps.session()
+          if (!sessionUsable(stored)) {
+            return json(res, 200, { ok: true, signedIn: false })
+          }
+          /**
+           * The name travels with the session answer.
+           *
+           * The card needs it to label the account, and it is the only place the two are known
+           * together — fetching it separately would double the card's round trips.
+           */
+          const name = await fetchAccountName(stored)
           return json(res, 200, {
             ok: true,
-            signedIn: sessionUsable(stored),
-            ...(stored?.savedAt === undefined ? {} : { savedAt: stored.savedAt }),
+            signedIn: true,
+            ...(name === undefined ? {} : { name }),
+            ...(stored.savedAt === undefined ? {} : { savedAt: stored.savedAt }),
           })
         } catch (error: unknown) {
           return json(res, 500, { error: error instanceof Error ? error.message : String(error) })
@@ -151,9 +188,92 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       },
     })
 
+    const disposeModels = ctx.webServer.register({
+      kind: 'exact',
+      path: POOL_DOUBAO_MODELS_PATH,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        /**
+         * The same list the picker gets.
+         *
+         * The card used to render its own copy from the static catalogue, so a signed-in
+         * account showed six models on the card and twelve in the picker. One route, one
+         * answer.
+         */
+        try {
+          const models = await fetchLiveModels(deps.session())
+          return json(res, 200, { ok: true, models })
+        } catch (error: unknown) {
+          return json(res, 200, {
+            ok: false,
+            models: [],
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      },
+    })
+
+    const disposeCampaign = ctx.webServer.register({
+      kind: 'exact',
+      path: POOL_DOUBAO_CAMPAIGN_PATH,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        const session = deps.session()
+        const campaign = await fetchCampaign(session)
+        return json(res, 200, { ok: campaign.error === undefined, signedIn: session !== undefined, ...campaign })
+      },
+    })
+
+    const disposeClaim = ctx.webServer.register({
+      kind: 'exact',
+      path: POOL_DOUBAO_CLAIM_PATH,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        const result = await claimTasks(deps.session())
+        return json(res, 200, { ok: result.failed === 0, ...result })
+      },
+    })
+
+    const disposeAutomation = ctx.webServer.register({
+      kind: 'exact',
+      path: POOL_DOUBAO_AUTOMATION_PATH,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        const automation = deps.automation()
+        try {
+          if (req.method === 'POST') {
+            /**
+             * `{ enabled }` flips the switch; an empty body runs one pass.
+             *
+             * Two actions, one route, because they are one concept to the card: the pane's
+             * checkbox and its "run now" button both mean "make the automation do its job".
+             */
+            const body = await readJson(req)
+            if (typeof body['enabled'] === 'boolean') {
+              automation.setEnabled(body['enabled'])
+              return json(res, 200, { ok: true, ...automation.state() })
+            }
+            const state = await automation.runOnce()
+            return json(res, 200, { ok: true, ...state })
+          }
+          if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+          return json(res, 200, { ok: true, ...automation.state() })
+        } catch (error: unknown) {
+          return json(res, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    })
+
     return () => {
       disposeSession()
       disposeQuota()
+      disposeModels()
+      disposeCampaign()
+      disposeClaim()
+      disposeAutomation()
     }
   })
 }

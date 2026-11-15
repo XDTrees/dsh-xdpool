@@ -192,6 +192,24 @@ export const POOL_DOUBAO_SESSION_PATH = '/plugins/dsh-xdpool/doubao/session'
 
 /** The Doubao quota: the windows the account has, with their reset countdowns. */
 export const POOL_DOUBAO_QUOTA_PATH = '/plugins/dsh-xdpool/doubao/quota'
+
+/** The models the account may use, as the vendor publishes them. */
+export const POOL_DOUBAO_MODELS_PATH = '/plugins/dsh-xdpool/doubao/models'
+
+/** The account's credit tasks: what is waiting, and what has been collected. */
+export const POOL_DOUBAO_CAMPAIGN_PATH = '/plugins/dsh-xdpool/doubao/campaign'
+
+/** Collect every claimable task. */
+export const POOL_DOUBAO_CLAIM_PATH = '/plugins/dsh-xdpool/doubao/claim'
+
+/**
+ * Doubao's credit automation: read the switch, or turn it on and off.
+ *
+ * Doubao's points come from campaign tasks rather than a daily button, so automation here means
+ * "collect whatever is claimable, on a schedule" — the same promise WorkBuddy's automation
+ * makes, over a different mechanism.
+ */
+export const POOL_DOUBAO_AUTOMATION_PATH = '/plugins/dsh-xdpool/doubao/automation'
 /**
  * The `reason` the channel document carries when the login-channel route is
  * already owned by another plugin.
@@ -502,6 +520,8 @@ export interface PoolWebChannel {
    * the user reads the message.
    */
   smsHint?: boolean
+  /** A sentence shown beside the button, for a login that needs explaining. */
+  loginHint?: 'doubao'
   /**
    * What the pack can report about this vendor's credits, when it can report
    * something at all.
