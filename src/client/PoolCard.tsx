@@ -53,7 +53,6 @@ import { AggregatePage } from './AggregatePage.tsx'
 import { ChannelsPage } from './ChannelsPage.tsx'
 import { RoutingPage } from './RoutingPage.tsx'
 import { GatewayPage } from './GatewayPage.tsx'
-import { DoubaoPage } from './DoubaoPage.tsx'
 import { RegionCardPane, RegionCardTile, RegionCardTrigger, regionCardStyle } from './region-card.tsx'
 import type { RegionCardState } from './region-card.tsx'
 import { REGION_CHANNEL_BY_REGION } from './region-card.tsx'
@@ -567,7 +566,6 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
     { id: 'ledger', label: t?.('shell.tabLedger') ?? 'Dashboard' },
     { id: 'routing', label: t?.('shell.tabRouting') ?? 'Routing' },
     { id: 'gateway', label: t?.('shell.tabGateway') ?? 'Gateway' },
-    { id: 'doubao', label: t?.('shell.tabDoubao') ?? 'Doubao' },
     { id: 'backup', label: t?.('shell.tabBackup') ?? 'Backup' },
   ] as const
   const [page, setPage] = useState<string>(
@@ -583,7 +581,6 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
    * click cannot fire the same request twice.
    */
   const [busyRegion, setBusyRegion] = useState<PoolRegion | undefined>(undefined)
-  const [cooldownBusyRegion, setCooldownBusyRegion] = useState<PoolRegion | undefined>(undefined)
   /** Model-catalog refresh in flight (separate from the account rescan). */
   const [catalogBusyRegion, setCatalogBusyRegion] = useState<PoolRegion | undefined>(undefined)
   const [automationBusyRegion, setAutomationBusyRegion] = useState<PoolRegion | undefined>(undefined)
@@ -901,22 +898,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
       if (mounted.current) setCatalogBusyRegion(undefined)
     }
   }
-  const resetCooldowns = async (region: PoolRegion): Promise<void> => {
-    setCooldownBusyRegion(region)
-    setFlash(undefined)
-    try {
-      const response = await fetch(POOL_RESET_COOLDOWN_PATH, {
-        method: 'POST', headers: { accept: 'application/json' }, credentials: 'same-origin',
-      })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      await refresh(region)
-      if (mounted.current) setFlash(t?.('row.resetCooldownsDone') ?? '')
-    } catch (cause: unknown) {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      if (mounted.current) setCooldownBusyRegion(undefined)
-    }
-  }
+
   /**
    * Claim one account's daily check-in. The account id travels in the body so
    * the Host can never guess: a click on account B's button can only ever
@@ -1550,7 +1532,6 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
         : page === 'channels' ? <ChannelsPage t={t} />
           : page === 'ledger' ? <LedgerPage t={t} usage={usage} />
                   : page === 'routing' ? <RoutingPage t={t} />
-                : page === 'doubao' ? <DoubaoPage t={t} />
                 : page === 'gateway' ? <GatewayPage t={t} />
                   : page === 'backup' ? <BackupPanel t={t} />
                   : <>
@@ -1737,17 +1718,6 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                             {busyRegion === region
                               ? (t?.('row.accountsScanning') ?? 'Detecting…')
                               : (t?.('row.accountsRescan') ?? 'Detect accounts again')}
-                          </button>
-                          <button
-                            type="button"
-                            className="dsm-btn dsm-btn-outline dsm-xdpool-region-btn"
-                            disabled={cooldownBusyRegion !== undefined || card.cooling === 0}
-                            aria-busy={cooldownBusyRegion === region}
-                            onClick={() => { void resetCooldowns(region) }}
-                          >
-                            {cooldownBusyRegion === region
-                              ? (t?.('row.resetCooldownsBusy') ?? 'Clearing…')
-                              : (t?.('row.resetCooldowns') ?? 'Clear all cooldowns')}
                           </button>
                           <button
                             type="button"

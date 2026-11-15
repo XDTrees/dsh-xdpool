@@ -1922,6 +1922,35 @@ export function describeDoubaoFailure(error: unknown): string {
 }
 
 /** Quick reachability probe that does not consume any inference quota. */
+/**
+ * The account's own display name.
+ *
+ * The card showed "豆包账号" for every account, because the session carries no name — only
+ * cookies. `passport/account/info/v2` answers `data.name`, which is what the vendor calls the
+ * user, so a pool with two Doubao accounts can tell them apart.
+ *
+ * A failed read returns undefined rather than throwing: the name is cosmetic, and a card
+ * without it is still correct.
+ */
+export async function fetchAccountName(session: DoubaoSession | undefined): Promise<string | undefined> {
+  if (session === undefined || !sessionUsable(session)) return undefined
+  try {
+    const response = await fetch(buildQueryUrl(ACCOUNT_ENDPOINT), {
+      method: 'GET',
+      headers: buildAuthHeaders(session),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!response.ok) return undefined
+    const payload = await response.json() as { data?: { name?: unknown; screen_name?: unknown } }
+    for (const candidate of [payload.data?.name, payload.data?.screen_name]) {
+      if (typeof candidate === 'string' && candidate.trim() !== '') return candidate.trim()
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
 export async function probeAccount(credentials: DoubaoCredentials): Promise<{ ok: boolean; detail: string }> {
   if (credentials.pairs.size === 0) return { ok: false, detail: 'no credentials' }
   const url = buildQueryUrl(ACCOUNT_ENDPOINT)

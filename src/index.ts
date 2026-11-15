@@ -8,6 +8,7 @@
 import { creditReservesWith } from './credit-reserve.ts'
 import { createDoubaoLlm, DOUBAO_CHANNEL as DOUBAO_LANE_CHANNEL } from './doubao-llm.ts'
 import { registerDoubaoRoutes } from './doubao-routes.ts'
+import { createDoubaoAutomation } from './doubao-automation.ts'
 import { DOUBAO_MODELS } from './doubao-catalog.ts'
 import { readStoredSession, removeStoredSession, writeStoredSession } from './doubao-store.ts'
 import { setDoubaoSession } from './doubao-upstream.ts'
@@ -1257,6 +1258,17 @@ function canonicalJson(value: unknown): string {
   const doubaoLlm = createDoubaoLlm({
     session: () => doubaoSession,
   })
+
+  /**
+   * Doubao's credit automation.
+   *
+   * Created beside the lane because both read the same session: a sign-in that lands while the
+   * automation is armed must be picked up on the next pass without anything being re-wired.
+   */
+  const doubaoAutomation = createDoubaoAutomation({
+    session: () => doubaoSession,
+    logger: ctx.logger,
+  })
   /** The ids Doubao's catalogue knows, so `stream` can tell its models from the host's. */
   const doubaoModelIds = new Set(DOUBAO_MODELS.map(model => model.id))
   const hostLlm = ctx.llm as unknown as ChannelLaneLlm
@@ -1394,6 +1406,9 @@ function canonicalJson(value: unknown): string {
     // The scheduler holds a timer; stop it before the shims so a tick in flight
     // cannot reach an upstream client whose base has already gone.
     core.scheduler.stop()
+    // Same reason: the Doubao automation holds a timer, and a pass filing a claim after the
+    // plugin is gone would report into nothing.
+    doubaoAutomation.stop()
   })
   void relay.ready.catch((error: unknown) => {
     ctx.logger.warn(`xdpool relay: startup failed — ${String(error)}`)
@@ -1499,6 +1514,7 @@ function canonicalJson(value: unknown): string {
         adoptDoubaoSession(undefined)
         void removeStoredSession()
       },
+      automation: () => doubaoAutomation,
     })
     return registerPoolStatusRoute(webCtx, {
     pool: core.pool,
@@ -2058,14 +2074,32 @@ function canonicalJson(value: unknown): string {
         // directory rejection now costs the settings entry alone and the models
         // keep being served.
         try {
-          releaseAdapterCn = ctx.llm.registerAdapter(
-            [POOL_PROVIDER_BY_REGION.cn],
-            adaptersByRegion.cn.adapter,
-          )
-          releaseAdapterGlobal = ctx.llm.registerAdapter(
-            [POOL_PROVIDER_BY_REGION.global],
-            adaptersByRegion.global.adapter,
-          )
+          /**
+           * The two region adapters are NOT registered — issue #148.
+           *
+           * `buddy` and `workbuddy` are what the scan-login lanes are called in the picker, and
+           * they reach the same accounts through the same endpoint. Registering these two as
+           * well put FOUR groups in the model picker for two account pools: "XD Pool 国内版" /
+           * "WorkBuddy 国内版" and the same pair for the international side, all describing one
+           * set of sign-ins.
+           *
+           * The accounts themselves are untouched: the pool document, the card, the balance
+           * panel and the credit dot all read `core.pool` through the status route, none of
+           * which involves an adapter. What changes is only which groups the PICKER lists.
+           *
+           * The adapters are still BUILT above — the loopback shims serve their traffic — so a
+           * request that arrives on the pool's own path still works; it is the duplicate
+           * listing entry that goes.
+           */
+          /**
+           * A handle that does nothing, in the shape the caller disposes.
+           *
+           * `AdapterHandle` is a disposer FUNCTION carrying a `replace` method, so an empty
+           * object would not typecheck and would also break the dispose path.
+           */
+          const detached = Object.assign(() => {}, { replace: () => {} }) as AdapterHandle
+          releaseAdapterCn = detached
+          releaseAdapterGlobal = detached
           releaseAdapterAggregate = ctx.llm.registerAdapter(
             [XDPOOL_AGGREGATE_PROVIDER],
             adaptersByRegion.aggregate.adapter,

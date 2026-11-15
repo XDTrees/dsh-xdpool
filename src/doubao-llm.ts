@@ -26,7 +26,7 @@ import {
   findDoubaoModel,
   type DoubaoModelInfo,
 } from './doubao-catalog.ts'
-import { doubaoListing as doubaoModelListing } from './doubao-models.ts'
+import { fetchLiveModels } from './doubao-catalog-live.ts'
 export { doubaoListing } from './doubao-models.ts'
 import { chat, type DoubaoImage } from './doubao-upstream.ts'
 
@@ -108,9 +108,20 @@ export function createDoubaoLlm(options: DoubaoLlmOptions): DoubaoLlm {
   return {
     listModels: async (provider: string) => {
       if (provider !== DOUBAO_CHANNEL) return []
-      // The catalog is static: the ids were read off real requests and do not change between
-      // sessions, so there is nothing to fetch and no failure mode to report.
-      return doubaoModelListing()
+      /**
+       * The account's own roster, with the measured six as the floor.
+       *
+       * `fetchLiveModels` asks the vendor what this session may use and merges the answer
+       * behind the known-good entries; a failed read simply leaves the six in place. Using it
+       * here means the picker shows what the account can actually call, including the
+       * third-party models Doubao publishes per plan, instead of a fixed list that was short.
+       */
+      const live = await fetchLiveModels(options.session())
+      return live.map(model => ({
+        id: model.id,
+        name: model.name,
+        ...(model.badge === undefined ? {} : { description: model.badge }),
+      }))
     },
 
     stream: async function* (streamOptions: Record<string, unknown>): AsyncIterable<ChannelChunk | ReasoningChunk> {

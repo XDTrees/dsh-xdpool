@@ -481,6 +481,8 @@ export const POOL_CARD_CSS = `
 .dsm-xdpool-cpool-modelname{user-select:none;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsm-xdpool-cpool-tag{font-size:10px;padding:1px 6px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,#36373b);color:var(--dsw-alias-label-tertiary,#9aa0a8);flex:none}
 .dsm-xdpool-cpool-tag[data-tone=free]{border-color:color-mix(in srgb, #2fbf7f 45%, transparent);color:#2fbf7f}
+/* A paid multiplier: quiet, because it is a fact rather than a warning. */
+.dsm-xdpool-cpool-tag[data-tone=price]{font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary,#c6c9d0)}
 .dsm-xdpool-cpool-tag[data-tone=dead]{border-color:color-mix(in srgb, #e5484d 45%, transparent);color:#ff8a8f}
 /* One line under an empty or fully-filtered list. Both cases print it, because
    "nothing published" and "nothing matched your search" must not look alike. */
