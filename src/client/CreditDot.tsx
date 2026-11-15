@@ -36,6 +36,7 @@
  * @module dsh-xdpool/client/CreditDot
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
+import { createPortal } from 'react-dom'
 import { POOL_CREDITS_SPEND_PATH, POOL_STATUS_PATH } from '../status-paths.ts'
 import { POOL_NAV_ICON_MASK_URL } from './nav-icon.ts'
 import { CREDIT_DOT_CSS } from './styles.ts'
@@ -465,7 +466,20 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
             green/grey state drives the icon without a second asset. */}
         <span className="dsm-xdpool-dot-glyph" aria-hidden="true" />
       </button>
-      {!open ? null : (
+      {/*
+        The panel is PORTALLED to `document.body`.
+
+        The host wraps the composer seat in an element carrying `will-change: transform`,
+        and a transformed ancestor makes `position: fixed` resolve against THAT element
+        instead of the viewport. The panel was therefore laid out at the seat's coordinates
+        plus the requested offset — hundreds of pixels below the window — while still
+        stretching the conversation's scroll area, so the visible symptom was a large blank
+        region rather than a misplaced card.
+
+        Portalling takes it out of that containing block entirely, which is the only fix
+        that does not depend on the host's own CSS.
+      */}
+      {!open ? null : createPortal((
         <div
           ref={panelRef}
           className="dsm-xdpool-dotpanel"
@@ -573,7 +587,7 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
             </>
           )}
         </div>
-      )}
+      ), document.body)}
     </span>
   )
 }

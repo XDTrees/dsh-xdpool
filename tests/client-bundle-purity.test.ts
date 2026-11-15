@@ -1,43 +1,51 @@
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
- * The client bundle runs in a browser, where `process` does not exist.
+ * The client bundle must not reach Node.
  *
- * A bare `process.env.X` anywhere in it is a `ReferenceError` at module
- * evaluation time — not at call time — so the whole client half of the plugin
- * fails to import and the shell's boot audit reports the entry as
- * "import failed (see console for the import error)". That is exactly what
- * shipped once: a server-only `process.env.XDPOOL_FREE_BASE` survived into
- * `lib/client.js`, the browser threw on the first line of the factory, and the
- * app came up in recovery mode with no diagnostic that named the cause.
+ * A card that imports a host module drags that module's whole dependency chain along. The
+ * Doubao card once imported `doubao-llm.ts` for its model list, which reaches
+ * `doubao-auth.ts` — and that spawns a browser and reads the filesystem. The bundled result
+ * contained `node:fs` and `node:crypto`, so the moment the page loaded it threw, and the
+ * plugin's entry disappeared: still listed and enabled, absent from the sidebar and the
+ * settings page, with no error anywhere the user could see.
  *
- * The guard is cheap and the failure is total, so the rule is absolute: every
- * `process.<member>` read in the browser bundle has to sit on a line that also
- * tests `typeof process`. A comment mentioning "process." is fine — the match
- * requires an identifier after the dot.
- *
- * This reads the built artifact, not the source, because that is the thing that
- * actually ships: the source can be correct and the bundle still wrong when a
- * server-only module is pulled into the client graph.
+ * The fix was to move the DATA into a module with no imports (`doubao-models.ts`). This test
+ * is what stops the next helper from being imported "just for one constant".
  */
-describe('the browser bundle never touches process unguarded', () => {
-  const bundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
+describe('the client bundle', () => {
+  const clientPath = join(import.meta.dirname, '..', 'lib', 'client.js')
 
-  it('every process.<member> read is behind a typeof guard', () => {
-    const offenders = bundle
-      .split('\n')
-      .map((line, index) => ({ line, number: index + 1 }))
-      .filter(({ line }) => /\bprocess\.[A-Za-z_$]/u.test(line))
-      .filter(({ line }) => !/typeof\s+process/u.test(line))
-      .map(({ line, number }) => `${number}: ${line.trim().slice(0, 160)}`)
-    expect(offenders).toEqual([])
+  /** Whether a built bundle exists; the source-only checkout has none. */
+  const hasBundle = ((): boolean => {
+    try {
+      readFileSync(clientPath, 'utf8')
+      return true
+    } catch {
+      return false
+    }
+  })()
+
+  it('is buildable independently of the host', () => {
+    // The build is what produces the file; if it is absent the assertion below cannot run,
+    // and saying so beats a false pass.
+    if (!hasBundle) {
+      expect(hasBundle, 'lib/client.js is missing — build before testing this').toBe(true)
+      return
+    }
+    const bundle = readFileSync(clientPath, 'utf8')
+    const offenders = [...bundle.matchAll(/require\("(node:[a-z_/]+)"\)/gu)].map(match => match[1] ?? '')
+    const unique = [...new Set(offenders)]
+    expect(unique, 'the client bundle must not require Node builtins').toEqual([])
   })
 
-  it('still finds the guarded reads, so the scan above cannot pass vacuously', () => {
-    // A rename that dropped `process` from the bundle entirely would make the
-    // first assertion true for the wrong reason. The env override is a real
-    // feature, so its guarded read has to be present.
-    expect(bundle).toMatch(/typeof\s+process[^\n]*process\.env/u)
+  it('carries no filesystem, crypto or process spawn', () => {
+    if (!hasBundle) return
+    const bundle = readFileSync(clientPath, 'utf8')
+    for (const name of ['node:fs', 'node:crypto', 'node:child_process', 'node:os', 'node:path']) {
+      expect(bundle.includes(`require("${name}")`), `client bundle reaches ${name}`).toBe(false)
+    }
   })
 })

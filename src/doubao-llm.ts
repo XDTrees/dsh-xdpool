@@ -26,6 +26,8 @@ import {
   findDoubaoModel,
   type DoubaoModelInfo,
 } from './doubao-catalog.ts'
+import { doubaoListing as doubaoModelListing } from './doubao-models.ts'
+export { doubaoListing } from './doubao-models.ts'
 import { chat, type DoubaoImage } from './doubao-upstream.ts'
 
 /** The channel id Doubao answers to. */
@@ -48,22 +50,6 @@ interface ChannelChunk extends Record<string, unknown> {
 interface ReasoningChunk extends Record<string, unknown> {
   type: 'reasoning-delta'
   text: string
-}
-
-/** The listings, derived from the catalog the reference implementation measured. */
-export function doubaoListing(): readonly DoubaoLaneModel[] {
-  const rows: DoubaoLaneModel[] = []
-  for (const model of DOUBAO_MODELS) {
-    const parts: string[] = []
-    if (typeof model.badge === 'string' && model.badge !== '') parts.push(model.badge)
-    if (model.reasoning === true) parts.push('推理')
-    rows.push({
-      id: model.id,
-      name: model.name,
-      ...(parts.length === 0 ? {} : { description: parts.join(' · ') }),
-    })
-  }
-  return rows
 }
 
 /** The text of a host content value, which may be a string or a block list. */
@@ -124,7 +110,7 @@ export function createDoubaoLlm(options: DoubaoLlmOptions): DoubaoLlm {
       if (provider !== DOUBAO_CHANNEL) return []
       // The catalog is static: the ids were read off real requests and do not change between
       // sessions, so there is nothing to fetch and no failure mode to report.
-      return doubaoListing()
+      return doubaoModelListing()
     },
 
     stream: async function* (streamOptions: Record<string, unknown>): AsyncIterable<ChannelChunk | ReasoningChunk> {

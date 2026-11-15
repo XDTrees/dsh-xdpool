@@ -56,7 +56,9 @@ import {
 } from './channel-rpc.ts'
 import type { ChannelAccount, ChannelRpcEnvelope } from '../channels.ts'
 import { POOL_DOUBAO_QUOTA_PATH, POOL_DOUBAO_SESSION_PATH } from '../status-paths.ts'
-import { doubaoListing } from '../doubao-llm.ts'
+// The DATA module, not `doubao-llm.ts`: the latter reaches `node:fs`/`node:child_process`
+// through the auth module, and a client bundle containing those does not load at all.
+import { doubaoListing } from '../doubao-models.ts'
 import type { PoolWebChannel, PoolWebChannelModel } from '../status-paths.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
 

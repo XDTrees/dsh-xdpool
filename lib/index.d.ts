@@ -192,7 +192,20 @@ interface ChatMessage {
 //#endregion
 //#region src/upstream.d.ts
 /** Upstream failure classes the shim maps onto distinct HTTP answers. */
-type UpstreamErrorKind = 'hard_credit' | 'soft_rate' | 'session_dead' | 'not_found' | 'server' | 'client';
+type UpstreamErrorKind = 'hard_credit' | 'soft_rate' | 'session_dead' |
+/**
+ * The account is blocked by the vendor's risk control — issue #127.
+ *
+ * A 403 whose body carries `code 11140` means "this account is flagged", not "this
+ * credential is invalid". The two were merged into `session_dead`, so the card printed
+ * "API 密钥无效" and the user was sent to re-authenticate over and over for a problem that
+ * re-authentication cannot fix — the sign-in succeeds, the flag remains.
+ *
+ * Separated because the remedy differs: a dead session wants a refresh, a flagged account
+ * wants the other accounts in the pool and, if all of them are flagged, a word with the
+ * vendor.
+ */
+'risk_blocked' | 'not_found' | 'server' | 'client';
 /** Token-refresh answer; fields the upstream omits stay absent. */
 interface WorkBuddyRefreshOutcome {
   accessToken: string;
@@ -322,11 +335,6 @@ interface UpstreamClientOptions {
 /** Region for a login domain; an empty domain means CN (matching upstream tooling). */
 /** The two gateways WorkBuddy serves: the domestic one and the international one. */
 type WorkBuddyRegion = 'cn' | 'global';
-/**
- * Classify an upstream failure from its HTTP status and body excerpt.
- * Body markers win over status, because the upstream reuses 400/200 for
- * several distinct conditions.
- */
 export declare function classifyUpstreamError(status: number, body: string): UpstreamErrorKind;
 /**
  * Parse the reset time the upstream reports for a rate limit, when present.
