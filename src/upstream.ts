@@ -22,6 +22,19 @@ export type UpstreamErrorKind =
   | 'hard_credit'
   | 'soft_rate'
   | 'session_dead'
+  /**
+   * The account is blocked by the vendor's risk control — issue #127.
+   *
+   * A 403 whose body carries `code 11140` means "this account is flagged", not "this
+   * credential is invalid". The two were merged into `session_dead`, so the card printed
+   * "API 密钥无效" and the user was sent to re-authenticate over and over for a problem that
+   * re-authentication cannot fix — the sign-in succeeds, the flag remains.
+   *
+   * Separated because the remedy differs: a dead session wants a refresh, a flagged account
+   * wants the other accounts in the pool and, if all of them are flagged, a word with the
+   * vendor.
+   */
+  | 'risk_blocked'
   | 'not_found'
   | 'server'
   | 'client'
@@ -910,6 +923,9 @@ function contentOfFrame(frame: string): string {
  * Body markers win over status, because the upstream reuses 400/200 for
  * several distinct conditions.
  */
+/** Business codes the gateway uses for "this account is risk-flagged". */
+const RISK_BLOCK_CODES: readonly string[] = ['11140', '11141']
+
 export function classifyUpstreamError(status: number, body: string): UpstreamErrorKind {
   if (status === 402) return 'hard_credit'
   // An HTTP 401/403 from either gateway means THIS credential is no longer
@@ -924,6 +940,20 @@ export function classifyUpstreamError(status: number, body: string): UpstreamErr
   // every remaining account went unused. Status alone is enough here: the
   // upstream words 401/403 inconsistently, and marker-only matching let
   // "api密钥无效" / "invalid api key" / "unauthorized" slip through.
+  /**
+   * Risk control first, and only for a 403.
+   *
+   * `11140` is what the gateway returns when the ACCOUNT is flagged. It arrives with 403, so
+   * the blanket rule below swallowed it into `session_dead` and the card told the user their
+   * key was invalid — several times, since re-signing in changes nothing about a flag.
+   */
+  if (status === 403) {
+    for (const code of RISK_BLOCK_CODES) {
+      if (body.includes(`"code":${code}`) || body.includes(`"code": ${code}`) || body.includes(`"code":"${code}"`)) {
+        return 'risk_blocked'
+      }
+    }
+  }
   if (status === 401 || status === 403) return 'session_dead'
   const lower = body.toLowerCase()
   // Business codes BEFORE prose. `14018` is what the gateway actually sends for

@@ -37771,6 +37771,59 @@ function buildQoderInferPayload(ask, requestId = crypto.randomUUID()) {
   };
 }
 var gluePromise = null;
+/**
+ * [xdpool-local] Keep a Qoder payload inside the WASM's memory budget — issue #155.
+ *
+ * WHAT IS CUT, AND IN WHICH ORDER
+ *
+ * Oldest conversation turns go first: they are the least likely to matter for the next reply,
+ * and dropping one whole turn keeps the message list valid (a lone tool result without its
+ * call is what makes a request *invalid* rather than merely shorter). Tool schemas are never
+ * cut — a call without its schema is worse than a shorter history — but the largest ones are
+ * trimmed of their `description`, which is prose the model can do without.
+ *
+ * The budget is deliberately below the ceiling: serialisation produces several copies at
+ * once, so a payload that merely FITS is not enough.
+ */
+const QODER_PAYLOAD_BYTE_BUDGET = 700 * 1024;
+
+function shrinkQoderPayload(payload) {
+  const measure = (value) => {
+    try {
+      return Buffer.byteLength(JSON.stringify(value), "utf8");
+    } catch {
+      return Number.MAX_SAFE_INTEGER;
+    }
+  };
+  if (measure(payload) <= QODER_PAYLOAD_BYTE_BUDGET) return payload;
+  const out = { ...payload, messages: Array.isArray(payload.messages) ? [...payload.messages] : [] };
+  // Oldest first, but never the last message: that is the actual question.
+  while (out.messages.length > 2 && measure(out) > QODER_PAYLOAD_BYTE_BUDGET) {
+    out.messages.shift();
+  }
+  // Still too big: drop tool descriptions, which are prose rather than contract.
+  if (measure(out) > QODER_PAYLOAD_BYTE_BUDGET && Array.isArray(out.tools)) {
+    out.tools = out.tools.map((tool) => {
+      const fn = tool && typeof tool === "object" ? tool.function : void 0;
+      if (!fn || typeof fn !== "object" || typeof fn.description !== "string") return tool;
+      return { ...tool, function: { ...fn, description: "" } };
+    });
+  }
+  // Last resort: trim the longest message bodies from the front of the list.
+  let guard = 0;
+  while (measure(out) > QODER_PAYLOAD_BYTE_BUDGET && out.messages.length > 1 && guard < 64) {
+    guard += 1;
+    const first = out.messages[0];
+    if (first && typeof first === "object" && typeof first.content === "string" && first.content.length > 2000) {
+      out.messages[0] = { ...first, content: `${first.content.slice(0, 2000)}
+…（已截断）` };
+      continue;
+    }
+    out.messages.shift();
+  }
+  return out;
+}
+
 async function getGlue() {
   gluePromise ??= createGlue();
   return gluePromise;
@@ -37990,7 +38043,22 @@ var QoderEncryptedInfer = class _QoderEncryptedInfer {
     const result = g.callPointer((stack) => {
       const host = g.writeString(this.host);
       const hostLen = g.lastLength();
-      const body = g.writeString(JSON.stringify(payload));
+      /**
+       * [xdpool-local] Shrink the payload before it reaches the WASM — issue #155.
+       *
+       * The encrypted-infer glue declares ~1 MB of linear memory, and the whole request is
+       * written into it as UTF-8: the plaintext JSON string, its encoded copy and the WASM
+       * copy all exist at once. A body approaching that ceiling makes `__wbindgen_export2`
+       * fail to allocate, the Rust side panics, and the panic surfaces to DSH as the bare
+       * word `unreachable` — which reads like a network fault and is an out-of-memory abort.
+       *
+       * At a Chinese ratio of ~1.6–2 char/token, 1 MB is ~240k–330k tokens, which is why the
+       * failure was reported as "breaks around 256k context": the limit is BYTES, not the
+       * model's advertised window. Trimming here keeps the request sendable; the caller's
+       * context budget is untouched, so nothing else has to know.
+       */
+      const shrunk = shrinkQoderPayload(payload);
+      const body = g.writeString(JSON.stringify(shrunk));
       const bodyLen = g.lastLength();
       const key = g.writeString(ask.modelKey);
       const keyLen = g.lastLength();
@@ -46791,6 +46859,29 @@ var TraeAuth = class _TraeAuth extends Service5 {
     if (pool) {
       const available2 = await pool.getAvailableAccount(this.product.id, "").catch(() => void 0);
       if (available2) credential = available2.credential;
+      /**
+       * [xdpool-local] Fall back to ANY account the pool holds — issue #154.
+       *
+       * `getAvailableAccount` skips accounts that are cooling down, disabled, or simply not
+       * the current pick. When it answers nothing, the code below resolved
+       * `TRAE_ACCESS_TOKEN`, a ref that only exists on the single-credential path — a scan
+       * login writes `TRAE_ACCOUNT_<hash>` instead, so the resolve was always undefined for
+       * anyone who signed in through the card.
+       *
+       * The result was an empty list, `ensureRemoteModels` silently giving up, and
+       * `listModels` returning the 28 hard-coded fallback rows — models the account does not
+       * have, under names the vendor never published. Re-signing in could not help, because
+       * the ref it wrote was never the one being read.
+       *
+       * Listing one turn does not need a usable account, only a real credential: the model
+       * catalogue is the same for every account of this vendor.
+       */
+      if (credential === void 0) {
+        const all = pool.listAccountsByProvider(this.product.id) ?? [];
+        for (const entry of all) {
+          if (entry.credential !== void 0) { credential = entry.credential; break }
+        }
+      }
     }
     if (credential === void 0) {
       const resolved = await this.ctx.credentials.resolve(credentialRef6(this.credentialRefName));
