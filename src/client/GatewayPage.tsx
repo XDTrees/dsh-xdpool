@@ -113,7 +113,10 @@ export function GatewayPage({ t }: GatewayPageProps) {
   /** True once the server's values were adopted, so polls do not stomp edits. */
   const seeded = useRef(false)
   const mounted = useRef(true)
-  useEffect(() => () => { mounted.current = false }, [])
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   const load = useCallback(async (signal?: AbortSignal): Promise<void> => {
     try {
       const response = await fetch(POOL_RELAY_PATH, {

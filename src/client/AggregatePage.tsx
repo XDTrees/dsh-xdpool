@@ -161,7 +161,10 @@ export function AggregatePage({ t }: AggregatePageProps) {
   /** The pair currently being measured, so only one button shows a spinner. */
   const [probing, setProbing] = useState<string | undefined>(undefined)
   const mounted = useRef(true)
-  useEffect(() => () => { mounted.current = false }, [])
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   /**
    * Ask the host to run one real request against a model, and keep the reading.
    *

@@ -685,7 +685,9 @@ describe('the scan-login roster is read for branding only, never mirrored', () =
     // nobody could verify.
     expect(channelDescriptors).toContain('domain?: string')
     const withDomain = [...channelDescriptors.matchAll(/domain: '([^']+)'/gu)].map(m => m[1])
-    expect(withDomain.sort()).toEqual(['copilot.tencent.com', 'www.workbuddy.ai'])
+    // Doubao carries `www.doubao.com` for the same reason the two pool lanes carry theirs:
+    // the card shows the endpoint a reader can verify.
+    expect(withDomain.sort()).toEqual(['copilot.tencent.com', 'www.doubao.com', 'www.workbuddy.ai'])
     expect(card).toContain('found.domain === undefined ? found.org')
   })
 })

@@ -218,7 +218,10 @@ export function RoutingPage({ t }: RoutingPageProps) {
   /** True once the drafts were seeded from the server, so later polls don't stomp edits. */
   const seeded = useRef(false)
   const mounted = useRef(true)
-  useEffect(() => () => { mounted.current = false }, [])
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   const load = useCallback(async (signal?: AbortSignal): Promise<void> => {
     try {
       const response = await fetch(POOL_COMBOS_PATH, {

@@ -54,6 +54,8 @@
  */
 
 /** The slice of the host's `llm` service this lane needs. */
+import { sanitizeToolSchemas } from './tool-schema.ts'
+
 export interface ChannelLaneLlm {
   listModels: (provider: string) => Promise<readonly { id: string; name?: string }[]>
   stream: (options: Record<string, unknown>) => AsyncIterable<Record<string, unknown>>
@@ -340,7 +342,15 @@ async function* runTurn(input: {
   if (system.length > 0) options.system = system[0]!.content
   if (typeof body.max_tokens === 'number') options.maxTokens = body.max_tokens
   if (typeof body.temperature === 'number') options.temperature = body.temperature
-  if (Array.isArray(body.tools) && body.tools.length > 0) options.tools = body.tools
+  /**
+   * The tool schemas go out cut of their own cycles.
+   *
+   * They arrive from the calling agent, and a tool whose parameters refer to themselves have
+   * no finite JSON encoding — the upstream validator walks them and never terminates, so the
+   * request is refused with a path (`properties.show`) the caller cannot act on. Cutting the
+   * cycle here keeps the tool callable and the request sendable.
+   */
+  if (Array.isArray(body.tools) && body.tools.length > 0) options.tools = sanitizeToolSchemas(body.tools)
 
   for await (const chunk of llm.stream(options)) {
     const event = toChannelEvent(chunk)

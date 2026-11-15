@@ -181,6 +181,17 @@ export const POOL_AGGREGATE_DISCOVER_PATH = '/plugins/dsh-xdpool/aggregate/disco
  * would put a third-party directory on the critical path of the pool card.
  */
 export const POOL_CHANNELS_PATH = '/plugins/dsh-xdpool/channels'
+
+/**
+ * The Doubao lane's session.
+ *
+ * POST starts an interactive browser sign-in and answers once it lands;
+ * GET reports whether a session is stored; DELETE forgets it.
+ */
+export const POOL_DOUBAO_SESSION_PATH = '/plugins/dsh-xdpool/doubao/session'
+
+/** The Doubao quota: the windows the account has, with their reset countdowns. */
+export const POOL_DOUBAO_QUOTA_PATH = '/plugins/dsh-xdpool/doubao/quota'
 /**
  * The `reason` the channel document carries when the login-channel route is
  * already owned by another plugin.

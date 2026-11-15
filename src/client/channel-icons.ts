@@ -50,7 +50,17 @@ export const CHANNEL_ICONS: Readonly<Record<string, string>> = Object.freeze({
  * "TRAE" a bare "T", which looks sparse at 40px. CamelCase splitting resolves
  * both: LobsterAI -> LA, Loomy -> L, TRAE -> TR, MiniMax Code -> MM.
  */
+/**
+ * Initials for a name the generic rule cannot letter.
+ *
+ * A Chinese display name has no ASCII letters to take, so the rule below returns an empty
+ * mark — a channel with a blank tile. Doubao is the first such name.
+ */
+const INITIALS_BY_NAME: Readonly<Record<string, string>> = { 豆包: 'DB' }
+
 export function channelInitials(name: string): string {
+  const fixed = INITIALS_BY_NAME[name.trim()]
+  if (fixed !== undefined) return fixed
   const segments = name
     .split(/\s+/u)
     .flatMap(word => word.replace(/([a-z0-9])([A-Z])/gu, '$1 $2').split(' '))

@@ -55,6 +55,8 @@ import {
   type ChannelProviderStatus,
 } from './channel-rpc.ts'
 import type { ChannelAccount, ChannelRpcEnvelope } from '../channels.ts'
+import { POOL_DOUBAO_QUOTA_PATH, POOL_DOUBAO_SESSION_PATH } from '../status-paths.ts'
+import { doubaoListing } from '../doubao-llm.ts'
 import type { PoolWebChannel, PoolWebChannelModel } from '../status-paths.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
 
@@ -210,6 +212,62 @@ interface ChannelEntry {
  * moment a login lands), so the newest entry wins: it is the one whose
  * credential was written last.
  */
+/**
+ * Doubao's account, described in the pack's account shape.
+ *
+ * The lane is the plugin's own, so this reads its session route and translates the answer
+ * into the row the rest of this page already knows how to draw. `undefined` means "no
+ * session", which is the ordinary state before a sign-in.
+ */
+async function readDoubaoAccount(): Promise<ChannelAccount | undefined> {
+  try {
+    const response = await fetch(POOL_DOUBAO_SESSION_PATH, { credentials: 'same-origin' })
+    const body = await response.json().catch(() => undefined) as
+      | { signedIn?: boolean; savedAt?: string }
+      | undefined
+    if (body?.signedIn !== true) return undefined
+    return {
+      id: 'doubao:session',
+      provider: 'doubao',
+      nickname: body.savedAt === undefined ? '豆包账号' : `豆包（${String(body.savedAt).slice(0, 10)} 登录）`,
+      enabled: true,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Doubao's quota, in the pack's balance row shape.
+ *
+ * The card prints one number per account, so it is the NARROWEST window: that is the one
+ * that stops the next request, and reporting the widest would overstate what is left.
+ */
+async function readDoubaoBalance(): Promise<readonly ChannelBalance[]> {
+  try {
+    const response = await fetch(POOL_DOUBAO_QUOTA_PATH, { credentials: 'same-origin' })
+    const body = await response.json().catch(() => undefined) as
+      | { signedIn?: boolean; error?: string; windows?: { usedPercent?: number }[] }
+      | undefined
+    if (body?.signedIn !== true) return []
+    const windows = Array.isArray(body.windows) ? body.windows : []
+    if (windows.length === 0) {
+      return [{
+        accountId: 'doubao:session',
+        nickname: '豆包账号',
+        ...(typeof body.error === 'string' && body.error !== '' ? { error: body.error } : {}),
+      }]
+    }
+    const lowest = windows.reduce((low, window) => {
+      const used = typeof window.usedPercent === 'number' ? window.usedPercent : 0
+      return Math.min(low, Math.max(0, 100 - used))
+    }, 100)
+    return [{ accountId: 'doubao:session', nickname: '豆包账号', balance: Math.round(lowest), extra: { unit: '%' } }]
+  } catch {
+    return []
+  }
+}
+
 function dedupeAccounts(accounts: readonly ChannelAccount[]): readonly ChannelAccount[] {
   const byNickname = new Map<string, ChannelAccount>()
   const order: string[] = []
@@ -336,7 +394,10 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
    * from painting over a newer wave-1 one.
    */
   const loadSeq = useRef(0)
-  useEffect(() => () => { mountedRef.current = false }, [])
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   const markBusy = (provider: string, on: boolean): void => {
     setBusy(previous => {
@@ -366,9 +427,19 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
       // counting) appears instantly.
       const statusAnswer = await cachedProviderStatus(channels.map(channel => channel.id))
       const statuses = providerStatusesFrom(statusAnswer)
+      /**
+       * Doubao is added to the scan list by hand.
+       *
+       * `provider.status` counts accounts by walking the PACK's pools, and Doubao has no pack
+       * adapter — so its count is always zero, and a filter keyed on that count drops the
+       * channel before anything can be drawn. A signed-in Doubao session would then exist,
+       * work, and appear nowhere on this page.
+       */
+      const doubaoAccount = await readDoubaoAccount()
       const scanProviders = channels
         .map(channel => channel.id)
-        .filter(id => (statuses.get(id)?.accountsTotal ?? 0) > 0)
+        .filter(id => (statuses.get(id)?.accountsTotal ?? 0) > 0
+          || (id === 'doubao' && doubaoAccount !== undefined))
       // Facts are fetched AFTER the model lists below, not before: the host's
       // own listing is gated per provider, and a gated channel answers "no
       // models" even while its card shows nine. The ids this page just rendered
@@ -388,8 +459,29 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
         // The calls are independent: a channel whose catalogue cannot be
         // listed still has accounts worth showing, so one failure must not
         // blank the other half of the card.
-        const accountsPromise = callPack('account.list', { provider })
-        const modelsPromise = callPack('model.list', { provider })
+        /**
+         * Doubao answers from THIS plugin's routes, not from the pack.
+         *
+         * `account.list` and `model.list` are pack RPCs, and the pack has no Doubao adapter —
+         * both answer "unknown provider". Calling them anyway would draw a card reading
+         * "0 accounts, 0 models" for a lane that has one session and six models, and the
+         * empty numbers would look like a failed sign-in.
+         */
+        const accountsPromise = provider === 'doubao'
+          ? Promise.resolve({ ok: true, value: { accounts: doubaoAccount === undefined ? [] : [doubaoAccount] } } as ChannelRpcEnvelope)
+          : callPack('account.list', { provider })
+        const modelsPromise = provider === 'doubao'
+          ? Promise.resolve({
+            ok: true,
+            value: {
+              models: doubaoListing().map(model => ({
+                id: model.id,
+                name: model.name,
+                ...(model.description === undefined ? {} : { description: model.description }),
+              })),
+            },
+          } as ChannelRpcEnvelope)
+          : callPack('model.list', { provider })
         // `callPack` answers an `ok: false` envelope as a value rather than a
         // rejection, so the catch arms only cover the transport itself.
         const [accounts, models] = await Promise.all([
@@ -689,6 +781,20 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     setEntries(previous => previous.map(entry =>
       entry.channel.id === provider ? { ...entry, balancePending: true } : entry))
     try {
+      /**
+       * Doubao reports its own balance, from its quota route.
+       *
+       * `credits.balances` is a pack RPC with no Doubao adapter, so it answers "unsupported
+       * provider" and the card printed "no balance reported" under a signed-in account.
+       */
+      if (provider === 'doubao') {
+        const rows = await readDoubaoBalance()
+        setEntries(previous => previous.map(entry =>
+          entry.channel.id === provider
+            ? { ...entry, balancePending: false, balanceError: undefined, balances: rows }
+            : entry))
+        return
+      }
       const envelope = await callPack('credits.balances', force ? { provider, force: true } : { provider })
       if (seq !== undefined && loadSeq.current !== seq) return
       if (!mountedRef.current) {
@@ -833,6 +939,27 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     }
     markBusy(provider, true)
     try {
+      /**
+       * Doubao's account IS the session, so its actions are the session's.
+       *
+       * `account.delete` / `test` / `refresh` are pack RPCs addressed to the pack's credential
+       * store, and Doubao has no entry there — every one of them answered "unsupported
+       * provider", so the buttons did nothing and the row could not be removed.
+       */
+      if (provider === 'doubao') {
+        if (action === 'delete') {
+          await fetch(POOL_DOUBAO_SESSION_PATH, { method: 'DELETE', credentials: 'same-origin' })
+        } else if (action === 'refresh') {
+          await fetch(POOL_DOUBAO_QUOTA_PATH, { credentials: 'same-origin' })
+        } else if (action === 'test') {
+          await fetch(POOL_DOUBAO_SESSION_PATH, { credentials: 'same-origin' })
+        }
+        if (!mountedRef.current) return
+        invalidatePoolSnapshot()
+        await load()
+        setNotice(action === 'delete' ? '已删除豆包会话' : '已刷新')
+        return
+      }
       const entry = entries.find(item => item.channel.id === provider)
       const enabledNow = entry?.accounts.find(account => account.id === accountId)?.enabled !== false
       const method = action === 'refresh' ? 'account.refresh'
