@@ -100,6 +100,26 @@ interface Snapshot {
 /** Re-read cadence. A balance moves only when something spends. */
 const POLL_MS = 45_000
 
+/**
+ * This browser's own local `YYYY-MM-DD`.
+ *
+ * "Today" is a local calendar day, and the boundary the panel promises is local 0:00. Both
+ * sides of the wire compare this KEY rather than a timestamp difference: midnight is not 24
+ * hours after the previous read (a DST shift moves it), and an answer for the wrong day must
+ * be rejected rather than rendered.
+ */
+function todayKey(date: Date = new Date()): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${String(date.getFullYear())}-${month}-${day}`
+}
+
+/** Milliseconds from `now` to the next local 0:00, plus a second of slack. */
+function msUntilLocalMidnight(now: Date = new Date()): number {
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1, 0)
+  return Math.max(1_000, next.getTime() - now.getTime())
+}
+
 /** `21887` → `21,887`. */
 function grouped(value: number): string {
   return Number.isFinite(value) ? Math.round(value).toLocaleString('en-US') : '0'
@@ -317,12 +337,27 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
        */
       if (spentToday === undefined && todayRes !== undefined && todayRes.ok) {
         const today = await todayRes.json().catch(() => undefined) as
-          | { available?: unknown; total?: unknown }
+          | { available?: unknown; total?: unknown; day?: unknown; priced?: unknown }
           | undefined
+        /**
+         * The route answers for ONE day, and now says WHICH.
+         *
+         * A snapshot taken yesterday must not be shown after 0:00, so the answer is accepted
+         * only while `day` still names this browser's local day. That comparison IS the
+         * "resets at 0:00" rule, checked from the side that draws the number — the timer
+         * below can be throttled by a background tab, but a stale answer is still refused.
+         */
         if (today !== undefined && today !== null && today.available === true
-          && typeof today.total === 'number' && Number.isFinite(today.total)) {
+          && typeof today.total === 'number' && Number.isFinite(today.total)
+          && (typeof today.day !== 'string' || today.day === todayKey())) {
           spentToday = today.total
-          spentMeasured = true
+          /**
+           * `priced` means the route priced recorded token counts instead of adding up an
+           * observed balance drop — an estimate, and it says so rather than passing itself
+           * off as a measurement.
+           */
+          if (today.priced === true) spentEstimated = true
+          else spentMeasured = true
         }
       }
 
@@ -339,11 +374,21 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
           usageEntries = ledger.entries as readonly UsageCall[]
         }
       }
-      if (spentToday === undefined && usageEntries !== undefined) {
+      if (usageEntries !== undefined) {
         const estimate = creditsToday(usageEntries)
-        if (estimate !== undefined) {
+        /**
+         * A measured ZERO is replaced too, not just a missing figure.
+         *
+         * The sampler books a day only when it WITNESSES a balance drop, so a drop masked by
+         * a refill or an account switch books as 0 — and printing that while this process
+         * demonstrably spent is the defect this whole row was reported for. A NON-zero
+         * measured total is never overwritten: an observation outranks a derived number even
+         * when the estimate comes out larger, and the `≈` keeps the difference visible.
+         */
+        if (estimate !== undefined && (spentToday === undefined || spentToday === 0)) {
           spentToday = estimate
           spentEstimated = true
+          spentMeasured = false
         }
       }
 
@@ -383,9 +428,26 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
     mounted.current = true
     void load()
     const timer = window.setInterval(() => { void load() }, POLL_MS)
+    /**
+     * Re-read exactly at local 0:00.
+     *
+     * The 45s poll alone would keep yesterday's figure on screen for up to 45 seconds after
+     * midnight — the reset the user asked for would be late by design. A one-shot timer
+     * armed for the boundary reloads on the tick and re-arms for the next midnight, so the
+     * figure turns over ON 0:00 instead of on the poll cadence.
+     */
+    let midnight = 0
+    const armMidnight = (): void => {
+      midnight = window.setTimeout(() => {
+        void load()
+        armMidnight()
+      }, msUntilLocalMidnight())
+    }
+    armMidnight()
     return () => {
       mounted.current = false
       window.clearInterval(timer)
+      window.clearTimeout(midnight)
     }
   }, [load])
 

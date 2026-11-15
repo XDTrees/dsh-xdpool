@@ -73,6 +73,11 @@ describe('readCreditsToday', () => {
     const home = homeWith(undefined)
     expect(await readCreditsToday(home, NOW)).toEqual({
       day: '2026-11-14',
+      window: {
+        from: new Date(2026, 10, 14, 0, 0, 0, 0).getTime(),
+        to: new Date(2026, 10, 15, 0, 0, 0, 0).getTime(),
+        zone: 'local',
+      },
       accounts: 0,
       source: 'cost-meter',
       available: false,
@@ -122,3 +127,106 @@ describe('readCreditsToday', () => {
     expect(today.available).toBe(false)
   })
 })
+
+describe('readCreditsToday — the day-start baseline', () => {
+  it('counts a drop no sample witnessed, so a refill cannot hide a spend', async () => {
+    // The reported defect: the sampler booked 3 credits because it only ever SAW three
+    // small drops, while the account actually fell from 100 to 88 that day (a refill
+    // between two samples masked the rest). The opening balance makes the whole fall
+    // countable again.
+    const home = homeWith({ accounts: { 'cn:xdpool:a': { remaining: 100, days: {} } } })
+    // The first read only SEEDS the opening balance; with nothing spent and nothing booked
+    // it still has no figure to report, so it must not hand the card a zero.
+    expect((await readCreditsToday(home, NOW)).available).toBe(false)
+
+    writeFileSync(join(home, 'storages', 'cost-meter', 'workbuddy-statistics.json'), JSON.stringify({
+      accounts: { 'cn:xdpool:a': { remaining: 88, days: { '2026-11-14': 3 } } },
+    }))
+    const today = await readCreditsToday(home, NOW)
+    expect(today.total).toBe(12)
+    expect(today.source).toBe('balance-baseline')
+    expect(today.recovered).toBe(9)
+  })
+
+  it('never turns a top-up into negative spend', async () => {
+    // A refill moves the balance UP. `max(0, start - now)` clamps that to zero, so a
+    // topped-up account reports only what the sampler actually booked.
+    const home = homeWith({ accounts: { 'cn:xdpool:a': { remaining: 100, days: {} } } })
+    await readCreditsToday(home, NOW)
+    writeFileSync(join(home, 'storages', 'cost-meter', 'workbuddy-statistics.json'), JSON.stringify({
+      accounts: { 'cn:xdpool:a': { remaining: 300, days: { '2026-11-14': 3 } } },
+    }))
+    expect((await readCreditsToday(home, NOW)).total).toBe(3)
+  })
+
+  it('keeps yesterday out of today, because the baseline is scoped to one day', async () => {
+    // A baseline carried across midnight would compare yesterday's opening balance with
+    // today's balance and report a whole day's spend the moment the clock ticks over.
+    const home = homeWith({ accounts: { 'cn:xdpool:a': { remaining: 500, days: { '2026-11-13': 11 } } } })
+    await readCreditsToday(home, new Date(2026, 10, 13, 23, 0, 0))
+
+    // The balance then falls to 400 overnight. Comparing that against YESTERDAY's opening
+    // 500 would report 100 credits of spend the instant the clock ticks over.
+    writeFileSync(join(home, 'storages', 'cost-meter', 'workbuddy-statistics.json'), JSON.stringify({
+      accounts: { 'cn:xdpool:a': { remaining: 400, days: { '2026-11-13': 11 } } },
+    }))
+    const nextDay = await readCreditsToday(home, new Date(2026, 10, 14, 0, 1, 0))
+    expect(nextDay.day).toBe('2026-11-14')
+    expect(nextDay.total).toBeUndefined()
+    expect(nextDay.available).toBe(false)
+  })
+
+  it('reports the window it measured, so "resets at 0:00" is checkable', async () => {
+    const home = homeWith({ accounts: { 'cn:xdpool:a': { days: { '2026-11-14': 5 } } } })
+    const today = await readCreditsToday(home, NOW)
+    expect(today.window).toEqual({
+      from: new Date(2026, 10, 14, 0, 0, 0, 0).getTime(),
+      to: new Date(2026, 10, 15, 0, 0, 0, 0).getTime(),
+      zone: 'local',
+    })
+  })
+})
+
+describe('readCreditsToday — the priced fallback', () => {
+  it('prices BOTH pool lanes when nothing was measured', async () => {
+    // The measured branch sums domestic and international accounts alike, so a fallback
+    // that priced only `xdpool:` made the day's two numbers disagree with nothing on the
+    // card to explain it. 1M input on glm-5.3-flash is 14.86 credits per lane.
+    const home = homeWith({ accounts: { 'cn:xdpool:a': { remaining: 500, days: { '2026-11-14': 0 } } } })
+    const dir = join(home, 'storages', 'cost-meter')
+    writeFileSync(join(dir, 'ledger.json'), JSON.stringify({
+      days: {
+        '2026-11-14': {
+          byProviderModel: {
+            'xdpool:glm-5.3-flash': { input: 1_000_000, cacheRead: 0, output: 0 },
+            'xdpool-global:glm-5.3-flash': { input: 1_000_000, cacheRead: 0, output: 0 },
+          },
+        },
+      },
+    }))
+    const today = await readCreditsToday(home, NOW)
+    expect(today.total).toBe(29.72)
+    expect(today.priced).toBe(true)
+    expect(today.source).toBe('cost-meter-ledger')
+  })
+
+  it('bills only the pool channels of the pack ledger, not every direct row', async () => {
+    // TRAE, CodeArts, Qoder and Cline ride the same `direct` mode against their OWN quota.
+    // Matching on the mode alone billed their tokens to the pool balance.
+    const home = homeWith({ accounts: { 'cn:xdpool:a': { remaining: 500, days: {} } } })
+    mkdirSync(join(home, 'channel-pack'), { recursive: true })
+    writeFileSync(join(home, 'channel-pack', 'token-ledger.json'), JSON.stringify({
+      days: {
+        '2026-11-14': {
+          'direct|buddy|a|glm-5.3-flash': { inputTokens: 1_000_000, cacheReadTokens: 0, outputTokens: 0 },
+          'direct|trae|a|glm-5.3-flash': { inputTokens: 9_000_000, cacheReadTokens: 0, outputTokens: 0 },
+          'gateway|buddy|a|glm-5.3-flash': { inputTokens: 9_000_000, cacheReadTokens: 0, outputTokens: 0 },
+        },
+      },
+    }))
+    const today = await readCreditsToday(home, NOW)
+    expect(today.total).toBe(14.86)
+    expect(today.source).toBe('pack-ledger')
+  })
+})
+

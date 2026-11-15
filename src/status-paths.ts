@@ -711,12 +711,35 @@ export const POOL_USAGE_PATH = '/plugins/dsh-xdpool/usage'
 export interface PoolWebCreditsToday {
   /** Local calendar day, `YYYY-MM-DD`. */
   day: string
+  /**
+   * The day's bounds, `[00:00:00.000, 24:00:00.000)` local, in epoch milliseconds.
+   *
+   * Spelled out rather than implied: "today" is a local calendar day, not a rolling 24h
+   * window, and a caller must be able to CHECK the reset at 0:00 instead of trusting it.
+   */
+  window?: { from: number; to: number; zone: 'local' }
   /** Credits booked that day, summed over every observed account. */
   total?: number
   /** How many accounts carried a figure for that day. */
   accounts: number
-  /** Which observer produced the figure. */
-  source: 'cost-meter'
+  /**
+   * Which observer produced the figure.
+   *
+   * `cost-meter` is the sampler's booked drops, `balance-baseline` adds back the drops no
+   * sample witnessed, and the two ledger sources are PRICED from recorded token counts.
+   */
+  source: 'cost-meter' | 'balance-baseline' | 'cost-meter-ledger' | 'pack-ledger'
+  /**
+   * `total` was priced from recorded token counts, not observed as a balance drop.
+   *
+   * The strip draws a priced figure with a `≈` for the same reason this flag exists: an
+   * estimate and a measurement are not interchangeable.
+   */
+  priced?: boolean
+  /** Credits the day-start baseline recovered that no sample booked. */
+  recovered?: number
+  /** How many accounts that recovery came from. */
+  recoveredAccounts?: number
   /** False when nothing recorded the day; `total` is then absent. */
   available: boolean
 }
