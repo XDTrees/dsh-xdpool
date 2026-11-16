@@ -40,12 +40,29 @@ function toCredentials(session: DoubaoSession): {
   pairs: Map<string, string>
   header: string
   userAgent: string
+  key: string
 } {
   return {
     pairs: new Map(Object.entries(session.cookies)),
     header: cookieHeader(session),
     userAgent: session.userAgent,
+    key: accountKeyOf(session),
   }
+}
+
+/**
+ * The key one session's rotated cookies are filed under.
+ *
+ * Two accounts must never share this map: `absorbSetCookies` records what the server rotated
+ * onto the credentials that made the call, and one jar's refresh landing in another jar's
+ * header would send account A's token to account B. `uid_tt` identifies the person and
+ * survives a rotation, which `sessionid` does not.
+ */
+function accountKeyOf(session: DoubaoSession): string {
+  const uid = session.cookies['uid_tt']
+  if (typeof uid === 'string' && uid !== '') return uid
+  const sessionId = session.cookies['sessionid']
+  return typeof sessionId === 'string' && sessionId !== '' ? sessionId : 'unknown'
 }
 
 /** The credential shape the upstream code below was written against. */
@@ -53,40 +70,33 @@ export interface DoubaoCredentials {
   pairs: Map<string, string>
   header: string
   userAgent: string
+  /** Which account these belong to, so rotated cookies stay with their own jar. */
+  key: string
 }
 
 /**
- * How a session reaches the upstream.
+ * Build the credentials for ONE session.
  *
- * The reference implementation loads a sealed credential file; this plugin keeps one session
- * in memory and in its own store, and the route injects it. A module-level holder is what lets
- * the unchanged upstream code call `loadDoubaoCredentials()` and still be given THIS plugin's
- * session — the alternative is threading a session parameter through a thousand lines that
- * were verified as they stand.
+ * The module used to hold a single `activeSession`, set by the routes and read by every
+ * helper — which is exactly why a second sign-in displaced the first (#171). Credentials are
+ * now derived from the session the CALLER chose, so a roster of accounts costs nothing here:
+ * whoever picks the account passes it in, and this file never guesses.
  */
-let activeSession: DoubaoSession | undefined
-
-/** Point the upstream at a session. Called by the routes and by startup restore. */
-export function setDoubaoSession(session: DoubaoSession | undefined): void {
-  activeSession = session
-}
-
-/** The session currently in use, if any. */
-export function currentDoubaoSession(): DoubaoSession | undefined {
-  return activeSession
+export function credentialsOf(session: DoubaoSession | undefined): DoubaoCredentials {
+  if (session === undefined || !sessionUsable(session)) {
+    throw new Error('还没有浏览器登录态。请在豆包卡片里点「重新登录」扫码一次。')
+  }
+  return toCredentials(session)
 }
 
 /** Throw when there is no session, with the sentence the card shows. */
-export function requireDoubaoCredentials(): DoubaoCredentials {
-  if (activeSession === undefined || !sessionUsable(activeSession)) {
-    throw new Error('还没有浏览器登录态。请在豆包卡片里点「重新登录」扫码一次。')
-  }
-  return toCredentials(activeSession)
+export function requireDoubaoCredentials(session?: DoubaoSession): DoubaoCredentials {
+  return credentialsOf(session)
 }
 
-/** The reference's loader, answered from this plugin's session. */
-function loadDoubaoCredentials(): DoubaoCredentials {
-  return requireDoubaoCredentials()
+/** The reference's loader, answered from the session the caller names. */
+function loadDoubaoCredentials(session?: DoubaoSession): DoubaoCredentials {
+  return credentialsOf(session)
 }
 
 /** The reference's cookie-name list, as this plugin knows it. */
@@ -192,9 +202,9 @@ export function buildHeaders(
     'agw-js-conv': 'str',
     'x-flow-trace': `${randomUUID().replace(/-/g, '')}-${randomUUID().replace(/-/g, '')}-01`,
     'last-event-id': 'undefined',
-    // Rotate cookies the server handed back on earlier responses
+    // Rotate cookies the server handed back on earlier responses for THIS account
     // (x-ms-token / bd_sso_hi3jfd) so a long-lived session stays valid.
-    cookie: applyRenewals(credentials.header),
+    cookie: applyRenewals(credentials.header, credentials.key),
     ...extra,
   }
 }
@@ -396,6 +406,17 @@ export interface ChatRequestOptions {
    * Defaults to `DSH_DOUBAO_WORKSPACE`, then `process.cwd()`.
    */
   workspace?: string
+  /**
+   * WHICH account answers this turn.
+   *
+   * The lane holds a roster (#171), so the session is chosen by the caller — the roster's
+   * `next()` — rather than read from a module-level holder. Without it this module would have
+   * to guess, and guessing is what made a second sign-in displace the first.
+   *
+   * Omitting it throws a `session_dead` error rather than silently picking an account: a
+   * caller that does not know whose quota it is about to spend has a bug.
+   */
+  session?: DoubaoSession
 }
 
 /* ------------------------------------------------------------------ *
@@ -1153,7 +1174,7 @@ async function runToolLocalResponder(
       body: JSON.stringify(payload),
       ...(signal ? { signal } : {}),
     })
-    absorbSetCookies(res.headers)
+    absorbSetCookies(res.headers, credentials.key)
     const text = await res.text()
     return JSON.parse(text) as Record<string, any>
   }
@@ -1234,7 +1255,7 @@ async function streamOnce(
     credentials?: DoubaoCredentials
   } = {},
 ): Promise<DoubaoChatResult> {
-  const credentials = options.credentials ?? loadDoubaoCredentials()
+  const credentials = options.credentials ?? loadDoubaoCredentials(options.session)
   /**
    * No cookie means "sign in again", not "the network is down".
    *
@@ -1297,9 +1318,9 @@ async function streamOnce(
     )
   }
 
-  // Fold the server's credential refreshes back into our in-memory jar so the
-  // next call stays authenticated.
-  absorbSetCookies(response.headers)
+  // Fold the server's credential refreshes back into THIS account's in-memory jar so the
+  // next call stays authenticated, without touching any other account's cookies.
+  absorbSetCookies(response.headers, credentials.key)
 
   let streamDone = false
   const responderPromise = isTask
@@ -1366,29 +1387,58 @@ export async function streamChat(
   }
 }
 
-const renewals = new Map<string, string>()
+/**
+ * Rotated cookies, filed PER ACCOUNT.
+ *
+ * THE BUG THIS PREVENTS
+ *
+ * This used to be one flat map. With a single account that was invisible; the moment the
+ * pool holds two, a `set-cookie` the server sends to account A would be overlaid onto account
+ * B's cookie header on B's next request — sending A's freshly rotated `sessionid` while B's
+ * own jar still claimed otherwise. Both accounts then answer `session_dead` and the user is
+ * told to sign in again for a problem this file caused.
+ *
+ * Filed by `DoubaoCredentials.key` (the account's `uid_tt`), so a rotation can only ever
+ * reach the jar that earned it.
+ */
+const renewals = new Map<string, Map<string, string>>()
 
 /**
- * Drop every rotated cookie this module has absorbed.
+ * Drop every rotated cookie this module has absorbed, for one account or all of them.
  *
- * MUST be called together with `invalidateCredentialCache()`. The two caches
- * hold halves of one credential: the auth cache holds what was decrypted from
- * disk, and `renewals` holds what the server rotated onto us afterwards
- * (`x-ms-token`, `bd_sso_hi3jfd`). Clearing one without the other leaves the
- * stale half behind — after a credential refresh the freshly-read cookies
- * would immediately be overwritten by values from the previous session, and
- * the user would be told to sign in again for no real reason.
+ * MUST be called together with the account's stored jar being replaced. The two caches hold
+ * halves of one credential: the store holds what the browser harvested, and `renewals` holds
+ * what the server rotated onto us afterwards (`x-ms-token`, `bd_sso_hi3jfd`). Clearing one
+ * without the other leaves the stale half behind — after a fresh sign-in the newly harvested
+ * cookies would immediately be overwritten by values from the previous session, and the user
+ * would be told to sign in again for no real reason.
  */
-export function invalidateRenewals(): void {
-  renewals.clear()
+export function invalidateRenewals(key?: string): void {
+  if (key === undefined) {
+    renewals.clear()
+    return
+  }
+  renewals.delete(key)
 }
 
-/** Record rotated cookies (`x-ms-token`, `bd_sso_hi3jfd`) for the next request. */
-function absorbSetCookies(headers: Headers): void {
+/**
+ * Record rotated cookies (`x-ms-token`, `bd_sso_hi3jfd`) for the next request of ONE account.
+ *
+ * Exported so the isolation can be tested without a live second account: the symptom of getting
+ * this wrong (a rejected session) is indistinguishable from an expired cookie, so the merge
+ * itself has to be exercised directly.
+ */
+export function absorbSetCookies(headers: Headers, key: string): void {
+  let jar = renewals.get(key)
   const msToken = headers.get('x-ms-token')
-  if (msToken) renewals.set('msToken', msToken)
   const setCookie = headers.get('set-cookie')
-  if (!setCookie) return
+  if (msToken === null && setCookie === null) return
+  if (jar === undefined) {
+    jar = new Map<string, string>()
+    renewals.set(key, jar)
+  }
+  if (msToken !== null) jar.set('msToken', msToken)
+  if (setCookie === null) return
   for (const part of setCookie.split(/,\s*(?=[A-Za-z0-9_-]+=)/)) {
     const [pair] = part.split(';')
     if (!pair) continue
@@ -1396,19 +1446,20 @@ function absorbSetCookies(headers: Headers): void {
     if (eq <= 0) continue
     const name = pair.slice(0, eq).trim()
     const value = pair.slice(eq + 1).trim()
-    if (name && value) renewals.set(name, value)
+    if (name && value) jar.set(name, value)
   }
 }
 
-/** Cookie header with any rotated values overlaid. Values never leave memory. */
-export function applyRenewals(header: string): string {
-  if (renewals.size === 0) return header
+/** Cookie header with this account's rotated values overlaid. Values never leave memory. */
+export function applyRenewals(header: string, key?: string): string {
+  const jar = key === undefined ? undefined : renewals.get(key)
+  if (jar === undefined || jar.size === 0) return header
   const pairs = new Map<string, string>()
   for (const part of header.split(/;\s*/)) {
     const eq = part.indexOf('=')
     if (eq > 0) pairs.set(part.slice(0, eq).trim(), part.slice(eq + 1))
   }
-  for (const [name, value] of renewals) pairs.set(name, value)
+  for (const [name, value] of jar) pairs.set(name, value)
   return [...pairs.entries()].map(([name, value]) => `${name}=${value}`).join('; ')
 }
 

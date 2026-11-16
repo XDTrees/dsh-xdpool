@@ -35,9 +35,10 @@ import {
   type PreparedAdapterCall,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import { sessionUsable, type DoubaoSession } from './doubao-auth.ts'
+import { sessionUsable } from './doubao-auth.ts'
 import { DOUBAO_MODELS, type DoubaoModelInfo } from './doubao-models.ts'
 import { fetchLiveModels } from './doubao-catalog-live.ts'
+import type { DoubaoRoster } from './doubao-roster.ts'
 import { chat, type DoubaoImage } from './doubao-upstream.ts'
 
 /** The provider id the picker groups by. */
@@ -85,8 +86,8 @@ interface DoubaoChatOptions {
 }
 
 export interface DoubaoHostAdapterOptions {
-  /** The stored session, read per call so a sign-in is visible without a restart. */
-  session: () => DoubaoSession | undefined
+  /** The roster, read per call so a sign-in is visible without a restart. */
+  roster: () => DoubaoRoster
   /** Called when the upstream reports its conversation id. */
   onConversationId?: ((id: string) => void) | undefined
 }
@@ -97,6 +98,14 @@ export interface DoubaoHostAdapterOptions {
  * `listModels` reads the account's live roster through `fetchLiveModels`, which merges the
  * measured six with whatever `brief_list` returns and whatever the desktop client's cache holds —
  * that is where the `person-*` models (DeepSeek, Kimi, GLM) come from.
+ *
+ * TWO GATES, AND WHY BOTH ARE NEEDED
+ *
+ * `listModels` answers `[]` when the roster holds no usable account. `fetchLiveModels` has its
+ * own fallback to the six measured models — which is correct for the CARD, where a signed-out
+ * user still needs to see what the channel supports — but wrong here: the picker filters a
+ * group by whether it listed anything, so the fallback made the 豆包 group keep appearing after
+ * the account was deleted (#169).
  */
 export class DoubaoHostAdapter extends LlmAdapter {
   private readonly options: DoubaoHostAdapterOptions
@@ -113,8 +122,13 @@ export class DoubaoHostAdapter extends LlmAdapter {
   }
 
   override async listModels(_provider: string): Promise<readonly LlmModelInfo[]> {
-    const session = this.options.session()
-    const models = await fetchLiveModels(session)
+    const account = this.options.roster().next()
+    if (account === undefined || !sessionUsable(account.session)) {
+      // No account, no group. See the class comment: the fallback belongs to the card.
+      this.cached = undefined
+      return []
+    }
+    const models = await fetchLiveModels(account.session)
     this.cached = { at: Date.now(), models }
     return models.map(model => this.describe(model))
   }
@@ -146,8 +160,9 @@ export class DoubaoHostAdapter extends LlmAdapter {
    * the client renders it without knowing about Doubao's own image blocks.
    */
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    const session = this.options.session()
-    if (session === undefined || !sessionUsable(session)) {
+    const roster = this.options.roster()
+    const account = roster.next()
+    if (account === undefined || !sessionUsable(account.session)) {
       throw new LlmError('还没有浏览器登录态。请在豆包卡片里点「重新登录」扫码一次。', 'auth')
     }
     const modelId = typeof options['model'] === 'string' ? options['model'] : ''
@@ -176,6 +191,9 @@ export class DoubaoHostAdapter extends LlmAdapter {
     const turn = chat(prompt, {
       modelKey: modelId,
       reasoningLevel: level,
+      // The account the roster chose. Without it the upstream would have to guess, and
+      // guessing is what let a second sign-in displace the first (#171).
+      session: account.session,
       signal,
       callbacks: {
         onText: (chunk: string) => { if (chunk !== '') textQueue.push(chunk) },

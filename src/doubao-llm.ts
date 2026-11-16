@@ -4,10 +4,19 @@
  * HOW THIS FITS
  *
  * `channel-lane.ts` routes `<channel>:<model>` ids by asking a lane which channels it serves
- * and calling `llm.listModels` / `llm.stream` for those it owns. Every other channel is a
+ * and calling `llm.listModels` / `llm.stream` for those channels. Every other channel is a
  * provider the vendored pack registered with the host; Doubao is this plugin's own, so this
  * module supplies the llm face for it and nothing else changes: the models appear in the
  * picker, the card lists them, and a chain can name them.
+ *
+ * WHICH ACCOUNT ANSWERS (#171)
+ *
+ * The lane used to read one module-level session, so a second sign-in replaced the first and
+ * the pool could only serve one account. It now takes the roster and asks it for `next()` —
+ * the account that is not cooling down, sticky so one conversation stays on one account.
+ * A failure that names an account problem (a rejected cookie, a spent window, a slider
+ * challenge) is recorded against THAT account, so the next turn moves on instead of retrying
+ * into the same wall.
  *
  * WHAT IT DELEGATES
  *
@@ -19,16 +28,23 @@
  *
  * @module dsh-xdpool/doubao-llm
  */
-import { cookieHeader, sessionUsable, type DoubaoSession } from './doubao-auth.ts'
+import { sessionUsable } from './doubao-auth.ts'
 import {
-  DOUBAO_MODELS,
   DOUBAO_REASONING_LEVELS,
   findDoubaoModel,
   type DoubaoModelInfo,
 } from './doubao-catalog.ts'
 import { fetchLiveModels } from './doubao-catalog-live.ts'
+import type { DoubaoAccount, DoubaoRoster } from './doubao-roster.ts'
 export { doubaoListing } from './doubao-models.ts'
-import { chat, type DoubaoImage } from './doubao-upstream.ts'
+import {
+  chat,
+  classifyDoubaoFailure,
+  describeDoubaoFailure,
+  type DoubaoErrorKind,
+  type DoubaoImage,
+  type DoubaoUpstreamError,
+} from './doubao-upstream.ts'
 
 /** The channel id Doubao answers to. */
 export const DOUBAO_CHANNEL = 'doubao'
@@ -85,8 +101,8 @@ export function promptFromMessages(messages: readonly unknown[]): string {
 
 /** What {@link createDoubaoLlm} needs. */
 export interface DoubaoLlmOptions {
-  /** The stored session, read per call so a sign-in is visible without a restart. */
-  session: () => DoubaoSession | undefined
+  /** The roster, asked per call so a sign-in is visible without a restart. */
+  roster: () => DoubaoRoster
   /** Called once the upstream reports its own conversation id, so the next turn continues it. */
   onConversationId?: ((id: string) => void) | undefined
 }
@@ -95,6 +111,29 @@ export interface DoubaoLlmOptions {
 export interface DoubaoLlm {
   listModels: (provider: string) => Promise<readonly DoubaoLaneModel[]>
   stream: (options: Record<string, unknown>) => AsyncIterable<ChannelChunk | ReasoningChunk>
+}
+
+/** The sentence a caller sees when the roster has nothing to offer. */
+const NO_ACCOUNT = '还没有浏览器登录态。请在豆包卡片里点「重新登录」扫码一次。'
+
+/** Whether a failure class says something about the ACCOUNT rather than the network. */
+function blamesAccount(kind: DoubaoErrorKind): boolean {
+  return kind === 'session_dead' || kind === 'quota_exhausted' || kind === 'rate_limited'
+}
+
+/**
+ * Pick the account for one turn, preferring an explicit request.
+ *
+ * The host's model id is `doubao:<model>`; an account may also be named in the stream options
+ * as `doubaoAccount`, which is what lets the card's "use this one" button mean something.
+ * Without a name the roster picks, which is the ordinary path.
+ */
+function pickAccount(roster: DoubaoRoster, requested: unknown): DoubaoAccount | undefined {
+  if (typeof requested === 'string' && requested !== '') {
+    const named = roster.get(requested)
+    if (named !== undefined && named.disabled !== true && sessionUsable(named.session)) return named
+  }
+  return roster.next()
 }
 
 /**
@@ -115,8 +154,13 @@ export function createDoubaoLlm(options: DoubaoLlmOptions): DoubaoLlm {
        * behind the known-good entries; a failed read simply leaves the six in place. Using it
        * here means the picker shows what the account can actually call, including the
        * third-party models Doubao publishes per plan, instead of a fixed list that was short.
+       *
+       * The FIRST usable account answers: the catalogue is a property of the vendor account,
+       * and a pool of three would otherwise list three different menus under one group.
        */
-      const live = await fetchLiveModels(options.session())
+      const roster = options.roster()
+      const account = roster.next()
+      const live = await fetchLiveModels(account?.session)
       return live.map(model => ({
         id: model.id,
         name: model.name,
@@ -125,10 +169,29 @@ export function createDoubaoLlm(options: DoubaoLlmOptions): DoubaoLlm {
     },
 
     stream: async function* (streamOptions: Record<string, unknown>): AsyncIterable<ChannelChunk | ReasoningChunk> {
-      const session = options.session()
-      if (session === undefined || !sessionUsable(session)) {
-        throw new Error('还没有浏览器登录态。请在豆包卡片里点「重新登录」扫码一次。')
-      }
+      const roster = options.roster()
+      /**
+       * Retry across accounts, but ONLY for failures that blame the account.
+       *
+       * A roster exists so that one spent window does not stop the lane. A network failure is
+       * a fact about the link, so trying a second account would spend its quota to fail the
+       * same way; that distinction is what `blamesAccount` encodes. The bound is the roster's
+       * size, so a pool of three costs at most three attempts and never loops.
+       */
+      const tried = new Set<string>()
+      let account = pickAccount(roster, streamOptions['doubaoAccount'])
+      if (account === undefined) throw new Error(NO_ACCOUNT)
+
+      /**
+       * Whether any text has reached the CALLER.
+       *
+       * Counted across attempts, not within one: once a delta has been yielded the answer is
+       * already on screen, so switching accounts would restart it into a second thread and
+       * leave the user with two half answers. That is the line between "step aside" and
+       * "report it".
+       */
+      let emitted = false
+
       const modelId = typeof streamOptions['model'] === 'string' ? streamOptions['model'] : ''
       const model: DoubaoModelInfo | undefined = findDoubaoModel(modelId)
       if (model === undefined) {
@@ -156,52 +219,82 @@ export function createDoubaoLlm(options: DoubaoLlmOptions): DoubaoLlm {
         ? streamOptions['signal'] as AbortSignal
         : new AbortController().signal
 
-      const textQueue: string[] = []
-      const reasoningQueue: string[] = []
-      let done = false
-      let failure: Error | undefined
-      let images: readonly DoubaoImage[] = []
+      for (;;) {
+        tried.add(account.id)
+        const textQueue: string[] = []
+        const reasoningQueue: string[] = []
+        let done = false
+        let failure: Error | undefined
+        let images: readonly DoubaoImage[] = []
+        let conversationId: string | undefined
 
-      const turn = chat(prompt, {
-        modelKey: model.id,
-        reasoningLevel: levelName,
-        signal,
-        callbacks: {
-          onText: (chunk: string) => { if (chunk !== '') textQueue.push(chunk) },
-          onThinking: (chunk: string) => { if (chunk !== '') reasoningQueue.push(chunk) },
-        },
-      } as never)
-        .then(result => {
-          if (typeof result.conversationId === 'string' && result.conversationId !== '') {
-            options.onConversationId?.(result.conversationId)
+        const turn = chat(prompt, {
+          modelKey: model.id,
+          reasoningLevel: levelName,
+          session: account.session,
+          signal,
+          callbacks: {
+            onText: (chunk: string) => { if (chunk !== '') textQueue.push(chunk) },
+            onThinking: (chunk: string) => { if (chunk !== '') reasoningQueue.push(chunk) },
+          },
+        } as never)
+          .then(result => {
+            if (typeof result.conversationId === 'string' && result.conversationId !== '') {
+              conversationId = result.conversationId
+            }
+            if (Array.isArray(result.images)) images = result.images
+          })
+          .catch((error: unknown) => { failure = error instanceof Error ? error : new Error(String(error)) })
+          .finally(() => { done = true })
+
+        while (!done || textQueue.length > 0 || reasoningQueue.length > 0) {
+          const reasoning = reasoningQueue.shift()
+          if (reasoning !== undefined) {
+            emitted = true
+            yield { type: 'reasoning-delta', text: reasoning }
+            continue
           }
-          if (Array.isArray(result.images)) images = result.images
-        })
-        .catch((error: unknown) => { failure = error instanceof Error ? error : new Error(String(error)) })
-        .finally(() => { done = true })
+          const text = textQueue.shift()
+          if (text !== undefined) {
+            emitted = true
+            yield { type: 'text-delta', text }
+            continue
+          }
+          if (done) break
+          await Promise.race([turn, new Promise(resolve => setTimeout(resolve, 20))])
+        }
+        await turn
 
-      while (!done || textQueue.length > 0 || reasoningQueue.length > 0) {
-        const reasoning = reasoningQueue.shift()
-        if (reasoning !== undefined) {
-          yield { type: 'reasoning-delta', text: reasoning }
-          continue
+        if (failure !== undefined) {
+          const kind = classifyDoubaoFailure(failure as DoubaoUpstreamError)
+          if (blamesAccount(kind)) {
+            roster.penalise(account.id, kind, describeDoubaoFailure(failure))
+            const next = pickAccount(roster, undefined)
+            /**
+             * Step aside only if another account can answer AND nothing has been emitted.
+             *
+             * A half-streamed answer cannot be retried — the first account already opened a
+             * server-side thread and the text is on screen — so the failure is reported
+             * instead of silently restarting into a second account.
+             */
+            if (next !== undefined && !tried.has(next.id) && !emitted) {
+              account = next
+              continue
+            }
+          }
+          throw failure
         }
-        const text = textQueue.shift()
-        if (text !== undefined) {
-          yield { type: 'text-delta', text }
-          continue
+
+        roster.clear(account.id)
+        if (conversationId !== undefined) options.onConversationId?.(conversationId)
+        // An image answer arrives as a URL list; it is appended as markdown so the client
+        // renders it without knowing about Doubao's own image blocks.
+        for (const image of images) {
+          if (typeof image.url === 'string' && image.url !== '') {
+            yield { type: 'text-delta', text: `\n\n![生成图](${image.url})\n` }
+          }
         }
-        if (done) break
-        await Promise.race([turn, new Promise(resolve => setTimeout(resolve, 20))])
-      }
-      await turn
-      if (failure !== undefined) throw failure
-      // An image answer arrives as a URL list; it is appended as markdown so the client
-      // renders it without knowing about Doubao's own image blocks.
-      for (const image of images) {
-        if (typeof image.url === 'string' && image.url !== '') {
-          yield { type: 'text-delta', text: `\n\n![生成图](${image.url})\n` }
-        }
+        return
       }
     },
   }

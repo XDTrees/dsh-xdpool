@@ -16,8 +16,9 @@
  * The window length was confirmed arithmetically from the server's own
  * timestamps rather than inferred from the UI, so the mapping is pinned.
  */
-import { requireDoubaoCredentials as loadDoubaoCredentials } from './doubao-upstream.ts'
+import { credentialsOf } from './doubao-upstream.ts'
 import { buildHeaders, buildQueryUrl, QUOTA_ENDPOINT } from './doubao-upstream.ts'
+import type { DoubaoSession } from './doubao-auth.ts'
 
 /** Quota results are cached briefly so a chatty session does not hammer the API. */
 export const QUOTA_TTL_MS = 5 * 60 * 1000
@@ -172,23 +173,19 @@ export function normalizeWindow(raw: RawWindowLimit, label?: string): QuotaWindo
 const QUOTA_FAILURE_TTL_MS = 30_000
 
 /**
- * Remember a failed reading, and return it.
+ * The key a reading is filed under: the account, never the lane.
  *
- * One helper because all three failure exits (no credentials, HTTP error,
- * thrown) must go through it: a failure that skips the memo is exactly the bug
- * this exists to prevent.
+ * `uid_tt` identifies the person and survives a cookie rotation, which `sessionid` does not.
  */
-function rememberFailure(quota: DoubaoQuota): DoubaoQuota {
-  cachedFailure = quota
-  cachedFailureAt = Date.now()
-  return quota
+function quotaKeyOf(session: DoubaoSession | undefined): string {
+  const uid = session?.cookies['uid_tt']
+  if (typeof uid === 'string' && uid !== '') return uid
+  const sessionId = session?.cookies['sessionid']
+  return typeof sessionId === 'string' && sessionId !== '' ? sessionId : 'anonymous'
 }
 
 /**
- * Read the account's current quota.
- *
- * Never throws: an unreachable endpoint yields a `DoubaoQuota` carrying an
- * `error`, because a quota panel failure must not take down a chat request.
+ * The quota document, as the vendor sends it.
  */
 export interface RawQuotaData {
   window_limit_section?: {
@@ -236,13 +233,36 @@ export function evaluateQuotaExhausted(data: RawQuotaData | undefined): boolean 
   return flags.length > 0 && flags.every(Boolean)
 }
 
-export async function fetchQuota(options: { force?: boolean } = {}): Promise<DoubaoQuota> {
+/**
+ * One reading per ACCOUNT, not per lane.
+ *
+ * The cache used to be a pair of module-level variables. With one account that was invisible;
+ * the moment the pool holds two it becomes a correctness bug — account B's card would be
+ * painted with account A's windows, so a user looking at a fresh account would be told its
+ * quota was spent. The key is the same one the upstream files rotated cookies under.
+ */
+const cached = new Map<string, DoubaoQuota>()
+const cachedFailure = new Map<string, DoubaoQuota>()
+const cachedFailureAt = new Map<string, number>()
+
+/**
+ * Read ONE account's current quota.
+ *
+ * Never throws: an unreachable endpoint yields a `DoubaoQuota` carrying an `error`, because a
+ * quota panel failure must not take down a chat request. `session` names whose quota is being
+ * asked for — the lane holds a roster, so there is no "the" session to default to.
+ */
+export async function fetchQuota(options: { force?: boolean; session?: DoubaoSession } = {}): Promise<DoubaoQuota> {
   const now = Date.now()
-  if (!options.force && cached && now - cached.fetchedAt < QUOTA_TTL_MS) {
-    return cached
+  const key = quotaKeyOf(options.session)
+  const success = cached.get(key)
+  if (!options.force && success !== undefined && now - success.fetchedAt < QUOTA_TTL_MS) {
+    return success
   }
-  if (!options.force && cachedFailure !== undefined && now - cachedFailureAt < QUOTA_FAILURE_TTL_MS) {
-    return cachedFailure
+  const failure = cachedFailure.get(key)
+  const failureAt = cachedFailureAt.get(key) ?? 0
+  if (!options.force && failure !== undefined && now - failureAt < QUOTA_FAILURE_TTL_MS) {
+    return failure
   }
 
   /**
@@ -252,11 +272,11 @@ export async function fetchQuota(options: { force?: boolean } = {}): Promise<Dou
    * needs to SEE it — with "not signed in" in the error field — rather than have the panel
    * disappear or the card throw on render.
    */
-  let credentials: ReturnType<typeof loadDoubaoCredentials>
+  let credentials: ReturnType<typeof credentialsOf>
   try {
-    credentials = loadDoubaoCredentials()
+    credentials = credentialsOf(options.session)
   } catch (error: unknown) {
-    return rememberFailure({
+    return rememberFailure(key, {
       exhausted: false,
       windows: [],
       fetchedAt: now,
@@ -269,9 +289,10 @@ export async function fetchQuota(options: { force?: boolean } = {}): Promise<Dou
       method: 'POST',
       headers: buildHeaders(credentials, { 'content-type': 'application/json' }),
       body: JSON.stringify({ product_line: 'membership' }),
+      signal: AbortSignal.timeout(20_000),
     })
     if (!response.ok) {
-      return rememberFailure({ exhausted: false, windows: [], fetchedAt: now, error: `HTTP ${response.status}` })
+      return rememberFailure(key, { exhausted: false, windows: [], fetchedAt: now, error: `HTTP ${response.status}` })
     }
     const payload = (await response.json()) as { data?: RawQuotaData }
 
@@ -303,26 +324,36 @@ export async function fetchQuota(options: { force?: boolean } = {}): Promise<Dou
       quota.planActive = payload.data.member_info.hasActiveSubscription
     }
 
-    cached = quota
-    cachedFailure = undefined
+    cached.set(key, quota)
+    cachedFailure.delete(key)
+    cachedFailureAt.delete(key)
     return quota
   } catch (error) {
-    return rememberFailure({ exhausted: false, windows: [], fetchedAt: now, error: (error as Error).message })
+    return rememberFailure(key, { exhausted: false, windows: [], fetchedAt: now, error: (error as Error).message })
   }
 }
 
-let cached: DoubaoQuota | undefined
-/** The last FAILED reading, reused for {@link QUOTA_FAILURE_TTL_MS}. */
-let cachedFailure: DoubaoQuota | undefined
-let cachedFailureAt = 0
+/** Remember a failed reading for ONE account, and return it. */
+function rememberFailure(key: string, quota: DoubaoQuota): DoubaoQuota {
+  cachedFailure.set(key, quota)
+  cachedFailureAt.set(key, Date.now())
+  return quota
+}
 
-/** Drop the cached reading so the next call hits the server. */
-export function invalidateQuotaCache(): void {
-  cached = undefined
-  // A forced refresh is the user saying "the panel is wrong": it must not be
-  // answered from the failure memo either.
-  cachedFailure = undefined
-  cachedFailureAt = 0
+/** Drop the cached readings so the next call hits the server. */
+export function invalidateQuotaCache(session?: DoubaoSession): void {
+  if (session === undefined) {
+    // A forced refresh is the user saying "the panel is wrong": it must not be
+    // answered from the failure memo either, for any account.
+    cached.clear()
+    cachedFailure.clear()
+    cachedFailureAt.clear()
+    return
+  }
+  const key = quotaKeyOf(session)
+  cached.delete(key)
+  cachedFailure.delete(key)
+  cachedFailureAt.delete(key)
 }
 
 /** Convenience lookup for a specific window. */

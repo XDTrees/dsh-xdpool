@@ -54,7 +54,23 @@ const CLIENT_PARAMS = {
   'use-olympus-account': '1',
 } as const
 
-let cached: { at: number; models: readonly DoubaoModelInfo[] } | undefined
+/**
+ * The last live listing, PER ACCOUNT.
+ *
+ * A single module-level cache was invisible while the lane held one session; with a roster it
+ * is a correctness bug in the same family as the quota cache — account B's picker would be
+ * answered from account A's menu, and a plan that publishes fewer models would appear to have
+ * them. Keyed on `uid_tt`, the cookie that survives a rotation.
+ */
+const cached = new Map<string, { at: number; models: readonly DoubaoModelInfo[] }>()
+
+/** The key a listing is filed under. */
+function cacheKeyOf(session: DoubaoSession): string {
+  const uid = session.cookies['uid_tt']
+  if (typeof uid === 'string' && uid !== '') return uid
+  const sessionId = session.cookies['sessionid']
+  return typeof sessionId === 'string' && sessionId !== '' ? sessionId : 'anonymous'
+}
 
 /** A model row as the endpoint reports it. */
 interface RawModel {
@@ -77,8 +93,10 @@ export async function fetchLiveModels(
   options: { force?: boolean; now?: number } = {},
 ): Promise<readonly DoubaoModelInfo[]> {
   const now = options.now ?? Date.now()
-  if (options.force !== true && cached !== undefined && now - cached.at < TTL_MS) return cached.models
   if (session === undefined || !sessionUsable(session)) return DOUBAO_MODELS
+  const key = cacheKeyOf(session)
+  const hit = cached.get(key)
+  if (options.force !== true && hit !== undefined && now - hit.at < TTL_MS) return hit.models
 
   const params = new URLSearchParams({ ...CLIENT_PARAMS, web_tab_id: crypto.randomUUID() })
   let raw: unknown
@@ -139,7 +157,7 @@ export async function fetchLiveModels(
     byId.set(model.id, model)
   }
   const models = [...byId.values()]
-  cached = { at: now, models }
+  cached.set(key, { at: now, models })
   return models
 }
 
@@ -197,7 +215,16 @@ function badgeOf(tagList: unknown): string | undefined {
   return undefined
 }
 
-/** Drop the cache, for a test or after a sign-out. */
-export function resetLiveModelsCache(): void {
-  cached = undefined
+/**
+ * Drop the listings, for one account or all of them.
+ *
+ * A sign-out must clear only its own entry: another account's menu is still valid, and dropping
+ * everything would make the picker re-ask for a pool of accounts every time one is removed.
+ */
+export function resetLiveModelsCache(session?: DoubaoSession): void {
+  if (session === undefined) {
+    cached.clear()
+    return
+  }
+  cached.delete(cacheKeyOf(session))
 }

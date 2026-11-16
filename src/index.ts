@@ -11,9 +11,11 @@ import { registerDoubaoRoutes } from './doubao-routes.ts'
 import { createDoubaoAutomation } from './doubao-automation.ts'
 import { DoubaoHostAdapter, DOUBAO_PROVIDER_ID } from './doubao-host-adapter.ts'
 import { DOUBAO_MODELS } from './doubao-catalog.ts'
-import { readStoredSession, removeStoredSession, writeStoredSession } from './doubao-store.ts'
-import { setDoubaoSession } from './doubao-upstream.ts'
-import type { DoubaoSession } from './doubao-auth.ts'
+import { readStoredAccounts, removeStoredAccounts, writeStoredAccounts } from './doubao-store.ts'
+import { createDoubaoRoster, entriesOf } from './doubao-roster.ts'
+import { invalidateRenewals } from './doubao-upstream.ts'
+import { invalidateQuotaCache } from './doubao-quota.ts'
+import { resetLiveModelsCache } from './doubao-catalog-live.ts'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -1230,44 +1232,56 @@ function canonicalJson(value: unknown): string {
    * lands. Restoring it from disk is what makes a restart keep the lane working.
    */
   /**
-   * The Doubao session.
+   * The Doubao accounts, in memory for the requests that read them.
    *
-   * `undefined` until a sign-in lands or the stored one is restored. The lane reads it per
-   * call, so a sign-in that happens after startup is visible on the next request without a
-   * restart — and a rejection shows the "sign in again" sentence rather than an empty list.
+   * A ROSTER rather than one session (#171). The lane used to hold a single session, which is
+   * why signing a second Doubao account displaced the first: there was exactly one place to put
+   * a jar, so the new one overwrote it. `doubao-roster.ts` owns the list, the per-account
+   * browser slots and the failure cooldowns; this file only wires it.
+   *
+   * Restoring from disk is what makes a restart keep every account working, and it is
+   * deliberately not awaited — the plugin must not block its own start on a disk read.
    */
-  let doubaoSession: DoubaoSession | undefined
-
-  /** Point every reader at a session: the lane, and the upstream's own holder. */
-  const adoptDoubaoSession = (session: DoubaoSession | undefined): void => {
-    doubaoSession = session
-    setDoubaoSession(session)
+  const doubaoRoster = createDoubaoRoster()
+  void readStoredAccounts().then((stored) => {
+    if (stored.length > 0) doubaoRoster.replace(stored)
+  })
+  /**
+   * Write the roster back, coalescing concurrent writes into one chain.
+   *
+   * Every mutation goes through here rather than a fire-and-forget write per route: a sign-in
+   * that lands while a card poll is adopting a jar would otherwise interleave two half-written
+   * files, and the store's atomic rename only protects a SINGLE write.
+   */
+  let doubaoWrite: Promise<void> | undefined
+  const persistDoubaoRoster = (): void => {
+    const entries = entriesOf(doubaoRoster.list())
+    doubaoWrite = (doubaoWrite ?? Promise.resolve())
+      .then(async () => {
+        if (entries.length === 0) {
+          await removeStoredAccounts()
+          return
+        }
+        await writeStoredAccounts(entries)
+      })
+      .catch((error: unknown) => {
+        ctx.logger.warn('dsh-xdpool: could not persist the Doubao accounts', error)
+      })
   }
 
-  /**
-   * Restore the session written by an earlier run.
-   *
-   * Deliberately at apply time and deliberately not awaited: the plugin must not block its
-   * own start on a disk read, and a missing file is the ordinary "not signed in" state rather
-   * than a failure. `adoptDoubaoSession` publishes it as soon as it arrives, which is before
-   * any request can arrive.
-   */
-  void readStoredSession().then((stored) => {
-    if (stored !== undefined) adoptDoubaoSession(stored)
-  })
-
   const doubaoLlm = createDoubaoLlm({
-    session: () => doubaoSession,
+    roster: () => doubaoRoster,
   })
 
   /**
    * Doubao's credit automation.
    *
-   * Created beside the lane because both read the same session: a sign-in that lands while the
-   * automation is armed must be picked up on the next pass without anything being re-wired.
+   * Created beside the lane because both read the same roster: a sign-in that lands while the
+   * automation is armed must be picked up on the next pass without anything being re-wired,
+   * and a second account must be walked rather than ignored.
    */
   const doubaoAutomation = createDoubaoAutomation({
-    session: () => doubaoSession,
+    roster: () => doubaoRoster,
     logger: ctx.logger,
   })
   /** The ids Doubao's catalogue knows, so `stream` can tell its models from the host's. */
@@ -1528,15 +1542,48 @@ function canonicalJson(value: unknown): string {
      * something the pack can answer for a vendor it has no adapter for.
      */
     registerDoubaoRoutes(webCtx, {
-      session: () => doubaoSession,
+      roster: () => doubaoRoster,
       trustedHosts,
-      save: (session) => {
-        adoptDoubaoSession(session)
-        void writeStoredSession(session)
+      // The routes mutate the roster; persisting is this side's job, because the store is a
+      // file this process owns rather than something a route should know how to write.
+      save: () => { persistDoubaoRoster() },
+      /**
+       * Forget one account, or all of them.
+       *
+       * Removing one MUST NOT sign the others out — that was the single-account assumption
+       * showing through (#171), and with two accounts it meant deleting the second one killed
+       * the first.
+       */
+      clear: (id) => {
+        /**
+         * Every per-account cache goes with the account.
+         *
+         * Three of them hold a half of one credential or one plan's facts: rotated cookies,
+         * the quota reading, and the model listing. Leaving any behind means a NEW account
+         * could inherit the old one's numbers under a recycled key, and the card would show a
+         * spend/limit that belongs to nobody.
+         */
+        if (id === undefined) {
+          for (const account of doubaoRoster.list()) {
+            invalidateRenewals(account.id)
+            invalidateQuotaCache(account.session)
+            resetLiveModelsCache(account.session)
+          }
+          doubaoRoster.replace([])
+        } else {
+          const account = doubaoRoster.get(id)
+          if (account !== undefined) {
+            invalidateRenewals(account.id)
+            invalidateQuotaCache(account.session)
+            resetLiveModelsCache(account.session)
+          }
+          doubaoRoster.remove(id)
+        }
+        persistDoubaoRoster()
       },
-      clear: () => {
-        adoptDoubaoSession(undefined)
-        void removeStoredSession()
+      setEnabled: (id, enabled) => {
+        doubaoRoster.setDisabled(id, !enabled)
+        persistDoubaoRoster()
       },
       automation: () => doubaoAutomation,
     })
@@ -2148,7 +2195,7 @@ function canonicalJson(value: unknown): string {
            */
           releaseAdapterDoubao = ctx.llm.registerAdapter(
             [DOUBAO_PROVIDER_ID],
-            new DoubaoHostAdapter({ session: () => doubaoSession }),
+            new DoubaoHostAdapter({ roster: () => doubaoRoster }),
           )
         } catch (error: unknown) {
           // An adapter that cannot be created is not survivable — the picker
