@@ -431,7 +431,12 @@ describe('relay route', () => {
     expect(at).toBeGreaterThan(-1)
     const body = source.slice(at, at + 900)
     expect(body).toContain("req.method !== 'GET' && req.method !== 'POST'")
-    expect(body).toContain('loopbackOrigin(req)')
+    /**
+     * The gate is now `originTrusted`, which accepts loopback, the host's own `trustedHosts`,
+     * and a same-origin request behind a reverse proxy — `loopbackOrigin` refused all but the
+     * first, which is why every button answered 403 over Tailscale (#164).
+     */
+    expect(body).toContain('originTrusted(req')
     expect(body).toContain('deps.relayDocument === undefined || deps.saveRelay === undefined')
     // The disposal must be inside the cleanup closure that runs on unload, not
     // merely mentioned somewhere in the file — an unregistered listener would

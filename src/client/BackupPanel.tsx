@@ -27,6 +27,7 @@
  *
  * @module dsh-xdpool/client/BackupPanel
  */
+import { UpdatePanel } from './UpdatePanel.tsx'
 import { useCallback, useRef, useState, type ReactElement } from 'react'
 import { callPack } from './channel-rpc.ts'
 import { decryptBackup, encryptBackup, isEncryptedEnvelope, MIN_PASSWORD } from './backup-crypto.ts'
@@ -228,6 +229,9 @@ export function BackupPanel({ t }: { readonly t?: Translate | undefined }): Reac
           page block this component never loads, so the browser's own picker rendered
           beside the buttons — three "choose file" controls for one action. */}
       <style>{BACKUP_CSS}</style>
+      {/* Both are maintenance done occasionally rather than part of running the pool, which is
+          why they share a page and the tab is now 「更新与备份」. */}
+      <UpdatePanel t={t} />
       <div className="dsm-xdpool-bak-head">
         <span className="dsm-xdpool-bak-title">{t?.('backup.title') ?? '账号备份'}</span>
         <span className="dsm-xdpool-bak-warn">{t?.('backup.encrypted') ?? '加密'}</span>

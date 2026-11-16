@@ -18,6 +18,7 @@
  * @module dsh-xdpool/doubao-routes
  */
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { originTrusted, type TrustedHosts } from './origin-trust.ts'
 import type { DoubaoAutomation } from './doubao-automation.ts'
 import type { Context } from '@deepseek-ai/cordis'
 import {
@@ -45,6 +46,8 @@ export interface DoubaoRouteOptions {
   clear: () => void
   /** The credit automation, so the card can read and flip it. */
   automation: () => DoubaoAutomation
+  /** The authorities this deployment serves, so a proxied UI can sign in — see `origin-trust.ts`. */
+  trustedHosts?: () => TrustedHosts
 }
 
 /** Read a JSON body, or an empty object when there is none. */
@@ -66,25 +69,6 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-/**
- * Whether the request came from the host's own page.
- *
- * An ABSENT `Origin` is allowed and is the common case: only cross-origin requests carry the
- * header, so a same-origin request from the card sends none. Requiring it refused every call
- * the UI made — the paste arrived, was rejected `403` before any parsing ran, and the card
- * reported it as a bad cookie. A page in the user's browser driving this endpoint is
- * cross-origin by construction and always sends `Origin`, so the hostname check covers it.
- */
-function loopbackOrigin(req: IncomingMessage): boolean {
-  const origin = req.headers.origin
-  if (typeof origin !== 'string' || origin === '') return true
-  try {
-    const url = new URL(origin)
-    return url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '::1'
-  } catch {
-    return false
-  }
-}
 
 /**
  * Mount the Doubao routes.
@@ -98,7 +82,7 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       kind: 'exact',
       path: POOL_DOUBAO_SESSION_PATH,
       handler: async (req: IncomingMessage, res: ServerResponse) => {
-        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
         try {
           if (req.method === 'DELETE') {
             deps.clear()
@@ -162,7 +146,7 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       path: POOL_DOUBAO_QUOTA_PATH,
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
         const session = deps.session()
         if (session === undefined || !sessionUsable(session)) {
           return json(res, 200, { ok: false, signedIn: false, windows: [] })
@@ -193,7 +177,7 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       path: POOL_DOUBAO_MODELS_PATH,
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
         /**
          * The same list the picker gets.
          *
@@ -221,7 +205,7 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       path: POOL_DOUBAO_CAMPAIGN_PATH,
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
         const session = deps.session()
         const campaign = await fetchCampaign(session)
         return json(res, 200, { ok: campaign.error === undefined, signedIn: session !== undefined, ...campaign })
@@ -233,7 +217,7 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       path: POOL_DOUBAO_CLAIM_PATH,
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
-        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
         const result = await claimTasks(deps.session())
         return json(res, 200, { ok: result.failed === 0, ...result })
       },
@@ -243,7 +227,7 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       kind: 'exact',
       path: POOL_DOUBAO_AUTOMATION_PATH,
       handler: async (req: IncomingMessage, res: ServerResponse) => {
-        if (!loopbackOrigin(req)) return json(res, 403, { error: 'origin-not-trusted' })
+        if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
         const automation = deps.automation()
         try {
           if (req.method === 'POST') {
