@@ -6,6 +6,25 @@
  * @module dsh-xdpool/client/locales
  */
 export const en = {
+  'update.install': 'Install {version}',
+  'update.installing': 'Installing…',
+  'update.installHint': 'Downloads to this machine and updates the plugin config; takes effect after a DSH restart. Your data and accounts are unaffected.',
+  'update.installed': 'Downloaded {version} — restart DSH to apply',
+  'update.installFailed': 'Install failed',
+
+  'update.title': 'Check for updates',
+  'update.current': 'current',
+  'update.latest': 'latest',
+  'update.check': 'Check',
+  'update.checking': 'Checking…',
+  'update.upToDate': 'Up to date',
+  'update.available': 'Version {version} is available',
+  'update.howTo': 'Update it from the plugin settings; your data and accounts are unaffected.',
+  'update.failed': 'Could not check',
+
+  'channelpool.showAll': 'Show all channels',
+  'channelpool.onlyBound': 'Show bound only',
+
   'channelpool.reloadModels': 'Reload models',
   'channelpool.reloadModelsBusy': 'Reading…',
   'channelpool.reloadModelsHint': 'Read the model list (and multipliers) from the vendor again',
@@ -414,7 +433,7 @@ export const en = {
   'shell.subRouting': 'Chains that try models in order, so one busy or rate-limited model falls through to the next.',
   'shell.tabGateway': 'Gateway',
   'shell.tabDoubao': 'Doubao',
-  'shell.tabBackup': 'Backup',
+  'shell.tabBackup': 'Updates & backup',
   'shell.subGateway': 'Open the pool to the other devices on your network.',
   'gw.title': 'Gateway',
   'gw.sub': 'An OpenAI-compatible endpoint other devices on your network can point at. Off until you turn it on, and bound to this computer only until you say otherwise.',
@@ -640,6 +659,25 @@ export const en = {
 } as const
 export type XdPoolSettingsKey = keyof typeof en
 export const zh: Record<XdPoolSettingsKey, string> = {
+  'update.install': '安装 {version}',
+  'update.installing': '安装中…',
+  'update.installHint': '下载到本机并写入插件配置，重启 DSH 后生效；数据和账号不受影响。',
+  'update.installed': '已下载 {version}，重启 DSH 后生效',
+  'update.installFailed': '安装失败',
+
+  'update.title': '检查更新',
+  'update.current': '当前',
+  'update.latest': '最新',
+  'update.check': '检查更新',
+  'update.checking': '检查中…',
+  'update.upToDate': '已是最新版本',
+  'update.available': '有新版本 {version}',
+  'update.howTo': '在插件设置里更新到该版本即可；数据和账号不受影响。',
+  'update.failed': '没能检查更新',
+
+  'channelpool.showAll': '显示全部渠道',
+  'channelpool.onlyBound': '只显示已绑定',
+
   'channelpool.reloadModels': '重新加载模型',
   'channelpool.reloadModelsBusy': '正在读取…',
   'channelpool.reloadModelsHint': '从上游重新读取这个渠道的模型列表（含倍率）',
@@ -1041,7 +1079,7 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   'shell.subRouting': '把几个模型串成一条链，按顺序试；一个忙了或被限流，就自动落到下一个。',
   'shell.tabGateway': '网关',
   'shell.tabDoubao': '豆包',
-  'shell.tabBackup': '备份',
+  'shell.tabBackup': '更新与备份',
   'shell.subGateway': '把账号池开放给同网络里的其它设备。',
   'gw.title': '网关',
   'gw.sub': '开一个 OpenAI 兼容的入口，同网络的其它设备可以指过来。默认关闭，默认只绑定本机 —— 你不改，它就一直只在你这台电脑上。',

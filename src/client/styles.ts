@@ -426,6 +426,7 @@ export const POOL_CARD_CSS = `
    model always visible, and keeping the old names on the new shapes would
    leave two rule sets fighting over one element. */
 .dsm-xdpool-cpool{display:flex;flex-direction:column;gap:10px}
+.dsm-xdpool-cpool-bar{display:flex;justify-content:flex-end;margin:0 0 8px}
 .dsm-xdpool-cpool-grid{display:flex;flex-direction:column;gap:12px;min-width:0}
 .dsm-xdpool-cpool-card{--dsm-xdpool-cpool-accent:var(--dsw-alias-brand-primary,#5686fe);position:relative;display:flex;flex-direction:column;gap:8px;padding:12px 13px 12px 15px;overflow:hidden;border:1px solid var(--dsw-alias-border-l2,#36373b);border-radius:13px;background:color-mix(in srgb, var(--dsw-alias-bg-layer-3,#2a2c33) 80%, transparent);box-shadow:inset 0 1px 0 rgb(255 255 255 / 6%), 0 1px 2px rgb(0 0 0 / 6%);transition:transform .22s cubic-bezier(.32,.72,0,1),box-shadow .24s ease,border-color .2s ease}
 .dsm-xdpool-cpool-card:hover{transform:translateY(-3px);border-color:color-mix(in srgb, var(--dsm-xdpool-cpool-accent,#5686fe) 55%, var(--dsw-alias-border-l2,#36373b));box-shadow:inset 0 1px 0 rgb(255 255 255 / 8%),0 18px 40px rgb(0 0 0 / 15%)}
@@ -1626,4 +1627,19 @@ export const BACKUP_CSS = `
 .dsm-xdpool-bak-clear:hover{background:color-mix(in srgb, var(--dsw-alias-label-primary,#e8eaf0) 12%, transparent);color:var(--dsw-alias-label-primary,#e8eaf0)}
 .dsm-xdpool-bak-note{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-success-primary,#22a06b)}
 .dsm-xdpool-bak-error{margin:0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-error-primary,#e5534b)}
+.dsm-xdpool-update{display:flex;flex-direction:column;gap:8px;margin:0 0 14px;padding:12px 14px;border-radius:12px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#ffffff1f) 82%, transparent);background:color-mix(in srgb, var(--dsw-alias-bg-layer-2,#1c1e22) 60%, transparent)}
+.dsm-xdpool-update-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dsm-xdpool-update-title{font-size:13px;font-weight:650;color:var(--dsw-alias-label-primary,#e8eaf0)}
+.dsm-xdpool-update-versions{font-size:11.5px;color:var(--dsw-alias-label-tertiary,#8a90a0);font-variant-numeric:tabular-nums}
+.dsm-xdpool-update-versions b{color:var(--dsw-alias-label-secondary,#c6c9d0);font-weight:600}
+.dsm-xdpool-update-sep{margin:0 5px;opacity:.6}
+.dsm-xdpool-update-head .dsm-xdpool-btn{margin-left:auto}
+.dsm-xdpool-update-current{margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-state-success-primary,#22a06b)}
+.dsm-xdpool-update-newer{margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-state-warning-primary,#d99a2b)}
+.dsm-xdpool-update-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dsm-xdpool-update-hint{font-size:10.5px;line-height:15px;color:var(--dsw-alias-label-tertiary,#8a90a0)}
+.dsm-xdpool-update-error{margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-state-error-primary,#e5534b)}
 `
+
+/* The update check, above the backup controls. Same card treatment as the panels below it, so
+   the page reads as one list of maintenance actions rather than two unrelated blocks. */
