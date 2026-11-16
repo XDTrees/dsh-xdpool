@@ -215,6 +215,7 @@ export function accountsFrom(envelope: ChannelRpcEnvelope): ChannelAccount[] {
     const provider = (entry as { provider?: unknown }).provider
     const expiresAt = (entry as { expiresAt?: unknown }).expiresAt
     const refreshable = (entry as { refreshable?: unknown }).refreshable
+    const createdAt = (entry as { createdAt?: unknown }).createdAt
     rows.push({
       id,
       provider: typeof provider === 'string' ? provider : '',
@@ -225,6 +226,7 @@ export function accountsFrom(envelope: ChannelRpcEnvelope): ChannelAccount[] {
         ? { enabled: (entry as { enabled?: unknown }).enabled === true }
         : {},
       ...typeof expiresAt === 'number' && Number.isFinite(expiresAt) && expiresAt > 0 ? { expiresAt } : {},
+      ...typeof createdAt === 'number' && Number.isFinite(createdAt) && createdAt > 0 ? { createdAt } : {},
       ...refreshable === true ? { refreshable: true } : {},
     })
   }

@@ -361,6 +361,17 @@ export interface ChannelAccount {
   expiresAt?: number
   /** Whether the pack can renew this credential without a new login. */
   refreshable?: boolean
+  /**
+   * When the pack wrote this row, in epoch milliseconds.
+   *
+   * The one field that can answer "which channel did I add most recently" without
+   * guessing: the pack stamps it at `account.create` and keeps it through the
+   * rename that a completed login performs. Absent for a row the pack synthesised
+   * from a credential it found on disk with no pool entry (that path writes
+   * `createdAt: 0`), which is why the readers treat a missing or zero stamp as
+   * "unknown" rather than as "very old".
+   */
+  createdAt?: number
 }
 /** What `apply` and `inject` look like on the bundle. */
 export interface ChannelPackLogger {
