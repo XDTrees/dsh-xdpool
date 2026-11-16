@@ -85,7 +85,8 @@ import {
   type PoolWebRelayPatch,
   type PoolWebRelayStatus,
 } from './status-paths.ts'
-import { POOL_UPDATE_CHECK_PATH } from './status-paths.ts'
+import { POOL_UPDATE_CHECK_PATH, POOL_UPDATE_INSTALL_PATH } from './status-paths.ts'
+import { updateToLatest } from './update-install.ts'
 /**
  * One aggregate model row as the card renders it.
  *
@@ -1695,7 +1696,31 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
       },
     })
 
+    /**
+     * Install the newest build.
+     *
+     * `POST` only, and the BODY is ignored: the version comes from the same check the panel
+     * shows, never from the caller. An endpoint that writes `package.json` must not take a
+     * version string on trust.
+     */
+    const disposeInstall = ctx.webServer.register({
+      kind: 'exact',
+      path: POOL_UPDATE_INSTALL_PATH,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+        if (!originTrusted(req, deps.trustedHosts?.() ?? [])) {
+          return json(res, 403, { error: 'origin-not-trusted' })
+        }
+        try {
+          return json(res, 200, await updateToLatest())
+        } catch (error: unknown) {
+          return json(res, 200, { ok: false, restartRequired: false, error: safeMessage(error) })
+        }
+      },
+    })
+
     return () => {
+      disposeInstall()
       disposeUpdate()
       disposeRelay()
       disposeCombosSave()

@@ -1636,6 +1636,8 @@ export const BACKUP_CSS = `
 .dsm-xdpool-update-head .dsm-xdpool-btn{margin-left:auto}
 .dsm-xdpool-update-current{margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-state-success-primary,#22a06b)}
 .dsm-xdpool-update-newer{margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-state-warning-primary,#d99a2b)}
+.dsm-xdpool-update-acts{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.dsm-xdpool-update-hint{font-size:10.5px;line-height:15px;color:var(--dsw-alias-label-tertiary,#8a90a0)}
 .dsm-xdpool-update-error{margin:0;font-size:11.5px;line-height:17px;color:var(--dsw-alias-state-error-primary,#e5534b)}
 `
 
