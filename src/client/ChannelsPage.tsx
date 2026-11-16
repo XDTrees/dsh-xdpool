@@ -20,6 +20,7 @@ import {
 } from '../status-paths.ts'
 import type { ChannelAccount, ChannelRpcEnvelope } from '../channels.ts'
 import { accountsFrom, autoCheckinFrom, callPack, createdFrom, fetchChannels, pollFrom, providerStatusesFrom, type ChannelAutoCheckin } from './channel-rpc.ts'
+import { channelRecency, orderChannelsByRecency, readChannelAddedAt, rememberChannelAddedAt } from './channel-order.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
 import { CHANNEL_CARD_CSS } from './styles.ts'
 import { BrandTile } from './brand-tile.tsx'
@@ -83,6 +84,21 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
   const [error, setError] = useState<string | undefined>(undefined)
   const [ui, setUi] = useState<Record<string, ChannelUiState>>({})
   const [connected, setConnected] = useState<readonly ChannelAccount[]>([])
+  /**
+   * Channels this browser has added an account to, and when.
+   *
+   * The pack's own `createdAt` answers this for every channel it owns, and it is the
+   * source the ordering prefers — but it only arrives with the next `account.list`, which
+   * this page runs once a login lands. Between the click and that read the user is looking
+   * at a list where nothing moved, right after doing the one thing they came to do. This
+   * map closes that gap, and it is also the ONLY source for Doubao: that channel has no
+   * pack account row at all, so nothing on disk could ever order it.
+   *
+   * Read from `localStorage` during the first render rather than in an effect, for the same
+   * reason the shell tab is: an effect would paint the roster order and then re-sort, so the
+   * row the user came back to find would visibly jump under the cursor.
+   */
+  const [addedAt, setAddedAt] = useState<Readonly<Record<string, number>>>(() => readChannelAddedAt())
   const mounted = useRef(true)
   /** Timers for in-flight logins, keyed by channel id. */
   const timers = useRef(new Map<string, number>())
@@ -205,6 +221,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
           return
         }
         setUi(prev => ({ ...prev, [channel.id]: { phase: 'done', accountId } }))
+        setAddedAt(prev => rememberChannelAddedAt(prev, channel.id, Date.now()))
         void loadConnected().catch(() => {})
       }
       timers.current.set(channel.id, window.setInterval(() => { void tick() }, POLL_INTERVAL_MS))
@@ -243,6 +260,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
           if (!mounted.current) return
           if (body?.signedIn === true) {
             setUi(prev => ({ ...prev, [channel.id]: { phase: 'done' } }))
+            setAddedAt(prev => rememberChannelAddedAt(prev, channel.id, Date.now()))
             void load()
             void loadConnected()
             return
@@ -359,7 +377,26 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
     }
   }, [autoCheckin])
   const state = status?.state ?? 'pending'
-  const channels = status?.channels ?? []
+  /**
+   * The roster, re-ordered so the row the user just added an account to is at the top.
+   *
+   * The roster file is a catalogue list in alphabetical order (CodeArts first because "C"),
+   * and the page drew it verbatim — so adding an account to the ninth channel left the user
+   * scrolling past eight rows they had not touched to check that the click worked. Recency
+   * comes from two places: the pack's `createdAt` on each account (survives restarts, covers
+   * every channel the pack owns) and the "added at" stamps this browser remembers (covers the
+   * seconds before `account.list` catches up, and covers Doubao, which has no pack row).
+   * Channels with neither keep their roster order underneath — on a fresh install there is
+   * nothing to sort by, and shuffling an unconfigured list would only look random.
+   */
+  const recency = useMemo(
+    () => channelRecency(connected, addedAt),
+    [connected, addedAt],
+  )
+  const channels = useMemo(
+    () => orderChannelsByRecency(status?.channels ?? [], recency),
+    [status, recency],
+  )
   return (
     <div className="dsm-xdpool-channels">
       <style>{CHANNEL_CARD_CSS}</style>
