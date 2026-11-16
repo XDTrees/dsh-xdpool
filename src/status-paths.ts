@@ -60,6 +60,26 @@ export const POOL_CREDIT_RESERVE_PATH = '/plugins/dsh-xdpool/accounts/credit-res
  * `?days=N` limits the window; the ledger keeps 90 days.
  */
 export const POOL_CREDITS_SPEND_PATH = '/plugins/dsh-xdpool/credits/spend'
+
+/**
+ * The dashboard's own document: real credit spend and grants per account and day.
+ *
+ * A ROUTE OF ITS OWN, not a field on {@link POOL_STATUS_PATH}, and not a reuse of
+ * {@link POOL_CREDITS_SPEND_PATH}. Three reasons, all of them measured:
+ *
+ *   - it costs the upstream meter ~30 requests per account (the window has to be
+ *     walked a day at a time; the meter rate-limits a burst with a bare 429), so
+ *     it must never ride the 30-second status poll;
+ *   - it is the only figure in the plugin taken from what the vendor actually
+ *     CHARGED rather than from tokens × a coefficient, and folding it into the
+ *     token ledger's route would let the two be confused;
+ *   - the payload is a month of per-day, per-account rows, which is orders of
+ *     magnitude larger than any other document the card reads.
+ *
+ * The host caches the assembled document for a few minutes; `?refresh=1` forces a
+ * re-read, which is what the panel's own "refresh" button sends.
+ */
+export const POOL_SPEND_REPORT_PATH = '/plugins/dsh-xdpool/spend/report'
 /**
  * Name the account to try first, or hand the choice back to the strategy.
  *

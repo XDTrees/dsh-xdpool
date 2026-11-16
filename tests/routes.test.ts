@@ -26,6 +26,7 @@ import {
   POOL_MODEL_PROBE_PATH,
   POOL_RESCAN_PATH,
   POOL_RESET_COOLDOWN_PATH,
+  POOL_SPEND_REPORT_PATH,
   POOL_STATUS_PATH,
 } from '../src/status-paths.ts'
 import type {
@@ -542,4 +543,104 @@ describe('the per-model routes', () => {
       expect(routes.has(path), path).toBe(false)
     }
   })
+
+/**
+ * The dashboard's own route.
+ *
+ * It is the one route in this plugin that talks to the billing meter, and the
+ * meter rate-limits a burst with a bare 429 — so the two things worth pinning
+ * are not the payload shape (that belongs to `spend-report.test.ts`) but the
+ * guards around it: it must be GET-only, it must hand the host both knobs
+ * (`days` and `refresh`) rather than deciding for itself, and it must answer 503
+ * rather than an empty document when the host did not wire it.
+ */
+describe('the dashboard route', () => {
+  /** Mount with an optional dep, so "wired" and "unwired" are both reachable. */
+  async function mountSpend(
+    spendReport?: (days: number | undefined, refresh: boolean) => Promise<unknown>,
+  ): Promise<Map<string, unknown>> {
+    const pool = new WorkBuddyAccountPool({ authDirs: [await fakeAuthDir(1)], logger: { warn() {} } })
+    await pool.scan()
+    const routes = new Map<string, unknown>()
+    const { ctx } = fakeContext(routes)
+    registerPoolStatusRoute(ctx as never, {
+      pool,
+      catalogs: { cn: new WorkBuddyCatalog(), global: new WorkBuddyCatalog() },
+      client: new WorkBuddyUpstreamClient(),
+      saveSelection() {},
+      setCreditReserve() {},
+      ...spendReport === undefined ? {} : { spendReport },
+    })
+    return routes
+  }
+
+  function getReq(url: string): unknown {
+    return {
+      method: 'GET',
+      url,
+      headers: { origin: 'http://localhost:3000' },
+      on() {},
+      destroy() {},
+    }
+  }
+
+  /** A response stand-in that records what the handler wrote. */
+  function capture(): { res: unknown; read: () => { status: number; body: Record<string, unknown> } } {
+    const state = { status: 0, body: undefined as unknown }
+    const res = {
+      writeHead(status: number) { state.status = status },
+      end(payload: string) { state.body = JSON.parse(payload) },
+    }
+    return { res, read: () => ({ status: state.status, body: state.body as Record<string, unknown> }) }
+  }
+
+  it('is registered, GET-only, and passes both knobs through', async () => {
+    const seen: { days: number | undefined; refresh: boolean }[] = []
+    const routes = await mountSpend(async (days, refresh) => {
+      seen.push({ days, refresh })
+      return { ok: true }
+    })
+    const handler = routes.get(POOL_SPEND_REPORT_PATH) as (req: unknown, res: unknown) => Promise<void>
+    expect(typeof handler).toBe('function')
+    const ok = capture()
+    await handler(getReq(`${POOL_SPEND_REPORT_PATH}?days=7&refresh=1`), ok.res)
+    expect(ok.read().status).toBe(200)
+    // Both knobs arrive intact. A handler that read only `days` would make the
+    // panel's refresh button silently do nothing, which is worse than absent.
+    expect(seen).toEqual([{ days: 7, refresh: true }])
+    // A missing `days` is "whatever the meter keeps", not zero.
+    const bare = capture()
+    await handler(getReq(POOL_SPEND_REPORT_PATH), bare.res)
+    expect(seen[1]).toEqual({ days: undefined, refresh: false })
+    // Anything but GET is refused: this route reads the user's own billing.
+    const rejected = capture()
+    await handler(
+      { method: 'POST', url: POOL_SPEND_REPORT_PATH, headers: { origin: 'http://localhost:3000' }, on() {}, destroy() {} },
+      rejected.res,
+    )
+    expect(rejected.read().status).toBe(405)
+    expect(seen).toHaveLength(2)
+  })
+
+  it('answers 503 rather than an empty dashboard when unwired', async () => {
+    // An empty document would render as "you spent nothing", which is a claim
+    // this build cannot make.
+    const routes = await mountSpend()
+    const handler = routes.get(POOL_SPEND_REPORT_PATH) as (req: unknown, res: unknown) => Promise<void>
+    const { res, read } = capture()
+    await handler(getReq(POOL_SPEND_REPORT_PATH), res)
+    expect(read().status).toBe(503)
+  })
+
+  it('refuses a request from an untrusted origin', async () => {
+    const routes = await mountSpend(async () => ({ ok: true }))
+    const handler = routes.get(POOL_SPEND_REPORT_PATH) as (req: unknown, res: unknown) => Promise<void>
+    const { res, read } = capture()
+    await handler(
+      { method: 'GET', url: POOL_SPEND_REPORT_PATH, headers: { origin: 'http://evil.example' }, on() {}, destroy() {} },
+      res,
+    )
+    expect(read().status).toBe(403)
+  })
+})
 })

@@ -235,6 +235,7 @@ import { channelListableAsRows, createWorkBuddyShim, type WorkBuddyShim } from '
 import { createChannelLane, type ChannelLaneLlm } from './channel-lane.ts'
 import { backfillUsageFromLedger, readCreditSpend } from './credit-report.ts'
 import { ratesFor, type CreditRates } from './credits.ts'
+import { readSpendReport, SPEND_MAX_DAYS, type SpendReport } from './spend-report.ts'
 import { createPoolRelay, newRelayKey, relayDocumentOf, RELAY_DEFAULT_PORT, RELAY_HOSTS, type RelaySettings } from './relay.ts'
 import { UsageRecorder } from './stats.ts'
 import { buildStatus } from './status.ts'
@@ -1519,6 +1520,32 @@ function canonicalJson(value: unknown): string {
     }
   }
 
+  /**
+   * The dashboard document, held between reads.
+   *
+   * Declared out here rather than inside the route closure because the CLI and
+   * any second mounting of the routes should share one cache: the expensive half
+   * is the upstream meter walk, and it does not care which entry point asked.
+   */
+  let spendCache: { days: number; at: number; report: SpendReport } | undefined
+  /**
+   * How long a cached dashboard is served without asking the meter again.
+   *
+   * Not a TTL in the usual sense: the numbers only change when a request is
+   * served, and the pool card's own poll already shows live credits. Five minutes
+   * is short enough that a user who spends and comes back sees the charge, and
+   * long enough that flicking between tabs costs nothing.
+   */
+  const SPEND_CACHE_MS = 5 * 60_000
+  /**
+   * A read already in progress, so two panels opening together share one walk.
+   *
+   * Without this, two mounts of the settings card would each start a full meter
+   * walk, and the meter answers a burst with a bare 429 for both — the second
+   * reader would turn the first one's success into a failure.
+   */
+  let spendInFlight: { days: number; promise: Promise<SpendReport> } | undefined
+
   ctx.inject(['webServer'], (webCtx) => {
     /**
      * Doubao's three routes.
@@ -1891,6 +1918,61 @@ function canonicalJson(value: unknown): string {
     },
     /** Estimated credit spend per channel, for the composer strip. */
     creditsSpend: async (days: number | undefined) => await creditSpend(days),
+    /**
+     * The dashboard's real credit history.
+     *
+     * CACHED, and the cache is the point rather than an optimisation. One read of
+     * this document walks the billing meter page by page for every account: nine
+     * accounts over 31 days is a couple of dozen upstream requests, each of which
+     * the meter rate-limits if it is asked too often. A page that re-read it on
+     * every mount — or on a tab switch, or a window reload — would spend the
+     * user's own rate limit to draw a chart that had not changed.
+     *
+     * The cache is keyed by window and holds the last GOOD answer with the time
+     * it was taken. It does not expire on a timer: what makes a stale dashboard
+     * wrong is a new charge, and a charge only happens when a request is served,
+     * so a few minutes of staleness is a few minutes in which the numbers are
+     * still true. `refresh=1` bypasses it entirely — that is the panel's button.
+     *
+     * A FAILED read does not overwrite a good answer. An empty dashboard is worse
+     * than an old one, and the failure is visible on its own via `failedAccounts`.
+     */
+    spendReport: async (days: number | undefined, refresh: boolean) => {
+      const requested = days === undefined ? SPEND_MAX_DAYS : Math.max(1, Math.min(days, SPEND_MAX_DAYS))
+      const cached = spendCache
+      if (!refresh && cached !== undefined && cached.days === requested
+        && Date.now() - cached.at < SPEND_CACHE_MS) {
+        return cached.report
+      }
+      // One reader at a time. Two panels opening together would otherwise double
+      // the upstream walk and earn a 429 for both.
+      if (spendInFlight !== undefined && spendInFlight.days === requested) {
+        return await spendInFlight.promise
+      }
+      const accounts = core.pool.list().map(account => ({
+        id: account.id,
+        label: account.label,
+        credential: account.credential,
+      }))
+      const promise = readSpendReport({
+        client: core.client,
+        accounts,
+        days: requested,
+        logger: ctx.logger,
+      }).then(report => {
+        // Only a report that actually read something is worth caching: caching an
+        // all-failed document would keep showing it for minutes after the meter
+        // recovered.
+        if (report.failedAccounts < report.accounts.length || report.accounts.length === 0) {
+          spendCache = { days: requested, at: Date.now(), report }
+        }
+        return report
+      }).finally(() => {
+        if (spendInFlight?.promise === promise) spendInFlight = undefined
+      })
+      spendInFlight = { days: requested, promise }
+      return await promise
+    },
       /**
      * Relay state plus the gateway's model picker.
      *

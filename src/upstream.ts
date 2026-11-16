@@ -130,6 +130,118 @@ export interface WorkBuddyCredits {
   nearestExpiryMs?: number
 }
 
+/**
+ * One request as the billing meter recorded it.
+ *
+ * Only the fields the dashboard reads are named. The upstream also returns the
+ * PROMPT (`inputTrunc`, `input`), which is deliberately dropped at the parse
+ * boundary rather than carried around and forgotten about: a dashboard is a
+ * read-only view of a quota, and a copy of every prompt is not something to hold
+ * in memory for it.
+ */
+export interface WorkBuddyUsageEntry {
+  /** Stable upstream id; the only safe de-duplication key across pages. */
+  requestId: string
+  /** Credits this one request was charged. `0` for free models. */
+  credit: number
+  /** Model id as billed. */
+  model: string
+  /** Epoch ms of the request, in local time (the meter reports local stamps). */
+  at: number
+}
+
+/**
+ * One billing package, raw and unjudged.
+ *
+ * {@link WorkBuddyCreditPackage} is the CARD's shape: it drops expired and
+ * empty packages because a balance line has no room for them. The dashboard
+ * cannot work like that — "earned this month" is the sum of packages CREATED in
+ * the window, most of which are already spent or expired by the time it renders
+ * — so it needs the raw rows, including the ones a balance query would filter
+ * out.
+ */
+export interface WorkBuddyResourceRow {
+  packageName: string
+  /** `CapacityType`: 1 one-off, 2 subscription, 4 monthly. Decides which pair counts. */
+  capacityType: number
+  /** Epoch ms the package was granted. */
+  createMs: number
+  /** Credits the CURRENT cycle allows, and what is left of it. */
+  cycleSize: number
+  cycleRemain: number
+  /** Credits the package allows in total (all cycles). */
+  totalSize: number
+  totalRemain: number
+  /** Current cycle bounds, epoch ms; absent for a one-off package. */
+  cycleStartMs?: number
+  cycleEndMs?: number
+  /** Upstream `Status`: 3 is expired / exhausted. */
+  status: number
+  /** Where deduction stops, epoch ms. The authoritative expiry for type 2. */
+  deductionEndMs?: number
+  expiredMs?: number
+}
+
+/** One page request against the per-request billing meter. */
+export interface WorkBuddyUsageQuery {
+  /** Inclusive lower bound, epoch ms. */
+  startMs: number
+  /** Inclusive upper bound, epoch ms. */
+  endMs: number
+  /** Rows asked for. The upstream clamps this at 3000. */
+  pageSize: number
+}
+
+/**
+ * One page of the meter.
+ *
+ * `count` is the RAW row count, not `entries.length`: a page whose rows all
+ * failed to parse would otherwise look like the end of the data and silently
+ * truncate a window. The caller decides "done" from `count`, which is the only
+ * number the upstream actually controls.
+ */
+export type WorkBuddyUsagePage =
+  | { ok: true; entries: readonly WorkBuddyUsageEntry[]; count: number }
+  | { ok: false; retryable: boolean; reason: string }
+
+/** The meter's stamp format, in LOCAL time: `YYYY-MM-DD HH:MM:SS`. */
+export function formatMeterStamp(ms: number): string {
+  const date = new Date(ms)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${String(date.getFullYear())}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+/**
+ * Parse a meter stamp, or undefined when it is not one.
+ *
+ * The meter answers local wall-clock time with no zone, so it is read as local —
+ * the same reading `formatMeterStamp` writes. Treating it as UTC would shift
+ * every row by the machine's offset and move charges across day boundaries,
+ * which is exactly the arithmetic the dashboard is built on. Empty strings are
+ * legitimate here (`CycleStartTime` is `""` for a one-off package) and must come
+ * back as undefined rather than as the epoch.
+ */
+export function parseMeterStamp(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  if (trimmed === '') return undefined
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/u.exec(trimmed)
+  if (match === null) return undefined
+  const [, year, month, day, hour, minute, second] = match
+  const parsed = new Date(
+    Number(year), Number(month) - 1, Number(day),
+    Number(hour), Number(minute), Number(second),
+  ).getTime()
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+/** Spread a possibly-absent number into an optional field, under exactOptionalPropertyTypes. */
+function optionalMs<K extends string>(key: K, value: number | undefined): { [P in K]?: number } {
+  return (value === undefined ? {} : { [key]: value }) as { [P in K]?: number }
+}
+
 /** Daily check-in activity state. */
 export interface WorkBuddyCheckinStatus {
   active: boolean
@@ -1897,6 +2009,174 @@ export class WorkBuddyUpstreamClient {
       })
     }
     return { total, packages, expiringSoon, ...nearestExpiryMs === undefined ? {} : { nearestExpiryMs } }
+  }
+
+  /**
+   * One page of the per-request billing meter.
+   *
+   * WHY THIS IS A RAW READ
+   *
+   * {@link fetchCredits} answers "how much is left", which is a single number and
+   * can be normalised on the spot. This answers "what was each request charged",
+   * and the dashboard above it needs the rows themselves: it sums them per day,
+   * per account and per model, and reconciles the result against the packages.
+   * Normalising here would push that arithmetic into the caller's document
+   * builder, where a missing field has no way to say so.
+   *
+   * THREE MEASURED UPSTREAM BEHAVIOURS, all of which the caller must survive:
+   *
+   *   - the rows come back NEWEST FIRST, so a second page with the same window
+   *     answers empty (the meter has no offset — see {@link WorkBuddyUsageQuery.endMs});
+   *   - `data.total` is CLAMPED AT 3000, so it cannot be used to decide "done";
+   *   - a single day CAN exceed 3000 requests, in which case a page boundary
+   *     silently drops the rest unless the caller slides the window.
+   *
+   * Excess concurrency is refused upstream with `429 Too Many Requests` as plain
+   * text (not a JSON envelope), so it is reported as a retryable failure rather
+   * than thrown as a malformed document.
+   */
+  async fetchUsageEntries(
+    credential: WorkBuddyCredential,
+    query: WorkBuddyUsageQuery,
+    signal?: AbortSignal,
+  ): Promise<WorkBuddyUsagePage> {
+    const timeout = AbortSignal.timeout(JSON_TIMEOUT_MS)
+    const response = await this.fetchImpl(`${billingBase(credential)}/billing/meter/get-user-request-usage`, {
+      method: 'POST',
+      headers: billingHeaders(credential),
+      body: JSON.stringify({
+        startTime: formatMeterStamp(query.startMs),
+        endTime: formatMeterStamp(query.endMs),
+        pageNum: 1,
+        pageSize: query.pageSize,
+      }),
+      signal: signal === undefined ? timeout : AbortSignal.any([timeout, signal]),
+    })
+    const text = await response.text()
+    // The rate limiter answers with a bare `{"error_msg":"Too Many Requests"}`,
+    // which has no envelope and no `code`. Named separately because it is the one
+    // failure with an obvious remedy (wait and retry), and the dashboard must not
+    // print it as a broken credential.
+    if (response.status === 429) return { ok: false, retryable: true, reason: 'rate-limited' }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      return {
+        ok: false,
+        retryable: response.status >= 500,
+        reason: `non-JSON (http ${response.status}): ${text.slice(0, 120)}`,
+      }
+    }
+    if (typeof parsed !== 'object' || parsed === null) {
+      return { ok: false, retryable: false, reason: `unexpected document (http ${response.status})` }
+    }
+    const document = parsed as Record<string, unknown>
+    const code = typeof document['code'] === 'number' ? document['code'] : 0
+    if (code !== 0) {
+      return {
+        ok: false,
+        retryable: false,
+        reason: `code ${String(code)} ${String(document['msg'] ?? '')}`.trim(),
+      }
+    }
+    const data = typeof document['data'] === 'object' && document['data'] !== null
+      ? document['data'] as Record<string, unknown>
+      : {}
+    const rows = Array.isArray(data['data']) ? data['data'] : []
+    const entries: WorkBuddyUsageEntry[] = []
+    for (const raw of rows) {
+      if (typeof raw !== 'object' || raw === null) continue
+      const row = raw as Record<string, unknown>
+      const at = parseMeterStamp(row['requestTime'] ?? row['request_time'])
+      if (at === undefined) continue
+      const requestId = typeof row['requestId'] === 'string'
+        ? row['requestId']
+        : `${String(row['requestTime'] ?? '')}|${String(row['model'] ?? '')}|${String(at)}`
+      entries.push({
+        requestId,
+        credit: typeof row['credit'] === 'number' && Number.isFinite(row['credit']) ? row['credit'] : 0,
+        model: typeof row['model'] === 'string' && row['model'] !== '' ? row['model'] : '(unknown)',
+        at,
+      })
+    }
+    return { ok: true, entries, count: rows.length }
+  }
+
+  /**
+   * Every billing package this credential holds, raw.
+   *
+   * The window is deliberately wide on both sides. `fetchCredits` asks for
+   * packages ending in the FUTURE, because a balance only counts what can still
+   * be spent; a dashboard asking "what did I gain this month" needs the ones that
+   * already ended too, or the first day of the window reads as zero income. The
+   * upstream caps this list at `PageSize`, so it is asked for once at 300 and the
+   * caller treats a full page as "there may be more" rather than as the truth.
+   */
+  async fetchResourceRows(
+    credential: WorkBuddyCredential,
+    range: { beginMs: number; endMs: number },
+    signal?: AbortSignal,
+  ): Promise<{ ok: true; rows: readonly WorkBuddyResourceRow[]; truncated: boolean } | { ok: false; reason: string }> {
+    const timeout = AbortSignal.timeout(JSON_TIMEOUT_MS)
+    const response = await this.fetchImpl(`${billingBase(credential)}/v2/billing/meter/get-user-resource`, {
+      method: 'POST',
+      headers: billingHeaders(credential),
+      body: JSON.stringify({
+        PageNumber: 1,
+        PageSize: 300,
+        ProductCode: 'p_tcaca',
+        // `[0, 3]` = active and expired, which is the widest set the meter
+        // answers. Asking for active only hid every grant older than its own
+        // exhaustion, and a day whose packages were all spent by midnight then
+        // read as a day with no income.
+        Status: [0, 3],
+        PackageEndTimeRangeBegin: formatMeterStamp(range.beginMs),
+        PackageEndTimeRangeEnd: formatMeterStamp(range.endMs),
+      }),
+      signal: signal === undefined ? timeout : AbortSignal.any([timeout, signal]),
+    })
+    const envelope = await readEnvelope(response)
+    if (!response.ok || envelope.code !== 0) throw envelopeError(response.status, envelope)
+    const wrapper = typeof envelope.data === 'object' && envelope.data !== null
+      ? envelope.data as Record<string, unknown>
+      : {}
+    const inner = typeof wrapper['Response'] === 'object' && wrapper['Response'] !== null
+      ? (wrapper['Response'] as Record<string, unknown>)['Data']
+      : undefined
+    const accounts = typeof inner === 'object' && inner !== null
+      ? (inner as Record<string, unknown>)['Accounts']
+      : undefined
+    const list = Array.isArray(accounts) ? accounts : []
+    const rows: WorkBuddyResourceRow[] = []
+    for (const raw of list) {
+      if (typeof raw !== 'object' || raw === null) continue
+      const row = raw as Record<string, unknown>
+      const number = (key: string): number => (typeof row[key] === 'number' && Number.isFinite(row[key]) ? row[key] as number : 0)
+      const precise = (key: string): number => {
+        const value = row[`${key}Precise`]
+        return typeof value === 'number' && Number.isFinite(value) ? value : number(key)
+      }
+      rows.push({
+        packageName: typeof row['PackageName'] === 'string' && row['PackageName'] !== ''
+          ? row['PackageName']
+          : typeof row['SubPackageName'] === 'string' && row['SubPackageName'] !== ''
+            ? row['SubPackageName']
+            : '积分包',
+        capacityType: number('CapacityType'),
+        createMs: number('CreateTime'),
+        cycleSize: precise('CycleCapacitySize'),
+        cycleRemain: precise('CycleCapacityRemain'),
+        totalSize: precise('CapacitySize'),
+        totalRemain: precise('CapacityRemain'),
+        ...optionalMs('cycleStartMs', parseMeterStamp(row['CycleStartTime'])),
+        ...optionalMs('cycleEndMs', parseMeterStamp(row['CycleEndTime'])),
+        status: number('Status'),
+        ...optionalMs('deductionEndMs', number('DeductionEndTime') > 0 ? number('DeductionEndTime') : undefined),
+        ...optionalMs('expiredMs', parseMeterStamp(row['ExpiredTime'])),
+      })
+    }
+    return { ok: true, rows, truncated: list.length >= 300 }
   }
 
   /** Query today's check-in status without changing account state. */

@@ -266,6 +266,82 @@ interface WorkBuddyCredits {
   expiringSoon: number;
   nearestExpiryMs?: number;
 }
+/**
+ * One request as the billing meter recorded it.
+ *
+ * Only the fields the dashboard reads are named. The upstream also returns the
+ * PROMPT (`inputTrunc`, `input`), which is deliberately dropped at the parse
+ * boundary rather than carried around and forgotten about: a dashboard is a
+ * read-only view of a quota, and a copy of every prompt is not something to hold
+ * in memory for it.
+ */
+interface WorkBuddyUsageEntry {
+  /** Stable upstream id; the only safe de-duplication key across pages. */
+  requestId: string;
+  /** Credits this one request was charged. `0` for free models. */
+  credit: number;
+  /** Model id as billed. */
+  model: string;
+  /** Epoch ms of the request, in local time (the meter reports local stamps). */
+  at: number;
+}
+/**
+ * One billing package, raw and unjudged.
+ *
+ * {@link WorkBuddyCreditPackage} is the CARD's shape: it drops expired and
+ * empty packages because a balance line has no room for them. The dashboard
+ * cannot work like that — "earned this month" is the sum of packages CREATED in
+ * the window, most of which are already spent or expired by the time it renders
+ * — so it needs the raw rows, including the ones a balance query would filter
+ * out.
+ */
+interface WorkBuddyResourceRow {
+  packageName: string;
+  /** `CapacityType`: 1 one-off, 2 subscription, 4 monthly. Decides which pair counts. */
+  capacityType: number;
+  /** Epoch ms the package was granted. */
+  createMs: number;
+  /** Credits the CURRENT cycle allows, and what is left of it. */
+  cycleSize: number;
+  cycleRemain: number;
+  /** Credits the package allows in total (all cycles). */
+  totalSize: number;
+  totalRemain: number;
+  /** Current cycle bounds, epoch ms; absent for a one-off package. */
+  cycleStartMs?: number;
+  cycleEndMs?: number;
+  /** Upstream `Status`: 3 is expired / exhausted. */
+  status: number;
+  /** Where deduction stops, epoch ms. The authoritative expiry for type 2. */
+  deductionEndMs?: number;
+  expiredMs?: number;
+}
+/** One page request against the per-request billing meter. */
+interface WorkBuddyUsageQuery {
+  /** Inclusive lower bound, epoch ms. */
+  startMs: number;
+  /** Inclusive upper bound, epoch ms. */
+  endMs: number;
+  /** Rows asked for. The upstream clamps this at 3000. */
+  pageSize: number;
+}
+/**
+ * One page of the meter.
+ *
+ * `count` is the RAW row count, not `entries.length`: a page whose rows all
+ * failed to parse would otherwise look like the end of the data and silently
+ * truncate a window. The caller decides "done" from `count`, which is the only
+ * number the upstream actually controls.
+ */
+type WorkBuddyUsagePage = {
+  ok: true;
+  entries: readonly WorkBuddyUsageEntry[];
+  count: number;
+} | {
+  ok: false;
+  retryable: boolean;
+  reason: string;
+};
 /** Daily check-in activity state. */
 interface WorkBuddyCheckinStatus {
   active: boolean;
@@ -596,6 +672,52 @@ export declare class WorkBuddyUpstreamClient {
    * in force so a signal-less caller keeps the old behaviour exactly.
    */
   fetchCredits(credential: WorkBuddyCredential, signal?: AbortSignal): Promise<WorkBuddyCredits>;
+  /**
+   * One page of the per-request billing meter.
+   *
+   * WHY THIS IS A RAW READ
+   *
+   * {@link fetchCredits} answers "how much is left", which is a single number and
+   * can be normalised on the spot. This answers "what was each request charged",
+   * and the dashboard above it needs the rows themselves: it sums them per day,
+   * per account and per model, and reconciles the result against the packages.
+   * Normalising here would push that arithmetic into the caller's document
+   * builder, where a missing field has no way to say so.
+   *
+   * THREE MEASURED UPSTREAM BEHAVIOURS, all of which the caller must survive:
+   *
+   *   - the rows come back NEWEST FIRST, so a second page with the same window
+   *     answers empty (the meter has no offset — see {@link WorkBuddyUsageQuery.endMs});
+   *   - `data.total` is CLAMPED AT 3000, so it cannot be used to decide "done";
+   *   - a single day CAN exceed 3000 requests, in which case a page boundary
+   *     silently drops the rest unless the caller slides the window.
+   *
+   * Excess concurrency is refused upstream with `429 Too Many Requests` as plain
+   * text (not a JSON envelope), so it is reported as a retryable failure rather
+   * than thrown as a malformed document.
+   */
+  fetchUsageEntries(credential: WorkBuddyCredential, query: WorkBuddyUsageQuery, signal?: AbortSignal): Promise<WorkBuddyUsagePage>;
+  /**
+   * Every billing package this credential holds, raw.
+   *
+   * The window is deliberately wide on both sides. `fetchCredits` asks for
+   * packages ending in the FUTURE, because a balance only counts what can still
+   * be spent; a dashboard asking "what did I gain this month" needs the ones that
+   * already ended too, or the first day of the window reads as zero income. The
+   * upstream caps this list at `PageSize`, so it is asked for once at 300 and the
+   * caller treats a full page as "there may be more" rather than as the truth.
+   */
+  fetchResourceRows(credential: WorkBuddyCredential, range: {
+    beginMs: number;
+    endMs: number;
+  }, signal?: AbortSignal): Promise<{
+    ok: true;
+    rows: readonly WorkBuddyResourceRow[];
+    truncated: boolean;
+  } | {
+    ok: false;
+    reason: string;
+  }>;
   /** Query today's check-in status without changing account state. */
   fetchCheckinStatus(credential: WorkBuddyCredential): Promise<WorkBuddyCheckinStatus>;
   /** Claim today's check-in reward. The browser route guards this mutation. */
@@ -4550,6 +4672,20 @@ interface PoolStatusRouteOptions {
    * own cadence.
    */
   creditsSpend?: (days: number | undefined) => Promise<unknown>;
+  /**
+   * The dashboard document: real charges and grants, per account and per day.
+   *
+   * A thunk that takes the requested window and a refresh flag, and answers the
+   * assembled document. The host owns the caching, and owns it as
+   * "last good answer plus its timestamp" rather than as a TTL cache, because the
+   * expensive half is the upstream walk: refreshing 9 accounts × 31 days is ~280
+   * meter requests, and a panel opened twice must not pay for it twice.
+   *
+   * Absent when the host did not wire it: the route then answers 503 and the page
+   * says the dashboard is unavailable in this build, rather than rendering an
+   * empty chart.
+   */
+  spendReport?: (days: number | undefined, refresh: boolean) => Promise<unknown>;
   /**
    * The relay's current state, or undefined when this build has no relay.
    *
