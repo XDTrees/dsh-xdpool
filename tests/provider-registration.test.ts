@@ -12,7 +12,7 @@
  *     "INVALID_DIRECTORY")
  *   throw new LlmError("duplicate configurable provider", "DUPLICATE_DIRECTORY")
  *
- * We used to put the three `registerAdapter` calls and that one directory call
+ * We used to put the five `registerAdapter` calls and that one directory call
  * in a SINGLE try, with a `finally` that released every handle whenever any of
  * them was still undefined. So a rejected directory entry unwound the three
  * adapters too, the outer catch returned, and the user got a mounted settings
@@ -51,22 +51,38 @@ describe('a rejected directory entry cannot take the adapters down with it', () 
     const adapterCalls = block.match(/ctx\.llm\.registerAdapter\(/g) ?? []
     const directoryCall = block.match(/ctx\.llm\.registerConfigurableProviders\(/g) ?? []
     /**
-     * Three providers: the aggregate lane, the credential-free lane, and Doubao.
+     * Five providers: the two pool lanes (`xdpool` / `xdpool-global`), the aggregate lane, the
+     * credential-free lane, and Doubao.
      *
-     * The two pool lanes used to register here as well, under ids `xdpool` / `xdpool-global`,
-     * while the scan-login lanes registered `buddy` / `workbuddy` — two idents for one account
-     * pool, which is what put four groups in the model picker (#148). Their adapters are still
-     * built and still serve the loopback shims; only the duplicate listing entry is gone, so
-     * the count here drops to two.
+     * 2.7.2 dropped the two pool lanes to two, fixing the four-group picker of #148. That fix
+     * was a regression in disguise: `ctx.llm.listProviders()` reads the ADAPTER REGISTRY, so an
+     * unregistered id disappeared from the picker while the directory entry kept advertising
+     * it, and every saved selection or `agentDefaultModel` naming `xdpool` /
+     * `xdpool-global` started failing with `NO_ADAPTER`. The duplicate-group removal has to
+     * come from collapsing the ids or filtering the picker, neither of which costs a provider
+     * its adapter, so the count is back to five.
      */
-    expect(adapterCalls).toHaveLength(3)
+    expect(adapterCalls).toHaveLength(5)
     expect(directoryCall).toHaveLength(1)
-    // The four adapter calls must all precede the directory call: the adapters
+    // The five adapter calls must all precede the directory call: the adapters
     // have to be LIVE before the directory is offered, so a directory rejection
     // finds something already installed to keep.
     const lastAdapter = block.lastIndexOf('ctx.llm.registerAdapter(')
     const directoryAt = block.indexOf('ctx.llm.registerConfigurableProviders(')
     expect(lastAdapter).toBeLessThan(directoryAt)
+  })
+  it('registers the two pool lanes instead of leaving their ids adapterless', () => {
+    const block = registrationBlock()
+    // Issue #148's fix (2.7.2) unregistered `xdpool` / `xdpool-global` to drop two picker
+    // groups. The directory entry below kept advertising both ids, so the host listed them in
+    // settings while `listProviders()` — which reads the adapter registry — never returned
+    // them: every saved selection naming one of the two failed with `NO_ADAPTER`. A provider
+    // id may leave the PICKER, but never the registry its own directory entry points at.
+    expect(block).toContain('ctx.llm.registerAdapter(\n            [POOL_PROVIDER_BY_REGION.cn]')
+    expect(block).toContain('ctx.llm.registerAdapter(\n            [POOL_PROVIDER_BY_REGION.global]')
+    // ...and no fake handle may stand in for the registration: a detached no-op leaves the
+    // handle populated, so the failure looks like a successful startup.
+    expect(block).not.toMatch(/const detached/)
   })
   it('has no all-or-nothing finally that releases adapters on a directory failure', () => {
     const block = registrationBlock()
