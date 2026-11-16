@@ -32,7 +32,7 @@ import {
 import { claimTasks, fetchCampaign } from './doubao-campaign.ts'
 import { fetchAccountName } from './doubao-upstream.ts'
 import { fetchLiveModels } from './doubao-catalog-live.ts'
-import { browserLogin, readExistingSession, sessionUsable, type DoubaoSession } from './doubao-auth.ts'
+import { browserLogin, readExistingSession, sessionUsable, wipeProfileCookies, type DoubaoSession } from './doubao-auth.ts'
 import { fetchQuota } from './doubao-quota.ts'
 import { setDoubaoSession } from './doubao-upstream.ts'
 
@@ -87,6 +87,15 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
           if (req.method === 'DELETE') {
             deps.clear()
             setDoubaoSession(undefined)
+            /**
+             * SIGNING OUT HAS TO TAKE THE PROFILE'S JAR WITH IT.
+             *
+             * Leaving it behind is what made the next 「添加账号」 open on a complete-looking
+             * cookie set the server had already retired — and close itself before anyone could
+             * scan. The stored session and the browser's copy are two halves of the same state,
+             * so forgetting one is what re-created the bug after it had been fixed once.
+             */
+            wipeProfileCookies()
             return json(res, 200, { ok: true, signedIn: false })
           }
           if (req.method === 'POST') {
@@ -96,8 +105,18 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
              * The window stays open for the whole budget: a QR scan plus a phone confirmation
              * is a minute of a person's time, and cutting it short would make the lane look
              * broken to anyone who was simply slower than the timer.
+             *
+             * `current` / `onStaleSession` let the sign-in check the session this plugin is
+             * still holding. A jar the passport has retired is dropped right there, before the
+             * window opens, so the window is never closed by a stale profile.
              */
-            const result = await browserLogin()
+            const result = await browserLogin({
+              current: deps.session,
+              onStaleSession: () => {
+                deps.clear()
+                setDoubaoSession(undefined)
+              },
+            })
             if (!result.ok || result.session === undefined) {
               return json(res, 200, { ok: false, signedIn: false, message: result.reason ?? '登录失败' })
             }

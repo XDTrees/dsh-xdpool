@@ -30,10 +30,23 @@
  * — harvests the jar. The dedicated profile persists, so the second visit usually needs no
  * scan at all.
  *
+ * WHY THE WINDOW USED TO CLOSE TWO SECONDS AFTER IT OPENED
+ *
+ * A persistent profile CARRIES the previous sign-in. Reopening it therefore hands back a
+ * complete-looking jar — `sessionid`, `sid_tt`, `uid_tt` and all — before anybody scans, and
+ * the old loop treated "the cookies are all here" as "the sign-in finished", so it returned,
+ * the `finally` closed the window, and the user watched a window flash by.
+ *
+ * That is only correct while the passport still ACCEPTS the jar. Doubao retires a session the
+ * moment the same account signs in somewhere else, and what is left behind in the profile is
+ * a complete but dead jar: every cookie check above passes while every real call answers
+ * 「会话过期」. The difference between "signed in" and "a dead jar that looks signed in" is a
+ * question only the server can answer, so it is asked — see {@link passportSessionState}.
+ *
  * @module dsh-xdpool/doubao-auth
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -45,6 +58,15 @@ const DOUBAO_DOMAIN = /(^|\.)(doubao|bytedance|zijieapi)\.com$/iu
 
 /** The page that mints the jar. */
 export const DOUBAO_LOGIN_URL = 'https://www.doubao.com/chat/'
+
+/**
+ * The passport document that answers "is this session still alive".
+ *
+ * The same endpoint the card already calls to label the account, so a `live` verdict costs no
+ * new server contract — and the card's own label and this check can never disagree about which
+ * jar they are talking about.
+ */
+const PASSPORT_ACCOUNT_URL = 'https://www.doubao.com/passport/account/info/v2/'
 
 /** Where the dedicated Chromium profile lives. Persisted on purpose. */
 export function browserProfileDir(): string {
@@ -266,6 +288,189 @@ function terminate(child: ChildProcess): void {
   }
 }
 
+/**
+ * The cookie stores Chromium keeps inside a profile.
+ *
+ * Two layouts because Chromium moved the jar into `Default/Network/` in the mid-90s versions
+ * and older installs still have `Default/Cookies`. Both are listed so the wipe lands on
+ * whichever one this browser wrote; a missing file is skipped silently.
+ */
+export function profileCookieFiles(): string[] {
+  const root = browserProfileDir()
+  return [
+    join(root, 'Default', 'Network', 'Cookies'),
+    join(root, 'Default', 'Network', 'Cookies-journal'),
+    join(root, 'Default', 'Cookies'),
+    join(root, 'Default', 'Cookies-journal'),
+  ]
+}
+
+/**
+ * Delete the sign-in profile's cookie store.
+ *
+ * Only meaningful while no browser holds that profile: Chromium writes the jar back on exit,
+ * so a delete under a live window is undone. The callers respect that — sign-out runs when no
+ * window is open, and the in-window path clears cookies over the DevTools protocol instead.
+ */
+export function wipeProfileCookies(): number {
+  let removed = 0
+  for (const file of profileCookieFiles()) {
+    try {
+      if (!existsSync(file)) continue
+      rmSync(file, { force: true })
+      removed += 1
+    } catch {
+      // A locked or already-gone file is not a reason to fail the sign-in.
+    }
+  }
+  return removed
+}
+
+/**
+ * What the passport says about a jar: `live`, `dead`, or `unknown`.
+ *
+ * THREE STATES ON PURPOSE, and the middle one is the fix.
+ *
+ *   - `live` — the passport named the account. The sign-in really is finished.
+ *   - `dead` — the passport answered and refused. A session signed in somewhere else leaves
+ *     exactly this jar behind: complete, cookie-shaped, and useless.
+ *   - `unknown` — no answer (offline, timeout, 5xx). The caller must keep waiting: closing the
+ *     window on `unknown` is the old bug, and storing the jar on `unknown` hands the pool a
+ *     session nobody verified.
+ *
+ * The endpoint is the same one the card already uses to label the account
+ * (`passport/account/info/v2`), so a `live` verdict is also a `name` away from the label —
+ * this adds no new server contract.
+ */
+export type PassportVerdict = 'live' | 'dead' | 'unknown'
+
+/** The account document the passport returns, narrowed to what decides the verdict. */
+interface PassportAccount {
+  data?: {
+    error_code?: unknown
+    user_id?: unknown
+    user_id_string?: unknown
+    name?: unknown
+  }
+}
+
+/**
+ * Ask Doubao's passport whether it still accepts `cookies`.
+ *
+ * `fetch` is read from the global at call time so a test can stub it, and so a host that
+ * patches `fetch` (an upload gate, a proxy) is respected rather than bypassed.
+ */
+export async function passportSessionState(
+  cookies: Record<string, string>,
+  userAgent: string,
+): Promise<PassportVerdict> {
+  const session: DoubaoSession = { cookies, userAgent, savedAt: new Date(0).toISOString() }
+  let response: Response
+  try {
+    response = await fetch(PASSPORT_ACCOUNT_URL, {
+      headers: buildHeaders(session),
+      signal: AbortSignal.timeout(8_000),
+    })
+  } catch {
+    return 'unknown'
+  }
+  if (!response.ok) return 'unknown'
+  let body: PassportAccount
+  try {
+    body = await response.json() as PassportAccount
+  } catch {
+    return 'unknown'
+  }
+  const data = body.data
+  // A 200 with no `data` is the passport saying "no account behind this jar".
+  if (data === undefined || data === null || typeof data !== 'object') return 'dead'
+  if (typeof data.error_code === 'number' && data.error_code !== 0) return 'dead'
+  if (typeof data.user_id === 'number') return data.user_id > 0 ? 'live' : 'dead'
+  if (typeof data.user_id_string === 'string' && data.user_id_string !== '') return 'live'
+  if (typeof data.name === 'string' && data.name !== '') return 'live'
+  return 'dead'
+}
+
+/** Send a batch of DevTools commands over one socket and resolve once every answer is in. */
+async function runCdp(wsUrl: string, commands: readonly object[], timeoutMs = 8_000): Promise<boolean> {
+  const Ctor = (globalThis as { WebSocket?: new (url: string) => SocketLike }).WebSocket
+  if (Ctor === undefined) return false
+  const socket = new Ctor(wsUrl)
+  return await new Promise<boolean>((resolve) => {
+    const pending = new Set<number>()
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const finish = (value: boolean): void => {
+      if (settled) return
+      settled = true
+      if (timer !== undefined) clearTimeout(timer)
+      try { socket.close() } catch { /* already closing */ }
+      resolve(value)
+    }
+    timer = setTimeout(() => { finish(false) }, timeoutMs)
+    socket.addEventListener('error', () => { finish(false) })
+    socket.addEventListener('open', () => {
+      commands.forEach((command, index) => {
+        const id = index + 1
+        pending.add(id)
+        try {
+          socket.send(JSON.stringify({ id, ...command }))
+        } catch {
+          finish(false)
+        }
+      })
+    })
+    socket.addEventListener('message', (event: unknown) => {
+      const data = (event as { data?: unknown }).data
+      if (typeof data !== 'string') return
+      let message: { id?: unknown }
+      try {
+        message = JSON.parse(data) as { id?: unknown }
+      } catch {
+        return
+      }
+      if (typeof message.id !== 'number') return
+      pending.delete(message.id)
+      if (pending.size === 0) finish(true)
+    })
+  })
+}
+
+/**
+ * Throw away a dead jar inside the ALREADY-OPEN window and put the page back on the sign-in
+ * screen.
+ *
+ * This is what turns the old dead end into a working sign-in: without it, the only way out of
+ * "the profile holds a session the server retired" was to close the window and hope, and the
+ * next attempt reopened the same jar.
+ */
+async function clearSignInCookiesInWindow(port: number): Promise<boolean> {
+  let pageWs: string | undefined
+  try {
+    const response = await fetch(`http://127.0.0.1:${String(port)}/json/list`, {
+      signal: AbortSignal.timeout(2500),
+    })
+    if (response.ok) {
+      const list = await response.json() as unknown
+      if (Array.isArray(list)) {
+        for (const entry of list as { type?: unknown; webSocketDebuggerUrl?: unknown }[]) {
+          if (entry?.type !== 'page') continue
+          if (typeof entry.webSocketDebuggerUrl !== 'string') continue
+          pageWs = entry.webSocketDebuggerUrl
+          break
+        }
+      }
+    }
+  } catch {
+    return false
+  }
+  if (pageWs === undefined) return false
+  return await runCdp(pageWs, [
+    { method: 'Network.clearBrowserCookies', params: {} },
+    { method: 'Page.navigate', params: { url: DOUBAO_LOGIN_URL } },
+  ])
+}
+
 /** What one interactive sign-in produced. */
 export interface BrowserLoginResult {
   ok: boolean
@@ -283,6 +488,10 @@ export interface BrowserLoginResult {
 export async function browserLogin(options: {
   timeoutMs?: number
   onProgress?: (message: string) => void
+  /** The session the plugin currently holds, so a retired one can be spotted before opening. */
+  current?: () => DoubaoSession | undefined
+  /** Called when {@link current} turned out to be a jar the passport has already retired. */
+  onStaleSession?: () => void
 } = {}): Promise<BrowserLoginResult> {
   const say = options.onProgress ?? (() => {})
 
@@ -307,6 +516,28 @@ export async function browserLogin(options: {
 
   const timeoutMs = options.timeoutMs ?? 300_000
   const deadline = Date.now() + timeoutMs
+
+  /**
+   * THE JAR THE PROFILE IS ABOUT TO HAND BACK, CHECKED BEFORE THE WINDOW OPENS.
+   *
+   * This is the whole fix in one block. A persistent profile carries the last sign-in, so the
+   * loop below would find a complete jar in about two seconds, call it success, and the
+   * `finally` would close the window before the user could scan. When the passport still
+   * accepts that jar the shortcut is correct — the lane really is signed in. When it does not,
+   * the jar is what a session retired elsewhere leaves behind, and the ONLY way forward is to
+   * throw it away, both on disk and in the plugin's own store, so the window that opens next is
+   * a real sign-in page.
+   */
+  const current = options.current?.()
+  if (current !== undefined && sessionUsable(current)) {
+    const verdict = await passportSessionState(current.cookies, current.userAgent)
+    if (verdict === 'dead') {
+      wipeProfileCookies()
+      options.onStaleSession?.()
+      say('profile 里的登录态已被服务端作废（会话过期），已清除，请在弹出的窗口里重新扫码或短信登录。')
+    }
+  }
+
   const profile = browserProfileDir()
   mkdirSync(profile, { recursive: true })
 
@@ -327,6 +558,7 @@ export async function browserLogin(options: {
     }
 
     let lastNote = 0
+    let staleNote = 0
     while (Date.now() < deadline) {
       let cookies: CdpCookie[] = []
       try {
@@ -349,6 +581,23 @@ export async function browserLogin(options: {
           continue
         }
         const userAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 SamanthaDoubao/${DOUBAO_VERSION}`
+        /**
+         * A COMPLETE COOKIE SET IS NOT A SESSION — ask the passport before calling this a
+         * success. `unknown` keeps the window open and the loop running; only `live` may
+         * return, and only `dead` is worth throwing the jar away for.
+         */
+        const verdict = await passportSessionState(pairs, userAgent)
+        if (verdict !== 'live') {
+          if (Date.now() - staleNote > 10_000) {
+            staleNote = Date.now()
+            say(verdict === 'dead'
+              ? '窗口里的登录态已被服务端判为过期，正在清除并回到登录页…'
+              : '已读到 cookie，但暂时无法向豆包确认登录态，继续等待…')
+          }
+          if (verdict === 'dead') await clearSignInCookiesInWindow(DEBUG_PORT)
+          await sleep(2000)
+          continue
+        }
         say(`已取到登录态（${String(Object.keys(pairs).length)} 条 cookie）`)
         return {
           ok: true,
@@ -373,6 +622,11 @@ export async function browserLogin(options: {
  * Used by the background poll: the window is already open (the user started a sign-in), and
  * the card asks every couple of seconds whether the jar is complete yet. Returns undefined
  * when there is nothing usable — which is the ordinary answer while the user is still typing.
+ *
+ * The passport gets the same question as in {@link browserLogin}: a retired jar sitting in the
+ * profile must not be promoted to "signed in" here, because the caller stores whatever this
+ * returns. Without the check, "add account" could silently overwrite a healthy session with
+ * one the server had already killed — and the next window would close on itself.
  */
 export async function readExistingSession(): Promise<DoubaoSession | undefined> {
   let wsUrl: string | undefined
@@ -391,6 +645,7 @@ export async function readExistingSession(): Promise<DoubaoSession | undefined> 
     const pairs = pickPairs(await readCookies(wsUrl, 4000))
     if (pairs['sessionid'] === undefined) return undefined
     const userAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 SamanthaDoubao/${DOUBAO_VERSION}`
+    if (await passportSessionState(pairs, userAgent) !== 'live') return undefined
     return { cookies: pairs, userAgent, savedAt: new Date().toISOString() }
   } catch {
     return undefined
