@@ -16,7 +16,7 @@
  * @module dsh-xdpool/client/UpdatePanel
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
-import { POOL_UPDATE_CHECK_PATH } from '../status-paths.ts'
+import { POOL_UPDATE_CHECK_PATH, POOL_UPDATE_INSTALL_PATH } from '../status-paths.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
 
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
@@ -55,6 +55,9 @@ function dayText(iso: string | undefined): string | undefined {
 export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): ReactElement {
   const [status, setStatus] = useState<UpdateStatus | undefined>(undefined)
   const [busy, setBusy] = useState(false)
+  const [installing, setInstalling] = useState(false)
+  /** What the install attempt said, kept apart from the check result. */
+  const [installed, setInstalled] = useState<{ ok: boolean; text: string } | undefined>(undefined)
   const mounted = useRef(true)
 
   useEffect(() => {
@@ -81,6 +84,43 @@ export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): Reac
       if (mounted.current) setBusy(false)
     }
   }, [])
+
+  /**
+   * Install the newest build.
+   *
+   * The version is not sent: the route asks the registry itself, so the panel cannot be talked
+   * into installing something it did not just see.
+   */
+  const install = useCallback(async (): Promise<void> => {
+    setInstalling(true)
+    setInstalled(undefined)
+    try {
+      const response = await fetch(POOL_UPDATE_INSTALL_PATH, { method: 'POST', credentials: 'same-origin' })
+      const body = await response.json().catch(() => undefined) as
+        | { ok?: boolean; version?: string; restartRequired?: boolean; error?: string }
+        | undefined
+      if (!mounted.current) return
+      if (body?.ok === true && body.restartRequired === true) {
+        setInstalled({
+          ok: true,
+          text: t?.('update.installed', { version: body.version ?? '' })
+            ?? `已下载 ${body.version ?? ''}，重启 DSH 后生效`,
+        })
+        return
+      }
+      if (body?.ok === true) {
+        setInstalled({ ok: true, text: t?.('update.upToDate') ?? '已是最新版本' })
+        return
+      }
+      setInstalled({ ok: false, text: body?.error ?? (t?.('update.installFailed') ?? '安装失败') })
+    } catch (cause: unknown) {
+      if (mounted.current) {
+        setInstalled({ ok: false, text: cause instanceof Error ? cause.message : String(cause) })
+      }
+    } finally {
+      if (mounted.current) setInstalling(false)
+    }
+  }, [t])
 
   // One read on open: the cached answer is cheap, and a panel that shows nothing until pressed
   // makes the user press it every time to learn the same thing.
@@ -123,16 +163,38 @@ export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): Reac
       )}
 
       {status?.error !== undefined || status === undefined ? null : newer ? (
-        <p className="dsm-xdpool-update-newer">
-          {t?.('update.available', { version: status.latest ?? '' }) ?? `有新版本 ${status.latest ?? ''}`}
-          {published === undefined ? '' : `（发布于 ${published}）`}
-          {'. '}
-          {t?.('update.howTo') ?? '在 DSH 的插件设置里把它更新到该版本即可；数据与账号不受影响。'}
-        </p>
+        <>
+          <p className="dsm-xdpool-update-newer">
+            {t?.('update.available', { version: status.latest ?? '' }) ?? `有新版本 ${status.latest ?? ''}`}
+            {published === undefined ? '' : `（发布于 ${published}）`}
+          </p>
+          <div className="dsm-xdpool-update-acts">
+            <button
+              type="button"
+              className="dsm-xdpool-btn"
+              data-tone="primary"
+              disabled={installing}
+              onClick={() => { void install() }}
+            >
+              {installing
+                ? (t?.('update.installing') ?? '安装中…')
+                : (t?.('update.install', { version: status.latest ?? '' }) ?? `安装 ${status.latest ?? ''}`)}
+            </button>
+            <span className="dsm-xdpool-update-hint">
+              {t?.('update.installHint') ?? '下载到本机并写入插件配置，重启 DSH 后生效；数据和账号不受影响。'}
+            </span>
+          </div>
+        </>
       ) : (
         <p className="dsm-xdpool-update-current">
           {t?.('update.upToDate') ?? '已是最新版本'}
           {checked === undefined ? '' : `（${checked}检查）`}
+        </p>
+      )}
+
+      {installed === undefined ? null : (
+        <p className={installed.ok ? 'dsm-xdpool-update-current' : 'dsm-xdpool-update-error'}>
+          {installed.text}
         </p>
       )}
     </div>

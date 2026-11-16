@@ -44,6 +44,9 @@ export const POOL_AUTOMATION_RUN_PATH = '/plugins/dsh-xdpool/automation/run'
 
 /** Is there a newer build of this plugin? */
 export const POOL_UPDATE_CHECK_PATH = '/plugins/dsh-xdpool/update'
+
+/** Install the newest build. The host applies it on the next start. */
+export const POOL_UPDATE_INSTALL_PATH = '/plugins/dsh-xdpool/update/install'
 /** Set or clear one account's reserved-credit floor. */
 export const POOL_CREDIT_RESERVE_PATH = '/plugins/dsh-xdpool/accounts/credit-reserve'
 /**
