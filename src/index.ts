@@ -1497,6 +1497,28 @@ function canonicalJson(value: unknown): string {
   // Same-origin routes backing the XD Pool settings card. `webServer`
   // is an optional service: on a headless profile without it, no card routes
   // mount and the card shows an offline banner — the provider still works.
+  /**
+   * The authorities this deployment serves, read per request.
+   *
+   * `connection.trustedHosts` is what the host's own `/api` bridge trusts — Tailscale serve, a
+   * LAN hostname, a reverse proxy. The plugin's routes used to accept loopback only, so behind
+   * any of those the card displayed its data and refused every button (#164). Reading it fresh
+   * means a configuration change reaches the next request without a restart.
+   *
+   * A missing service is not an error: it simply means nothing beyond loopback is trusted, which
+   * is the desktop default.
+   */
+  const trustedHosts = (): readonly string[] => {
+    try {
+      const connection = (ctx as { connection?: { config?: { trustedHosts?: unknown } } }).connection
+      const list = connection?.config?.trustedHosts
+      if (!Array.isArray(list)) return []
+      return list.filter((entry): entry is string => typeof entry === 'string')
+    } catch {
+      return []
+    }
+  }
+
   ctx.inject(['webServer'], (webCtx) => {
     /**
      * Doubao's three routes.
@@ -1507,6 +1529,7 @@ function canonicalJson(value: unknown): string {
      */
     registerDoubaoRoutes(webCtx, {
       session: () => doubaoSession,
+      trustedHosts,
       save: (session) => {
         adoptDoubaoSession(session)
         void writeStoredSession(session)
@@ -1519,6 +1542,7 @@ function canonicalJson(value: unknown): string {
     })
     return registerPoolStatusRoute(webCtx, {
     pool: core.pool,
+    trustedHosts,
     catalogs: core.catalogs,
     client: core.client,
     // The usage panel reads the SAME recorder both shims write to, so its totals

@@ -619,6 +619,15 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set())
   /** Channels whose model catalogue is being re-read. */
   const [catalogBusy, setCatalogBusy] = useState<ReadonlySet<string>>(new Set())
+  /**
+   * Whether channels without an account are listed.
+   *
+   * They are hidden by default: a card for a channel nobody signed into says "– accounts, – 
+   * models, – credit" and takes a full row to say it, so an account pool with one signed-in
+   * channel scrolled past a dozen empty ones to reach it (#166). The switch brings them back for
+   * the one case where they are wanted — adding another.
+   */
+  const [showAll, setShowAll] = useState(false)
   /** provider → what the reader typed into that card's model search box. */
   const [queries, setQueries] = useState<ReadonlyMap<string, string>>(new Map())
   const entriesRef = useRef(entries)
@@ -1343,8 +1352,32 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
       {error === undefined ? null
         : <p className="dsm-xdpool-error">{t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}</p>}
       {notice === undefined ? null : <p className="dsm-xdpool-note">{notice}</p>}
+      {/* The switch that brings the unbound channels back, for adding another. */}
+      <div className="dsm-xdpool-cpool-bar">
+        <button
+          type="button"
+          className="dsm-xdpool-btn"
+          aria-pressed={showAll}
+          onClick={() => { setShowAll(!showAll) }}
+        >
+          {showAll
+            ? (t?.('channelpool.onlyBound') ?? '只显示已绑定')
+            : (t?.('channelpool.showAll') ?? `显示全部渠道（${String(entries.length)}）`)}
+        </button>
+      </div>
       <div className="dsm-xdpool-cpool-grid">
-        {entries.map(entry => {
+        {((): readonly ChannelEntry[] => {
+          const bound = entries.filter(entry => entry.accounts.length > 0)
+          /**
+           * Nothing bound yet means EVERYTHING is shown.
+           *
+           * Hiding empty cards is only useful once there is something to hide them behind. On a
+           * fresh install every card is empty, so the same rule would produce a blank page with
+           * no way to add the first account.
+           */
+          if (showAll || bound.length === 0) return entries
+          return bound
+        })().map(entry => {
           const { channel, accounts, models, facts, balances, statuses, status } = entry
           const icon = channelIcon(channel.id)
           const tileMark = icon === undefined ? { initials: channelInitials(channel.name) } : { icon }

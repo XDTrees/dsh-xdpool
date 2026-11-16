@@ -4340,10 +4340,22 @@ export declare function readPreferredIdSync(path?: string): string | undefined;
  */
 export declare function writePreferredId(accountId: string | undefined, path?: string): Promise<void>;
 //#endregion
+//#region src/origin-trust.d.ts
+/** The authorities a deployment says it serves, as the host reports them. */
+type TrustedHosts = readonly string[];
+//#endregion
 //#region src/web-status.d.ts
 /** Constructor dependencies — a narrow slice of the pool runtime. */
 interface PoolStatusRouteOptions {
   pool: WorkBuddyAccountPool;
+  /**
+   * The authorities this deployment serves, read per request.
+   *
+   * Passed through from `connection.trustedHosts` so the plugin's gate agrees with the host's
+   * own `/api` bridge. They disagreed once, and the symptom was a card that displayed its data
+   * and refused every button — see `origin-trust.ts`.
+   */
+  trustedHosts?: () => TrustedHosts;
   /** One catalog per region; the card reads the one for its active tab. */
   catalogs: Readonly<Record<PoolRegion, WorkBuddyCatalog>>;
   client: WorkBuddyUpstreamClient;
