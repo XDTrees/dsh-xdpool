@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   assembleAccount,
+  createMeterGate,
   readSpendReport,
   SPEND_MAX_DAYS,
   spendAxis,
@@ -105,6 +106,9 @@ function deps(meter: SpendMeter, over: Partial<SpendReportDeps> = {}): SpendRepo
     accounts: [{ id: 'a1', label: 'alice#a1', credential: CREDENTIAL }],
     days: 3,
     now: NOW,
+    // A gate is required rather than optional: the meter's limit is on the total in
+    // flight across all accounts, so there is no correct default to fall back to.
+    gate: createMeterGate(),
     ...over,
   }
 }

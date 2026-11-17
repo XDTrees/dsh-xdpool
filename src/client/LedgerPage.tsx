@@ -94,7 +94,7 @@ function shortDay(key: string): string {
 
 /** A day's figures, with every field present so the charts cannot read undefined. */
 function dayOf(account: SpendAccount, key: string): SpendDay {
-  return account.days[key] ?? { spent: 0, requests: 0, earned: 0, lapsed: 0, balance: 0 }
+  return account.days[key] ?? { spent: 0, requests: 0, earned: 0, lapsed: 0, balance: 0, models: {} }
 }
 
 /** Sum across accounts for one day. */
@@ -112,7 +112,9 @@ function pooledDay(accounts: readonly SpendAccount[], key: string): SpendDay {
     lapsed += day.lapsed
     balance += day.balance
   }
-  return { spent, requests, earned, lapsed, balance }
+  // No `models` on the pooled row: a per-model split is an ACCOUNT question, and
+  // summing it across accounts would produce a figure nothing on the page reads.
+  return { spent, requests, earned, lapsed, balance, models: {} }
 }
 
 /** A single KPI cell. Local rather than the shell's `KpiCard` because it takes a tone. */
@@ -398,15 +400,60 @@ export function LedgerPage({ t }: LedgerPageProps) {
   }, [])
   useEffect(() => {
     const controller = new AbortController()
+    /**
+     * Switching windows must not blank the page.
+     *
+     * The host answers a window switch in about two seconds once its day cache is
+     * warm, but two seconds of "Reading…" over an empty canvas reads as a page that
+     * broke. The previous report stays on screen and only the busy flag changes, so
+     * the charts hold their shape and the numbers swap when they arrive.
+     */
+    setLoading(true)
     void load(span, nonce > 0, controller.signal)
     return () => { controller.abort() }
   }, [load, span, nonce])
   // A slow poll, so a long-open window does not show numbers from an hour ago.
   // Deliberately the same beat as the host's own cache: polling faster would
   // only replay it.
+  /**
+   * Auto-refresh, but only while the page is actually being looked at.
+   *
+   * The panel re-reads every five minutes — the same beat as the host's cache, so
+   * a tick is usually a cache hit rather than a walk. Two things make that
+   * affordable and honest:
+   *
+   *   · a hidden tab does not poll at all. A settings dialog left open behind a
+   *     chat would otherwise keep re-reading the meter forever, which costs the
+   *     user's own rate limit for a chart nobody is looking at;
+   *   · coming BACK to a visible tab refreshes immediately rather than waiting for
+   *     the next tick, so the numbers on screen are never the ones from hours ago.
+   */
   useEffect(() => {
-    const timer = setInterval(() => { void load(span, false) }, POLL_MS)
-    return () => { clearInterval(timer) }
+    if (typeof document === 'undefined') return undefined
+    let timer: ReturnType<typeof setInterval> | undefined
+    const stop = (): void => {
+      if (timer !== undefined) { clearInterval(timer); timer = undefined }
+    }
+    const start = (): void => {
+      if (timer !== undefined) return
+      timer = setInterval(() => { void load(span, false) }, POLL_MS)
+    }
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'visible') {
+        // Coming back is a reason to re-read NOW: the clock behind the staleness
+        // check kept running while the tab was hidden.
+        void load(span, false)
+        start()
+      } else {
+        stop()
+      }
+    }
+    if (document.visibilityState === 'visible') start()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      stop()
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
   }, [load, span])
 
   const accounts = report?.accounts ?? []
@@ -475,6 +522,12 @@ export function LedgerPage({ t }: LedgerPageProps) {
               {t?.('ledger.failed') ?? 'Could not read the billing numbers.'} {error}
             </p>
           )}
+      {/*
+        A dimming veil over the OLD report while a new one loads, rather than
+        replacing it with a spinner. Two seconds of an empty canvas is
+        indistinguishable from a page that failed; the numbers swapping in place is
+        not.
+      */}
       {report === undefined
         ? (
             <p className="dsm-xdpool-note">
@@ -484,7 +537,7 @@ export function LedgerPage({ t }: LedgerPageProps) {
             </p>
           )
         : (
-            <>
+            <div className="dsm-xdpool-dash-body" data-busy={loading} aria-busy={loading}>
               {/*
                 The estimate banner is not decoration. When the three inputs do
                 not reconcile the back-solved opening balance comes out negative,
@@ -663,7 +716,7 @@ export function LedgerPage({ t }: LedgerPageProps) {
               <p className="dsm-xdpool-dash-foot">
                 {t?.('ledger.foot', { at: report.generatedAt }) ?? `Read at ${report.generatedAt}.`}
               </p>
-            </>
+            </div>
           )}
     </>
   )

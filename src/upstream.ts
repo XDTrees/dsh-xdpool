@@ -242,6 +242,103 @@ function optionalMs<K extends string>(key: K, value: number | undefined): { [P i
   return (value === undefined ? {} : { [key]: value }) as { [P in K]?: number }
 }
 
+/**
+ * Cut the prompt fields out of a usage page's JSON TEXT, before it is parsed.
+ *
+ * WHY
+ *
+ * The meter attaches each request's prompt to its row (`input`, and a truncated
+ * copy in `inputTrunc`). Nothing in the request changes that — measured across
+ * `fields`, `exclude`, `columns`, `needPrompt`, `withPrompt`, `showInput`, `simple`,
+ * `lite`, `detail`, four `User-Agent` variants and three `Accept` spellings, all of
+ * which it ignores — and a wider `Accept-Encoding` is answered with `identity`, so
+ * there is no compressed form to lean on either. On a real six-day page those two
+ * fields were **81.8%** of the body.
+ *
+ * `JSON.parse` on the untouched body therefore builds an object per prompt so that
+ * this module can keep four small fields and drop the rest. Removing the values
+ * first means the parser never materialises them at all, and the string that gets
+ * parsed is a fraction of its original size. With ten pages in flight that is the
+ * difference between holding tens of megabytes of the user's own prompts and
+ * holding almost none.
+ *
+ * HOW, AND WHY NOT A STREAMING PARSER
+ *
+ * Both fields are always JSON STRINGS, so each occurrence is `"input": "…"` (or
+ * `"inputTrunc": "…"`). The scanner finds those keys and skips the string literal
+ * that follows with correct escape handling, so a prompt containing `\"` or a
+ * newline cannot desynchronise it. It is textual because a second, hand-rolled JSON
+ * reader is a second parser to get wrong; a string-literal skipper is small enough
+ * that its one job is provable, and anything it does not recognise is returned
+ * untouched — so an upstream shape change degrades to the previous behaviour rather
+ * than to "no data".
+ *
+ * Exported for its own tests: it is the one piece here whose failure would be
+ * silent (a dropped row reads as a missing charge).
+ */
+export function stripUsagePrompts(text: string): string {
+  // Fast path: nothing to do, and no allocation.
+  if (!text.includes('"input')) return text
+  const out: string[] = []
+  let copied = 0
+  let index = 0
+  while (index < text.length) {
+    if (text.charCodeAt(index) !== 0x22 /* " */) {
+      index += 1
+      continue
+    }
+    // A key starts at this quote; read it.
+    const keyEnd = scanString(text, index)
+    if (keyEnd === -1) break
+    const key = text.slice(index + 1, keyEnd - 1)
+    if (key !== 'input' && key !== 'inputTrunc') {
+      index = keyEnd
+      continue
+    }
+    // Expect `:` then a string literal.
+    let cursor = keyEnd
+    while (cursor < text.length && (text[cursor] === ':' || text[cursor] === ' ' || text[cursor] === '\t')) cursor += 1
+    if (text[cursor] !== '"') {
+      index = keyEnd
+      continue
+    }
+    const valueEnd = scanString(text, cursor)
+    if (valueEnd === -1) break
+    // Replace the key and its value with an empty string value: keeping the key
+    // present means the parsed row still has the field, so a caller that checks for
+    // it sees "empty" rather than "absent" — the two mean different things.
+    out.push(text.slice(copied, index))
+    out.push(`"${key}":""`)
+    copied = valueEnd
+    index = valueEnd
+  }
+  if (out.length === 0) return text
+  out.push(text.slice(copied))
+  return out.join('')
+}
+
+/**
+ * Index just past the string literal starting at `start` (which must be a quote).
+ *
+ * Returns -1 when the literal never closes, so the caller can bail out and leave the
+ * document alone rather than truncate it. Escape handling is the whole point: a
+ * prompt containing `\"` would otherwise end the literal early and misalign every
+ * key after it.
+ */
+function scanString(text: string, start: number): number {
+  let index = start + 1
+  while (index < text.length) {
+    const char = text.charCodeAt(index)
+    if (char === 0x5C /* \ */) {
+      index += 2
+      continue
+    }
+    if (char === 0x22 /* " */) return index + 1
+    index += 1
+  }
+  return -1
+}
+
 /** Daily check-in activity state. */
 export interface WorkBuddyCheckinStatus {
   active: boolean
@@ -2052,15 +2149,15 @@ export class WorkBuddyUpstreamClient {
       }),
       signal: signal === undefined ? timeout : AbortSignal.any([timeout, signal]),
     })
-    const text = await response.text()
     // The rate limiter answers with a bare `{"error_msg":"Too Many Requests"}`,
     // which has no envelope and no `code`. Named separately because it is the one
     // failure with an obvious remedy (wait and retry), and the dashboard must not
     // print it as a broken credential.
     if (response.status === 429) return { ok: false, retryable: true, reason: 'rate-limited' }
+    const text = await response.text()
     let parsed: unknown
     try {
-      parsed = JSON.parse(text)
+      parsed = JSON.parse(stripUsagePrompts(text))
     } catch {
       return {
         ok: false,

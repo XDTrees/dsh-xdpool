@@ -235,7 +235,16 @@ import { channelListableAsRows, createWorkBuddyShim, type WorkBuddyShim } from '
 import { createChannelLane, type ChannelLaneLlm } from './channel-lane.ts'
 import { backfillUsageFromLedger, readCreditSpend } from './credit-report.ts'
 import { ratesFor, type CreditRates } from './credits.ts'
-import { readSpendReport, SPEND_MAX_DAYS, type SpendReport } from './spend-report.ts'
+import { createMeterGate, readSpendReport, SPEND_MAX_DAYS, spendDayKey, type SpendReport } from './spend-report.ts'
+import {
+  keepFromFor,
+  loadSpendCache,
+  mergeAccount,
+  pruneCache,
+  saveSpendCache,
+  type CachedAccount,
+  type CachedDay,
+} from './spend-cache.ts'
 import { createPoolRelay, newRelayKey, relayDocumentOf, RELAY_DEFAULT_PORT, RELAY_HOSTS, type RelaySettings } from './relay.ts'
 import { UsageRecorder } from './stats.ts'
 import { buildStatus } from './status.ts'
@@ -244,7 +253,7 @@ export {
   isAutomationJobKind, isFireHour,
   type AutomationLedger, type AutomationRunSummary, type AutomationStatus, type SchedulerLogger,
 } from './scheduler.ts'
-import { regionOf, WorkBuddyUpstreamClient, type WorkBuddyRegion } from './upstream.ts'
+import { regionOf, WorkBuddyUpstreamClient, type WorkBuddyRegion, type WorkBuddyResourceRow } from './upstream.ts'
 import {
   dshHome,
   ignoreAccount,
@@ -1954,17 +1963,81 @@ function canonicalJson(value: unknown): string {
         label: account.label,
         credential: account.credential,
       }))
+      /**
+       * Finished days already on disk.
+       *
+       * Read BEFORE the meter is touched, and the reason the window buttons are
+       * cheap: switching 31 -> 7 -> 14 re-derives only the days not already there.
+       * A read failure is not fatal — an empty cache just means the meter answers
+       * everything, which is the behaviour this page had before the cache existed.
+       */
+      const file = await loadSpendCache(dshHome()).catch(() => undefined)
+      const cachedDays: Record<string, Record<string, CachedDay>> = {}
+      if (file !== undefined) {
+        for (const account of accounts) {
+          const slice = file.accounts[account.id]
+          if (slice !== undefined) cachedDays[account.id] = { ...slice.days }
+        }
+      }
+      /**
+       * Days this read had to fetch, collected per account and written once.
+       *
+       * One write per read keeps the file's mtime meaningful and avoids nine rename
+       * dances on a cold 31-day window.
+       */
+      const fresh: Record<string, { days: Record<string, CachedDay>; packages: readonly WorkBuddyResourceRow[]; packagesAt: number }> = {}
       const promise = readSpendReport({
         client: core.client,
         accounts,
         days: requested,
         logger: ctx.logger,
-      }).then(report => {
+        cachedDays,
+        // One gate per read: the meter limits the SUM of in-flight requests across
+        // all accounts, so the gate has to span every account rather than be
+        // created per account.
+        gate: createMeterGate(),
+        onFresh: (accountId, update) => { fresh[accountId] = { ...update, days: { ...update.days } } },
+      }).then(async report => {
         // Only a report that actually read something is worth caching: caching an
         // all-failed document would keep showing it for minutes after the meter
         // recovered.
         if (report.failedAccounts < report.accounts.length || report.accounts.length === 0) {
           spendCache = { days: requested, at: Date.now(), report }
+          /**
+           * Persist what was fetched, best effort.
+           *
+           * Awaited rather than fired and forgotten: a second window request
+           * arriving a moment later would otherwise race the write and re-fetch the
+           * same days. The write is ~200 KB, noise next to the walk it saves.
+           */
+          const home = dshHome()
+          const next = file ?? { version: 1, accounts: {} as Record<string, CachedAccount> }
+          const todayKey = spendDayKey(Date.now())
+          /**
+           * The retention floor, from the window THIS read covered.
+           *
+           * `requested` rather than `SPEND_MAX_DAYS`: a 7-day read must still keep
+           * a 40-day range, so the floor follows what was actually asked for.
+           */
+          const windowStartKey = spendDayKey(Date.now() - (requested - 1) * 86_400_000)
+          const keepFrom = keepFromFor(windowStartKey, requested)
+          for (const [accountId, update] of Object.entries(fresh)) {
+            mergeAccount(next, accountId, {
+              days: update.days,
+              packages: update.packages,
+              packagesAt: update.packagesAt,
+              keepFrom,
+            })
+            // Today must never be stored; `daysToCache` already filters it, and
+            // this is the belt to that pair of braces.
+            const stored = next.accounts[accountId]
+            if (stored !== undefined) {
+              const mutable = stored.days as Record<string, CachedDay>
+              delete mutable[todayKey]
+            }
+          }
+          pruneCache(next, { accountIds: accounts.map(account => account.id), keepFrom })
+          await saveSpendCache(home, next).catch(() => false)
         }
         return report
       }).finally(() => {

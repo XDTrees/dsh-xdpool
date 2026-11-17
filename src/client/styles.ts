@@ -1073,7 +1073,18 @@ export const DASHBOARD_CARD_CSS = `
    condition clears, and it is readable rather than lurid. */
 .dsm-xdpool-dash-warn{margin:0;padding:9px 12px;border-radius:10px;border:1px solid color-mix(in srgb, var(--dsw-alias-state-warning-primary,#e8a33d) 38%, transparent);background:color-mix(in srgb, var(--dsw-alias-state-warning-primary,#e8a33d) 8%, transparent);color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:11.5px;line-height:18px}
 .dsm-xdpool-dash-foot{margin:0;color:var(--dsw-alias-label-mute,#5f6b7a);font-size:10.5px;line-height:16px;font-variant-numeric:tabular-nums}
+
+/* The page body while a new window is loading.
+   Dimmed rather than emptied: the previous numbers stay legible enough to read a
+   trend from, and their replacement lands in the same place, so a window switch
+   does not look like a page that broke. The opacity floor is deliberate — below
+   about .55 the figures stop being readable and the veil is just a flicker. */
+.dsm-xdpool-dash-body{display:flex;flex-direction:column;gap:10px;transition:opacity .18s ease}
+.dsm-xdpool-dash-body[data-busy="true"]{opacity:.55}
+.dsm-xdpool-dash-body[data-busy="true"] .dsm-xdpool-dash-kpi-value,
+.dsm-xdpool-dash-body[data-busy="true"] .dsm-xdpool-dash-chart{pointer-events:none}
 @media (prefers-reduced-motion: reduce){
+  .dsm-xdpool-dash-body{transition:none}
   .dsm-xdpool-dash-window{transition:none}
 }
 
