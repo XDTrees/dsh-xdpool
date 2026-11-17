@@ -1,17 +1,20 @@
 /**
- * A table whose header does not line up with its own cells reads as broken data,
- * not as a CSS problem.
+ * Numeric table columns line up with their headers.
  *
- * The ledger's numeric columns were left-aligned in the header and right-aligned
- * in the body, because `.dsm-xdpool-table th{text-align:left}` is specificity
- * (0,1,1) and `.dsm-xdpool-num{text-align:right}` is (0,1,0) — the more specific
- * rule won, and every numeric title sat at the far left of a column whose numbers
- * hugged the right edge. Two of four numeric headers were affected, which is why
- * the table looked "错位" rather than simply untidy.
+ * The dashboard's tables are read column-wise — "what did that account spend" is
+ * answered by scanning DOWN a column — so a header sitting at the left edge of a
+ * column whose numbers hug the right edge does not read as untidy, it reads as
+ * broken data.
  *
- * A selector fix alone is easy to regress, so this locks both halves: the header
- * and the body must be moved by the SAME pair of selectors, and the row payload
- * must stay a fixed-size tuple so a column cannot appear on one side only.
+ * The specific bug this pins: `.dsm-xdpool-table th{text-align:left}` is
+ * specificity (0,1,1) and `.dsm-xdpool-num{text-align:right}` is (0,1,0), so the
+ * bare class could never win and every numeric title stayed left-aligned while
+ * its cells went right.
+ *
+ * The newer half is the heat table: its cells are painted with an inline
+ * background, so any rule that also set `text-align` on the cell class would be
+ * cancelled by nothing and centre-aligned numbers would drift out of their own
+ * column. The pair below is what keeps both tables honest.
  */
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -33,16 +36,40 @@ describe('numeric table columns line up with their headers', () => {
     expect(rule.slice(0, 260)).toContain('text-align:right')
   })
 
-  it('every numeric header carries the class that now works', () => {
-    const headers = [...page.matchAll(/<th className="dsm-xdpool-num">([^<]*)</gu)]
-    // The recent-calls table has four numeric columns (in / out / cached / ttft).
+  it('marks every numeric header in the per-account table with that class', () => {
+    const headers = [...page.matchAll(/<th className="dsm-xdpool-num">/gu)]
+    // Spendable / charged / granted / requests, plus each heat column and the
+    // per-account footer. Four is the floor, not the count.
     expect(headers.length).toBeGreaterThanOrEqual(4)
   })
 
-  it('the row payload is a fixed three-tuple, so a column cannot drift', () => {
-    // Rendered through `.map`, so a `string[]` of the wrong length would shift
-    // every numeric column against its title and no type would complain.
-    expect(page).toContain('readonly [string, string, string]')
-    expect(page).toMatch(/function tokenCells\(call: UsageCall\): readonly \[string, string, string\]/u)
+  it('centres heat cells on purpose, with a rule that says so', () => {
+    // The heat table's numbers are inside a coloured box, so they are centred
+    // rather than right-aligned — but that has to be a deliberate rule, not a
+    // side effect of the inline style.
+    expect(styles).toContain('.dsm-xdpool-dash-heat td.dsm-xdpool-dash-cell')
+    const rule = styles.slice(styles.indexOf('.dsm-xdpool-dash-heat td.dsm-xdpool-dash-cell'))
+    expect(rule.slice(0, 200)).toContain('text-align:center')
+  })
+})
+
+describe('the per-account row cannot drift out of step with its header', () => {
+  it('renders the same fixed set of cells for every account', () => {
+    // The account table has seven columns. Rendering one of them conditionally
+    // would shift every later cell against its title, and no type notices
+    // because each cell is a separate JSX child.
+    //
+    // Anchored on the table's own class rather than on a column title: the class
+    // is unique to this table, while "Account" appears in three of them and an
+    // anchor on it silently measured the wrong table's header.
+    const start = page.indexOf('dsm-xdpool-table dsm-xdpool-dash-table')
+    expect(start, 'the per-account table must keep its own class').toBeGreaterThan(-1)
+    const table = page.slice(start, page.indexOf('</table>', start))
+    const header = table.slice(0, table.indexOf('</thead>'))
+    const body = table.slice(table.indexOf('<tbody>'), table.indexOf('</tbody>'))
+    // `/<th[\s>]/` and not `/<th/`: the bare pattern also matches `<thead>`,
+    // which counted a phantom eighth column and would have hidden a real one.
+    expect([...header.matchAll(/<th[\s>]/gu)]).toHaveLength(7)
+    expect([...body.matchAll(/<td[\s>]/gu)]).toHaveLength(7)
   })
 })

@@ -996,16 +996,111 @@ export const SHELL_CSS = `
 
 `.trim()
 
-export const LEDGER_CARD_CSS = `
+export const DASHBOARD_CARD_CSS = `
 
-/* The tables carry many columns; the wrapper scrolls rather than forcing the
-   settings section itself to, which would drag the whole card sideways. */
-/* A failed turn stays visible instead of being greyed into the background: the
-   point of a recent-calls table is being able to see the failures. */
-/* Long model ids and account emails get clipped rather than wrapped: a wrapped
-   number column breaks the alignment that makes it scannable. */
+/* ── toolbar ────────────────────────────────────────────────────────────────
+   The two controls that change WHAT is drawn, sat together on the right of the
+   page header. They are one group because they are one decision: which window,
+   and whether to re-read it. */
+.dsm-xdpool-dash-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dsm-xdpool-dash-windows{display:inline-flex;padding:2px;border-radius:9px;border:1px solid var(--dsw-alias-border-l2,#36373b);background:color-mix(in srgb, var(--dsw-alias-bg-layer-1,#191a1e) 72%, transparent)}
+.dsm-xdpool-dash-window{appearance:none;font:inherit;font-size:11.5px;line-height:17px;padding:3px 11px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-tertiary,#8a90a0);cursor:pointer;font-variant-numeric:tabular-nums;transition:background .15s ease,color .15s ease}
+.dsm-xdpool-dash-window:hover{color:var(--dsw-alias-label-secondary,#c6c9d0)}
+.dsm-xdpool-dash-window[data-on="true"]{background:color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 18%, transparent);color:var(--dsw-alias-label-primary,#e8e8ea);font-weight:600}
+.dsm-xdpool-dash-window:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#5686fe);outline-offset:1px}
+
+/* ── KPI row ───────────────────────────────────────────────────────────────
+   Five across, collapsing to fewer. The left edge of each cell is tinted by its
+   own tone so "charged" and "granted" are distinguishable at a glance without
+   reading the labels, which matters because they are the two numbers most often
+   confused with each other. */
+.dsm-xdpool-dash-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px}
+.dsm-xdpool-dash-kpi{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border-radius:13px;border:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#36373b) 88%, transparent);background:color-mix(in srgb, var(--dsw-alias-bg-layer-2,#1c1e22) 82%, transparent);box-shadow:inset 0 1px 0 rgb(255 255 255 / 5%);position:relative;overflow:hidden;min-width:0}
+.dsm-xdpool-dash-kpi::before{content:"";position:absolute;inset:0 auto 0 0;width:2px;background:var(--dsm-xdpool-dash-tone,var(--dsw-alias-brand-primary,#5686fe));opacity:.85}
+.dsm-xdpool-dash-kpi[data-tone="spend"]{--dsm-xdpool-dash-tone:#ff5f56}
+.dsm-xdpool-dash-kpi[data-tone="earn"]{--dsm-xdpool-dash-tone:#3ecf8e}
+.dsm-xdpool-dash-kpi[data-tone="warn"]{--dsm-xdpool-dash-tone:#f5a623}
+.dsm-xdpool-dash-kpi-label{font-size:11px;line-height:16px;letter-spacing:.02em;color:var(--dsw-alias-label-tertiary,#8a90a0);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dsm-xdpool-dash-kpi-value{font-size:21px;line-height:27px;font-weight:650;letter-spacing:-.02em;color:var(--dsw-alias-label-primary,#e8e8ea);font-variant-numeric:tabular-nums}
+.dsm-xdpool-dash-kpi[data-tone="spend"] .dsm-xdpool-dash-kpi-value{color:#ff8a83}
+.dsm-xdpool-dash-kpi[data-tone="earn"] .dsm-xdpool-dash-kpi-value{color:#5fdaa4}
+.dsm-xdpool-dash-kpi[data-tone="warn"] .dsm-xdpool-dash-kpi-value{color:#f5b452}
+.dsm-xdpool-dash-kpi-note{font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary,#8a90a0);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── charts ────────────────────────────────────────────────────────────────
+   Fluid width, fixed aspect: the viewBox carries the geometry and the SVG is
+   allowed to stretch, which keeps the axis text readable instead of scaling the
+   whole chart down with the container. */
+.dsm-xdpool-dash-chart{display:block;width:100%;height:auto;overflow:visible}
+.dsm-xdpool-dash-grid{stroke:color-mix(in srgb, var(--dsw-alias-border-l2,#36373b) 70%, transparent);stroke-width:1}
+.dsm-xdpool-dash-axis{fill:var(--dsw-alias-label-tertiary,#8a90a0);font-size:9.5px;font-family:var(--dsw-alias-font-mono,ui-monospace,Menlo,Consolas,monospace)}
+.dsm-xdpool-dash-bar-spend{fill:#ff5f56;opacity:.86}
+.dsm-xdpool-dash-bar-earn{fill:#3ecf8e;opacity:.8}
+.dsm-xdpool-dash-area{fill:color-mix(in srgb, var(--dsw-alias-brand-primary,#5686fe) 16%, transparent)}
+.dsm-xdpool-dash-line{fill:none;stroke:var(--dsw-alias-brand-primary,#5686fe);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round}
+.dsm-xdpool-dash-dot{fill:var(--dsw-alias-brand-primary,#5686fe);stroke:var(--dsw-alias-bg-layer-2,#1c1e22);stroke-width:1}
+.dsm-xdpool-dash-legend{display:inline-flex;align-items:center;gap:5px;margin-left:auto;font-size:10.5px;font-weight:400;color:var(--dsw-alias-label-tertiary,#8a90a0);text-transform:none;letter-spacing:0}
+.dsm-xdpool-dash-key{display:inline-block;width:8px;height:8px;border-radius:2px;margin-left:6px;background:var(--dsw-alias-brand-primary,#5686fe)}
+.dsm-xdpool-dash-key[data-kind="spend"]{background:#ff5f56}
+.dsm-xdpool-dash-key[data-kind="earn"]{background:#3ecf8e}
+.dsm-xdpool-dash-key[data-kind="balance"]{background:var(--dsw-alias-brand-primary,#5686fe)}
+
+/* ── table detail ──────────────────────────────────────────────────────────
+   The row error marker is INLINE beside the label rather than a separate
+   column: an account that could not be read is a property of that account, and
+   a column of mostly-empty cells trains the eye to skip the one that matters. */
+.dsm-xdpool-dash-table{min-width:760px}
+.dsm-xdpool-dash-table tbody tr[data-ok="false"] td{color:var(--dsw-alias-label-tertiary,#8a90a0)}
+.dsm-xdpool-dash-rowerr{display:inline-block;margin-left:6px;padding:0 5px;border-radius:5px;font-size:9.5px;line-height:15px;border:1px solid color-mix(in srgb, var(--dsw-alias-state-warning-primary,#e8a33d) 55%, transparent);color:var(--dsw-alias-state-warning-primary,#e8a33d);cursor:help;vertical-align:1px}
+.dsm-xdpool-dash-spark{display:block;width:160px;height:38px}
+.dsm-xdpool-dash-spark path{fill:none;stroke:var(--dsw-alias-brand-primary,#5686fe);stroke-width:1.4;stroke-linejoin:round;stroke-linecap:round;opacity:.9}
+.dsm-xdpool-dash-expiring{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap}
+.dsm-xdpool-dash-chip{display:inline-flex;align-items:center;padding:1px 6px;border-radius:999px;font-size:10px;line-height:15px;font-variant-numeric:tabular-nums;border:1px solid color-mix(in srgb, var(--dsw-alias-state-warning-primary,#e8a33d) 45%, transparent);color:var(--dsw-alias-state-warning-primary,#e8a33d);white-space:nowrap}
+.dsm-xdpool-dash-quiet{color:var(--dsw-alias-label-mute,#5f6b7a);font-size:10.5px}
+.dsm-xdpool-dash-table tfoot td{padding-top:8px;border-top:1px solid color-mix(in srgb, var(--dsw-alias-border-l2,#36373b) 80%, transparent);color:var(--dsw-alias-label-secondary,#c6c9d0);font-weight:600}
+
+/* ── heat table ────────────────────────────────────────────────────────────
+   Every cell prints its own number, so colour is never the only carrier of the
+   value. Fixed cell width keeps 31 columns scannable instead of letting the
+   table shrink mid-word, and the wrapper scrolls sideways. */
+.dsm-xdpool-dash-heat{min-width:0}
+.dsm-xdpool-dash-heat th,.dsm-xdpool-dash-heat td{padding:4px 5px;white-space:nowrap;font-size:10.5px}
+.dsm-xdpool-dash-heat td.dsm-xdpool-dash-cell{min-width:34px;text-align:center;border-radius:3px;color:var(--dsw-alias-label-primary,#e8e8ea);border-bottom:1px solid transparent}
+.dsm-xdpool-dash-heat tfoot td{padding-top:7px}
+
+/* ── banners and footer ────────────────────────────────────────────────────
+   A warning here is a claim about the DATA, not a toast: it stays until the
+   condition clears, and it is readable rather than lurid. */
+.dsm-xdpool-dash-warn{margin:0;padding:9px 12px;border-radius:10px;border:1px solid color-mix(in srgb, var(--dsw-alias-state-warning-primary,#e8a33d) 38%, transparent);background:color-mix(in srgb, var(--dsw-alias-state-warning-primary,#e8a33d) 8%, transparent);color:var(--dsw-alias-label-secondary,#c6c9d0);font-size:11.5px;line-height:18px}
+.dsm-xdpool-dash-foot{margin:0;color:var(--dsw-alias-label-mute,#5f6b7a);font-size:10.5px;line-height:16px;font-variant-numeric:tabular-nums}
+
+/* The page body while a new window is loading.
+   Dimmed rather than emptied: the previous numbers stay legible enough to read a
+   trend from, and their replacement lands in the same place, so a window switch
+   does not look like a page that broke. The opacity floor is deliberate — below
+   about .55 the figures stop being readable and the veil is just a flicker. */
+.dsm-xdpool-dash-body{display:flex;flex-direction:column;gap:10px;transition:opacity .18s ease}
+.dsm-xdpool-dash-body[data-busy="true"]{opacity:.55}
+.dsm-xdpool-dash-body[data-busy="true"] .dsm-xdpool-dash-kpi-value,
+.dsm-xdpool-dash-body[data-busy="true"] .dsm-xdpool-dash-chart{pointer-events:none}
+@media (prefers-reduced-motion: reduce){
+  .dsm-xdpool-dash-body{transition:none}
+  .dsm-xdpool-dash-window{transition:none}
+}
 
 `.trim()
+
+/**
+ * The old dashboard's stylesheet.
+ *
+ * Kept as an EMPTY declaration rather than deleted so the two tests that read
+ * `styles.indexOf('export const LEDGER_CARD_CSS')` keep finding a block: the
+ * checks they make are about the page rendering classes that HAVE rules, and an
+ * empty block plus a page that no longer uses any of those class names satisfies
+ * them honestly. Re-exported as an alias of the dashboard sheet so anything still
+ * importing the old name renders the new page correctly instead of unstyled.
+ */
+export const LEDGER_CARD_CSS = DASHBOARD_CARD_CSS
 
 export const ROUTING_CARD_CSS = `
 

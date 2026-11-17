@@ -55,6 +55,7 @@ import {
   POOL_MODEL_PROBE_PATH,
   POOL_RESET_COOLDOWN_PATH,
   POOL_RESCAN_PATH,
+  POOL_SPEND_REPORT_PATH,
   POOL_STATUS_PATH,
   POOL_USAGE_PATH,
   type PoolWebAccount,
@@ -298,6 +299,20 @@ export interface PoolStatusRouteOptions {
    * own cadence.
    */
   creditsSpend?: (days: number | undefined) => Promise<unknown>
+  /**
+   * The dashboard document: real charges and grants, per account and per day.
+   *
+   * A thunk that takes the requested window and a refresh flag, and answers the
+   * assembled document. The host owns the caching, and owns it as
+   * "last good answer plus its timestamp" rather than as a TTL cache, because the
+   * expensive half is the upstream walk: refreshing 9 accounts × 31 days is ~280
+   * meter requests, and a panel opened twice must not pay for it twice.
+   *
+   * Absent when the host did not wire it: the route then answers 503 and the page
+   * says the dashboard is unavailable in this build, rather than rendering an
+   * empty chart.
+   */
+  spendReport?: (days: number | undefined, refresh: boolean) => Promise<unknown>
   /**
    * The relay's current state, or undefined when this build has no relay.
    *
@@ -1594,6 +1609,34 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
       },
     })
     /**
+     * The dashboard's credit history.
+     *
+     * GET only, `?days=N` and `?refresh=1` optional. This is the one route in the
+     * plugin that talks to the billing meter on every cache miss, and the meter
+     * rate-limits a burst with a bare 429 — so the host caches, and this handler
+     * only forwards the two knobs that decide whether to use that cache.
+     */
+    const disposeSpendReport = ctx.webServer.register({
+      kind: 'exact',
+      path: POOL_SPEND_REPORT_PATH,
+      handler: async (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+        if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
+        if (deps.spendReport === undefined) {
+          return json(res, 503, { error: 'the credit dashboard is not available in this build' })
+        }
+        try {
+          const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+          const rawDays = url.searchParams.get('days')
+          const parsedDays = rawDays === null ? undefined : Number(rawDays)
+          const days = parsedDays === undefined || !Number.isFinite(parsedDays) ? undefined : Math.trunc(parsedDays)
+          json(res, 200, await deps.spendReport(days, url.searchParams.get('refresh') === '1'))
+        } catch (error: unknown) {
+          json(res, 500, { error: safeMessage(error) })
+        }
+      },
+    })
+    /**
      * Replace the whole chain table.
      *
      * POST only, one table per request (see `POOL_COMBOS_SAVE_PATH`). The write
@@ -1726,6 +1769,7 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
       disposeCombosSave()
       disposeCombos()
       disposeCreditsSpend()
+      disposeSpendReport()
       disposeChannels()
       disposeAggregate()
       disposeAggregateDiscover()

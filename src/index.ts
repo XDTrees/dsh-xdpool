@@ -235,6 +235,16 @@ import { channelListableAsRows, createWorkBuddyShim, type WorkBuddyShim } from '
 import { createChannelLane, type ChannelLaneLlm } from './channel-lane.ts'
 import { backfillUsageFromLedger, readCreditSpend } from './credit-report.ts'
 import { ratesFor, type CreditRates } from './credits.ts'
+import { createMeterGate, readSpendReport, SPEND_MAX_DAYS, spendDayKey, type SpendReport } from './spend-report.ts'
+import {
+  keepFromFor,
+  loadSpendCache,
+  mergeAccount,
+  pruneCache,
+  saveSpendCache,
+  type CachedAccount,
+  type CachedDay,
+} from './spend-cache.ts'
 import { createPoolRelay, newRelayKey, relayDocumentOf, RELAY_DEFAULT_PORT, RELAY_HOSTS, type RelaySettings } from './relay.ts'
 import { UsageRecorder } from './stats.ts'
 import { buildStatus } from './status.ts'
@@ -243,7 +253,7 @@ export {
   isAutomationJobKind, isFireHour,
   type AutomationLedger, type AutomationRunSummary, type AutomationStatus, type SchedulerLogger,
 } from './scheduler.ts'
-import { regionOf, WorkBuddyUpstreamClient, type WorkBuddyRegion } from './upstream.ts'
+import { regionOf, WorkBuddyUpstreamClient, type WorkBuddyRegion, type WorkBuddyResourceRow } from './upstream.ts'
 import {
   dshHome,
   ignoreAccount,
@@ -1519,6 +1529,32 @@ function canonicalJson(value: unknown): string {
     }
   }
 
+  /**
+   * The dashboard document, held between reads.
+   *
+   * Declared out here rather than inside the route closure because the CLI and
+   * any second mounting of the routes should share one cache: the expensive half
+   * is the upstream meter walk, and it does not care which entry point asked.
+   */
+  let spendCache: { days: number; at: number; report: SpendReport } | undefined
+  /**
+   * How long a cached dashboard is served without asking the meter again.
+   *
+   * Not a TTL in the usual sense: the numbers only change when a request is
+   * served, and the pool card's own poll already shows live credits. Five minutes
+   * is short enough that a user who spends and comes back sees the charge, and
+   * long enough that flicking between tabs costs nothing.
+   */
+  const SPEND_CACHE_MS = 5 * 60_000
+  /**
+   * A read already in progress, so two panels opening together share one walk.
+   *
+   * Without this, two mounts of the settings card would each start a full meter
+   * walk, and the meter answers a burst with a bare 429 for both — the second
+   * reader would turn the first one's success into a failure.
+   */
+  let spendInFlight: { days: number; promise: Promise<SpendReport> } | undefined
+
   ctx.inject(['webServer'], (webCtx) => {
     /**
      * Doubao's three routes.
@@ -1891,6 +1927,125 @@ function canonicalJson(value: unknown): string {
     },
     /** Estimated credit spend per channel, for the composer strip. */
     creditsSpend: async (days: number | undefined) => await creditSpend(days),
+    /**
+     * The dashboard's real credit history.
+     *
+     * CACHED, and the cache is the point rather than an optimisation. One read of
+     * this document walks the billing meter page by page for every account: nine
+     * accounts over 31 days is a couple of dozen upstream requests, each of which
+     * the meter rate-limits if it is asked too often. A page that re-read it on
+     * every mount — or on a tab switch, or a window reload — would spend the
+     * user's own rate limit to draw a chart that had not changed.
+     *
+     * The cache is keyed by window and holds the last GOOD answer with the time
+     * it was taken. It does not expire on a timer: what makes a stale dashboard
+     * wrong is a new charge, and a charge only happens when a request is served,
+     * so a few minutes of staleness is a few minutes in which the numbers are
+     * still true. `refresh=1` bypasses it entirely — that is the panel's button.
+     *
+     * A FAILED read does not overwrite a good answer. An empty dashboard is worse
+     * than an old one, and the failure is visible on its own via `failedAccounts`.
+     */
+    spendReport: async (days: number | undefined, refresh: boolean) => {
+      const requested = days === undefined ? SPEND_MAX_DAYS : Math.max(1, Math.min(days, SPEND_MAX_DAYS))
+      const cached = spendCache
+      if (!refresh && cached !== undefined && cached.days === requested
+        && Date.now() - cached.at < SPEND_CACHE_MS) {
+        return cached.report
+      }
+      // One reader at a time. Two panels opening together would otherwise double
+      // the upstream walk and earn a 429 for both.
+      if (spendInFlight !== undefined && spendInFlight.days === requested) {
+        return await spendInFlight.promise
+      }
+      const accounts = core.pool.list().map(account => ({
+        id: account.id,
+        label: account.label,
+        credential: account.credential,
+      }))
+      /**
+       * Finished days already on disk.
+       *
+       * Read BEFORE the meter is touched, and the reason the window buttons are
+       * cheap: switching 31 -> 7 -> 14 re-derives only the days not already there.
+       * A read failure is not fatal — an empty cache just means the meter answers
+       * everything, which is the behaviour this page had before the cache existed.
+       */
+      const file = await loadSpendCache(dshHome()).catch(() => undefined)
+      const cachedDays: Record<string, Record<string, CachedDay>> = {}
+      if (file !== undefined) {
+        for (const account of accounts) {
+          const slice = file.accounts[account.id]
+          if (slice !== undefined) cachedDays[account.id] = { ...slice.days }
+        }
+      }
+      /**
+       * Days this read had to fetch, collected per account and written once.
+       *
+       * One write per read keeps the file's mtime meaningful and avoids nine rename
+       * dances on a cold 31-day window.
+       */
+      const fresh: Record<string, { days: Record<string, CachedDay>; packages: readonly WorkBuddyResourceRow[]; packagesAt: number }> = {}
+      const promise = readSpendReport({
+        client: core.client,
+        accounts,
+        days: requested,
+        logger: ctx.logger,
+        cachedDays,
+        // One gate per read: the meter limits the SUM of in-flight requests across
+        // all accounts, so the gate has to span every account rather than be
+        // created per account.
+        gate: createMeterGate(),
+        onFresh: (accountId, update) => { fresh[accountId] = { ...update, days: { ...update.days } } },
+      }).then(async report => {
+        // Only a report that actually read something is worth caching: caching an
+        // all-failed document would keep showing it for minutes after the meter
+        // recovered.
+        if (report.failedAccounts < report.accounts.length || report.accounts.length === 0) {
+          spendCache = { days: requested, at: Date.now(), report }
+          /**
+           * Persist what was fetched, best effort.
+           *
+           * Awaited rather than fired and forgotten: a second window request
+           * arriving a moment later would otherwise race the write and re-fetch the
+           * same days. The write is ~200 KB, noise next to the walk it saves.
+           */
+          const home = dshHome()
+          const next = file ?? { version: 1, accounts: {} as Record<string, CachedAccount> }
+          const todayKey = spendDayKey(Date.now())
+          /**
+           * The retention floor, from the window THIS read covered.
+           *
+           * `requested` rather than `SPEND_MAX_DAYS`: a 7-day read must still keep
+           * a 40-day range, so the floor follows what was actually asked for.
+           */
+          const windowStartKey = spendDayKey(Date.now() - (requested - 1) * 86_400_000)
+          const keepFrom = keepFromFor(windowStartKey, requested)
+          for (const [accountId, update] of Object.entries(fresh)) {
+            mergeAccount(next, accountId, {
+              days: update.days,
+              packages: update.packages,
+              packagesAt: update.packagesAt,
+              keepFrom,
+            })
+            // Today must never be stored; `daysToCache` already filters it, and
+            // this is the belt to that pair of braces.
+            const stored = next.accounts[accountId]
+            if (stored !== undefined) {
+              const mutable = stored.days as Record<string, CachedDay>
+              delete mutable[todayKey]
+            }
+          }
+          pruneCache(next, { accountIds: accounts.map(account => account.id), keepFrom })
+          await saveSpendCache(home, next).catch(() => false)
+        }
+        return report
+      }).finally(() => {
+        if (spendInFlight?.promise === promise) spendInFlight = undefined
+      })
+      spendInFlight = { days: requested, promise }
+      return await promise
+    },
       /**
      * Relay state plus the gateway's model picker.
      *

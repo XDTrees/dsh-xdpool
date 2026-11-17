@@ -1530,7 +1530,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
     >
       {page === 'aggregate' ? <AggregatePage t={t} />
         : page === 'channels' ? <ChannelsPage t={t} />
-          : page === 'ledger' ? <LedgerPage t={t} usage={usage} />
+          : page === 'ledger' ? <LedgerPage t={t} />
                   : page === 'routing' ? <RoutingPage t={t} />
                 : page === 'gateway' ? <GatewayPage t={t} />
                   : page === 'backup' ? <BackupPanel t={t} />
