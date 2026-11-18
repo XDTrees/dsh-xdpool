@@ -46,6 +46,7 @@ import {
   buildComboCatalog,
   pruneRotation,
   type ComboModelRow,
+  type HostModelRow,
 } from './combos.ts'
 import type { WorkBuddyCatalog, WorkBuddyModelInfo } from './catalog.ts'
 /** Registry `format` → the wire vocabulary this module speaks. */
@@ -427,6 +428,16 @@ export class AggregateCatalog {
   constructor(
     private readonly read: () => AggregateStore | Promise<AggregateStore>,
     private readonly poolRows: () => readonly WorkBuddyModelInfo[] = () => [],
+    /**
+     * Login-channel rows, for the chain half of the roster.
+     *
+     * A chain may mix a channel member (`trae:doubao-seed`) with pool and
+     * aggregate ones, and without this the channel members are simply
+     * unresolvable here: the chain row would advertise a subset of its members
+     * and a window computed over that subset. Read lazily because the roster is
+     * loaded after this catalog exists.
+     */
+    private readonly hostRows: () => readonly HostModelRow[] = () => [],
   ) {}
   /**
    * Every row this catalog offers: third-party rows first, then chain rows.
@@ -452,6 +463,7 @@ export class AggregateCatalog {
     const chains = buildComboCatalog(combosOf(store), {
       pool: this.poolRows(),
       aggregate: next,
+      host: this.hostRows(),
     })
     pruneRotation(combosOf(store))
     const same = next.length === this.rows.length

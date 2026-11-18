@@ -2915,6 +2915,37 @@ interface ComboModelRow {
    */
   combo: true;
 }
+/**
+ * One model served by a 扫码登录 channel, as the route editor sees it.
+ *
+ * These are the channels the vendored pack registers with the HOST (`trae`,
+ * `qoder`, `codebuddy`…). They are in neither catalog above: the pool catalog
+ * describes the WorkBuddy account lanes, and the aggregate catalog describes the
+ * vendors in this plugin's own registry. A chain could not name them at all, which
+ * is why the routing page offered exactly ONE platform — the pool — while the login
+ * page happily showed thirteen.
+ */
+interface HostModelRow {
+  /** `<channel>:<modelId>` — the id the shim already resolves to its fifth lane. */
+  id: string;
+  channel: string;
+  modelId: string;
+  name: string;
+  /**
+   * What the host's own model picker would enforce for this row.
+   *
+   * The host's LISTING publishes neither the window nor the modalities (its
+   * mapper keeps four fields), but `resolveModelInfo(channel, model)` answers
+   * both, and that is where the picker and the compaction planner read them
+   * from. Optional on purpose: a channel whose catalogue is a bare id list
+   * cannot describe a row, and the chain then has to fall back to the
+   * documented defaults rather than invent a capacity.
+   */
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  /** Modalities in the host's own vocabulary, e.g. `['text', 'image']`. */
+  inputModalities?: readonly string[];
+}
 //#endregion
 //#region src/store.d.ts
 /**
@@ -3246,6 +3277,16 @@ interface AggregateModelRow {
 declare class AggregateCatalog {
   private readonly read;
   private readonly poolRows;
+  /**
+   * Login-channel rows, for the chain half of the roster.
+   *
+   * A chain may mix a channel member (`trae:doubao-seed`) with pool and
+   * aggregate ones, and without this the channel members are simply
+   * unresolvable here: the chain row would advertise a subset of its members
+   * and a window computed over that subset. Read lazily because the roster is
+   * loaded after this catalog exists.
+   */
+  private readonly hostRows;
   private rows;
   private chainRows;
   /**
@@ -3254,7 +3295,17 @@ declare class AggregateCatalog {
    *   that names a WorkBuddy model. A chain may mix pool models with aggregate
    *   ones, so without this a perfectly valid chain would lose its pool half.
    */
-  constructor(read: () => AggregateStore | Promise<AggregateStore>, poolRows?: () => readonly WorkBuddyModelInfo[]);
+  constructor(read: () => AggregateStore | Promise<AggregateStore>, poolRows?: () => readonly WorkBuddyModelInfo[],
+  /**
+   * Login-channel rows, for the chain half of the roster.
+   *
+   * A chain may mix a channel member (`trae:doubao-seed`) with pool and
+   * aggregate ones, and without this the channel members are simply
+   * unresolvable here: the chain row would advertise a subset of its members
+   * and a window computed over that subset. Read lazily because the roster is
+   * loaded after this catalog exists.
+   */
+  hostRows?: () => readonly HostModelRow[]);
   /**
    * Every row this catalog offers: third-party rows first, then chain rows.
    *

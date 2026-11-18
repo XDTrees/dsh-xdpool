@@ -193,16 +193,18 @@ function combosStatusOf(
      *
      * `usable: true` because a row only appears in this list once the host has
      * already listed it for that channel, i.e. the account exists. The window and
-     * image flag are unknown (the host's listing publishes neither), so they are
-     * left at the documented defaults rather than invented.
+     * image flag come from the row when the host could describe the model, and
+     * stay at the documented defaults when it could not — the same contract
+     * `resolveComboMember` honours, so the candidate card and the chain it builds
+     * cannot disagree about a member's capacity.
      */
     ...hostRows.map(row => ({
       id: row.id,
       name: row.name,
       owner: row.channel,
       usable: true,
-      contextWindow: COMBO_DEFAULT_CONTEXT_WINDOW,
-      supportsImages: false,
+      contextWindow: row.contextWindow ?? COMBO_DEFAULT_CONTEXT_WINDOW,
+      supportsImages: row.inputModalities?.includes('image') ?? false,
       siblings: [] as readonly string[],
     })),
   ]
@@ -1179,6 +1181,16 @@ function canonicalJson(value: unknown): string {
   // I call today", and two recorders would make that total a sum of two
   // unrelated half-tables - a number that looks authoritative and is wrong.
   const usageRecorder = new UsageRecorder()
+  /**
+   * The login channels' models, as the route editor sees them.
+   *
+   * Declared up here because the aggregate catalog needs to read it: a chain may
+   * name a channel member, and the catalog builds the chain rows the picker and
+   * the adapter serve. The roster itself is filled in by `hostRoster` below,
+   * which is async — a lazy getter is what lets the catalog exist first.
+   */
+  let hostRosterCache: readonly HostModelRow[] = []
+  const hostRows = (): readonly HostModelRow[] => hostRosterCache
   // A chain may name a pool model as well as a third-party one, so the catalog
   // is handed the CN roster: without it a chain pointing at `hy3` would drop
   // that member and advertise only the aggregate half. The CN rows are the
@@ -1186,6 +1198,9 @@ function canonicalJson(value: unknown): string {
   const aggregateCatalog = new AggregateCatalog(
     () => readAggregateSettingsSync(),
     () => core.catalogs.cn.current(),
+    // Chains may also name a login-channel model, which lives in neither of the
+    // two catalogs above: it is a host adapter row, listed asynchronously.
+    hostRows,
   )
   void aggregateCatalog.refresh()
   // The免密 free lane. It owns its own roster behind its own provider id, so it
@@ -1315,6 +1330,54 @@ function canonicalJson(value: unknown): string {
    */
   const lanModelsOf = (): readonly string[] | undefined => readAggregateSettingsSync().relay?.models
   /**
+   * What the host's own model picker would enforce for one channel's models.
+   *
+   * The host's `listModels` answer carries id, name, description and input
+   * modalities, and its mapper drops the context window on the way out. The
+   * window lives one call deeper, on `resolveModelInfo(provider, model)` —
+   * where the picker and the compaction planner read it from — so a row that
+   * wants to report a capacity needs a second pass over it.
+   *
+   * Bounded and per-row isolated, the same shape the login card already uses:
+   * an adapter answers from its own cache in the common case, a row that cannot
+   * be described simply carries no facts, and one undescribable model never
+   * holds up the rest.
+   */
+  const channelFactsOf = async (
+    provider: string,
+    ids: readonly string[],
+  ): Promise<Map<string, { contextWindow?: number, maxTokens?: number, inputModalities?: readonly string[] }>> => {
+    const facts = new Map<string, { contextWindow?: number, maxTokens?: number, inputModalities?: readonly string[] }>()
+    // Six at a time rather than all at once: some adapters resolve a model by
+    // asking their upstream, and a channel publishing thirty models would
+    // otherwise open thirty sockets.
+    const resolveConcurrency = 6
+    let next = 0
+    const workers = Array.from({ length: Math.min(resolveConcurrency, ids.length) }, async () => {
+      while (next < ids.length) {
+        const id = ids[next++]
+        // Read the id out first: a shared cursor under `noUncheckedIndexedAccess`
+        // is typed as possibly absent even though the bound check proves it.
+        if (id === undefined) continue
+        try {
+          const info = await ctx.llm.resolveModelInfo(provider, id)
+          facts.set(id, {
+            ...info.context?.contextWindow === undefined ? {} : { contextWindow: info.context.contextWindow },
+            ...info.defaultMaxTokens === undefined ? {} : { maxTokens: info.defaultMaxTokens },
+            ...info.inputModalities === undefined ? {} : { inputModalities: info.inputModalities },
+          })
+        } catch (cause: unknown) {
+          // An adapter that cannot describe one exact model is the norm for the
+          // channels whose catalogue is a bare id list; the row stays usable
+          // without the figures.
+          void cause
+        }
+      }
+    })
+    await Promise.all(workers)
+    return facts
+  }
+  /**
    * The login channels' models, as the route editor needs them.
    *
    * `channelLane.rows()` already caches per channel (60s TTL) and de-duplicates
@@ -1327,16 +1390,50 @@ function canonicalJson(value: unknown): string {
    * The two pool-owned channels are excluded by `channelLane` itself, so the same
    * model cannot appear once as a pool row and again as a channel row.
    */
-  let hostRosterCache: readonly HostModelRow[] = []
   const hostRoster = async (): Promise<readonly HostModelRow[]> => {
     try {
       const rows = await channelLane.rows()
-      hostRosterCache = rows.map(row => ({
-        id: row.id,
-        channel: row.channel,
-        modelId: row.modelId,
-        name: row.name,
-      }))
+      const previous = hostRosterCache
+      // Facts, not just ids. A chain reports its window as the intersection over
+      // its members (`buildComboCatalog`), so a channel member carrying no window
+      // pins every chain it joins to the default — and that number is not
+      // cosmetic: the host sizes a turn's budget against it. The rows are
+      // resolved per channel so each adapter is asked about its own models once.
+      const byChannel = new Map<string, string[]>()
+      for (const row of rows) {
+        const ids = byChannel.get(row.channel)
+        if (ids === undefined) byChannel.set(row.channel, [row.modelId])
+        else ids.push(row.modelId)
+      }
+      const facts = new Map<string, { contextWindow?: number, maxTokens?: number, inputModalities?: readonly string[] }>()
+      for (const [channel, ids] of byChannel) {
+        for (const [modelId, fact] of await channelFactsOf(channel, ids)) {
+          facts.set(`${channel}:${modelId}`, fact)
+        }
+      }
+      hostRosterCache = rows.map(row => {
+        const fact = facts.get(row.id)
+        return {
+          id: row.id,
+          channel: row.channel,
+          modelId: row.modelId,
+          name: row.name,
+          ...fact?.contextWindow === undefined ? {} : { contextWindow: fact.contextWindow },
+          ...fact?.maxTokens === undefined ? {} : { maxOutputTokens: fact.maxTokens },
+          ...fact?.inputModalities === undefined ? {} : { inputModalities: fact.inputModalities },
+        }
+      })
+      // The catalog's chain rows were built from this roster BEFORE it existed —
+      // the catalog is constructed at plugin start and the roster only lands
+      // once the host has listed the channels. Rebuilding here is what makes the
+      // picker's chain rows agree with the routing page's. Guarded on an actual
+      // change: this runs per routing-document request, and a rebuild that
+      // republishes identical rows would wake every adapter listener for nothing.
+      if (JSON.stringify(previous) !== JSON.stringify(hostRosterCache)) {
+        void aggregateCatalog.refresh().catch((error: unknown) => {
+          ctx.logger?.warn?.('dsh-xdpool: could not rebuild the routing catalog:', error)
+        })
+      }
     } catch (error: unknown) {
       // Keep whatever the last successful listing produced. An empty list here
       // would silently drop every channel member from every chain on screen.
