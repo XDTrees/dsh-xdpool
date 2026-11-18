@@ -393,6 +393,20 @@ export interface HostModelRow {
   channel: string
   modelId: string
   name: string
+  /**
+   * What the host's own model picker would enforce for this row.
+   *
+   * The host's LISTING publishes neither the window nor the modalities (its
+   * mapper keeps four fields), but `resolveModelInfo(channel, model)` answers
+   * both, and that is where the picker and the compaction planner read them
+   * from. Optional on purpose: a channel whose catalogue is a bare id list
+   * cannot describe a row, and the chain then has to fall back to the
+   * documented defaults rather than invent a capacity.
+   */
+  contextWindow?: number
+  maxOutputTokens?: number
+  /** Modalities in the host's own vocabulary, e.g. `['text', 'image']`. */
+  inputModalities?: readonly string[]
 }
 /** The catalogs a combo chain is resolved against. */
 export interface ComboSources {
@@ -441,10 +455,12 @@ export function resolveComboMember(modelId: string, sources: ComboSources): Comb
    * channel first cannot shadow one — and doing it first keeps a channel named after
    * a pool id from being swallowed.
    *
-   * The window and image flag are not known for a channel row (the host's listing
-   * publishes neither), so the chain's intersection falls back to the documented
-   * defaults. That is the honest answer: an unknown window must not be treated as a
-   * large one, or the host would size a compaction against a limit nobody promised.
+   * The window and image flag come from the row when the host could describe it,
+   * and fall back to the documented defaults when it could not. The distinction
+   * matters both ways: an unresolvable row must not be treated as a large one
+   * (the host would size a compaction against a limit nobody promised), and a
+   * row the host CAN describe must not be reported at the default, because on a
+   * chain that is the number the caller reads as the chain's own budget.
    */
   const hostRow = sources.host?.find(row => row.id === id)
   if (hostRow !== undefined) {
@@ -454,9 +470,9 @@ export function resolveComboMember(modelId: string, sources: ComboSources): Comb
       host: true,
       channel: hostRow.channel,
       name: hostRow.name,
-      contextWindow: COMBO_DEFAULT_CONTEXT_WINDOW,
-      maxOutputTokens: COMBO_DEFAULT_MAX_OUTPUT,
-      supportsImages: false,
+      contextWindow: hostRow.contextWindow ?? COMBO_DEFAULT_CONTEXT_WINDOW,
+      maxOutputTokens: hostRow.maxOutputTokens ?? COMBO_DEFAULT_MAX_OUTPUT,
+      supportsImages: hostRow.inputModalities?.includes('image') ?? false,
     }
   }
   const poolRow = sources.pool.find(row => row.id === id)

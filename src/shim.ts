@@ -30,6 +30,7 @@ import {
   resolveComboMember,
   type ComboMember,
   type ComboModelRow,
+  type HostModelRow,
 } from './combos.ts'
 import type { AggregateStore } from './store.ts'
 import { paidAlternativeFor } from './siblings.ts'
@@ -1082,11 +1083,32 @@ function withBareModelId(raw: string, modelId: string): string {
     signal: AbortSignal,
   ): Promise<void> {
     const store = aggregate?.readStore()
+    /*
+      A chain may name a login-channel model (`trae:doubao-seed`), and those rows
+      belong to NEITHER catalog consulted below: they are host adapters, listed
+      asynchronously by the mounted channel lane. Left out of the sources,
+      `resolveComboMember` cannot resolve such a member, it is filtered away, and
+      the chain quietly serves only its remaining members — the `member.host`
+      branch further down exists and is never reached. The listing is consulted
+      only when the chain actually names something the lane recognises
+      (`channels.resolve` is synchronous), so a pool-only chain pays nothing.
+    */
+    const chain = comboChain(row)
+    const wantsHost = channels !== undefined && chain.some(modelId => channels.resolve(modelId) !== undefined)
+    const hostRows: readonly HostModelRow[] = wantsHost && channels !== undefined
+      ? (await channels.rows()).map(row => ({
+        id: row.id,
+        channel: row.channel,
+        modelId: row.modelId,
+        name: row.name,
+      }))
+      : []
     const sources = {
       pool: catalog.current(),
       aggregate: aggregate === undefined ? [] : aggregate.catalog.providerRows(),
+      host: hostRows,
     }
-    const members = comboChain(row)
+    const members = chain
       .map(modelId => resolveComboMember(modelId, sources))
       .filter((member): member is ComboMember => member !== undefined)
     if (members.length === 0) {

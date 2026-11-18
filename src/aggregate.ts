@@ -46,6 +46,7 @@ import {
   buildComboCatalog,
   pruneRotation,
   type ComboModelRow,
+  type HostModelRow,
 } from './combos.ts'
 import type { WorkBuddyCatalog, WorkBuddyModelInfo } from './catalog.ts'
 /** Registry `format` → the wire vocabulary this module speaks. */
@@ -414,6 +415,25 @@ export function buildAggregateCatalog(store: AggregateStore): AggregateModelRow[
   }
   return rows
 }
+/**
+ * Whether two row sets describe the same roster.
+ *
+ * Compared field by field rather than by id. An edit can keep every id and still
+ * change what the row CLAIMS — a chain member swapped for another while the count
+ * stays the same, a renamed chain, a window or image flag that moved — and an
+ * id-only comparison publishes none of those: the picker and the adapter keep
+ * serving the previous numbers until the process restarts.
+ */
+function sameRows<T extends { id: string }>(previous: readonly T[], next: readonly T[]): boolean {
+  if (previous.length !== next.length) return false
+  return next.every((row, index) => {
+    const before = previous[index]
+    if (before === undefined) return false
+    const keys = Object.keys(row) as (keyof T)[]
+    if (keys.length !== Object.keys(before).length) return false
+    return keys.every(key => JSON.stringify(row[key]) === JSON.stringify(before[key]))
+  })
+}
 /** One stored aggregate row set, refreshed on change, for the shim and adapter. */
 export class AggregateCatalog {
   private rows: readonly AggregateModelRow[] = []
@@ -427,6 +447,16 @@ export class AggregateCatalog {
   constructor(
     private readonly read: () => AggregateStore | Promise<AggregateStore>,
     private readonly poolRows: () => readonly WorkBuddyModelInfo[] = () => [],
+    /**
+     * Login-channel rows, for the chain half of the roster.
+     *
+     * A chain may mix a channel member (`trae:doubao-seed`) with pool and
+     * aggregate ones, and without this the channel members are simply
+     * unresolvable here: the chain row would advertise a subset of its members
+     * and a window computed over that subset. Read lazily because the roster is
+     * loaded after this catalog exists.
+     */
+    private readonly hostRows: () => readonly HostModelRow[] = () => [],
   ) {}
   /**
    * Every row this catalog offers: third-party rows first, then chain rows.
@@ -452,13 +482,10 @@ export class AggregateCatalog {
     const chains = buildComboCatalog(combosOf(store), {
       pool: this.poolRows(),
       aggregate: next,
+      host: this.hostRows(),
     })
     pruneRotation(combosOf(store))
-    const same = next.length === this.rows.length
-      && chains.length === this.chainRows.length
-      && next.every((row, index) => row.id === this.rows[index]?.id)
-      && chains.every((row, index) => row.id === this.chainRows[index]?.id)
-    if (same) return this.current()
+    if (sameRows(this.rows, next) && sameRows(this.chainRows, chains)) return this.current()
     this.rows = next
     this.chainRows = chains
     for (const listener of this.listeners) listener()
