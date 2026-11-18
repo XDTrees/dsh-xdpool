@@ -195,9 +195,18 @@ export function freeSlotOf(entries: readonly DoubaoAccountEntry[]): number {
   return slot
 }
 
-/** Write the whole list atomically, readable only by its owner. */
-export async function writeStoredAccounts(entries: readonly DoubaoAccountEntry[]): Promise<void> {
-  const target = doubaoSessionPath()
+/**
+ * Write the whole list atomically, readable only by its owner.
+ *
+ * `path` is injectable for the same reason `readStoredAccounts` takes one: the restore/persist
+ * ordering is a failure mode with data loss in it, so it has to be exercised against a temp
+ * file rather than the live credential.
+ */
+export async function writeStoredAccounts(
+  entries: readonly DoubaoAccountEntry[],
+  path = doubaoSessionPath(),
+): Promise<void> {
+  const target = path
   await mkdir(dirname(target), { recursive: true })
   const temporary = `${target}.tmp`
   const document = {
@@ -216,9 +225,9 @@ export async function writeStoredAccounts(entries: readonly DoubaoAccountEntry[]
 }
 
 /** Remove the session file entirely: the state "no Doubao account" is stored as absence. */
-export async function removeStoredAccounts(): Promise<void> {
+export async function removeStoredAccounts(path = doubaoSessionPath()): Promise<void> {
   try {
-    await unlink(doubaoSessionPath())
+    await unlink(path)
   } catch {
     // Nothing to remove is the state the caller wanted.
   }

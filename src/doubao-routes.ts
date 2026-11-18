@@ -66,6 +66,14 @@ export interface DoubaoAccountView {
 export interface DoubaoRouteOptions {
   /** The roster, read fresh on each request. */
   roster: () => DoubaoRoster
+  /**
+   * Resolves once the roster has been restored from disk.
+   *
+   * Every handler awaits this FIRST. A restart reads the session file asynchronously, and the
+   * card's first poll is fast enough to beat that read — a poll against the empty starting
+   * roster answers "not signed in" and, worse, persists the emptiness over a good file.
+   */
+  ready?: () => Promise<void>
   /** Called after a sign-in adopted an account, so the caller can persist. */
   save: () => void
   /** Forget one account, or all of them when no id is given. */
@@ -202,6 +210,8 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
         try {
+          // Nothing below may see the empty starting roster: see `DoubaoRouteOptions.ready`.
+          await deps.ready?.()
           /**
            * `DELETE` forgets ONE account, or every account when no id is given.
            *
@@ -320,6 +330,7 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
         if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
+        await deps.ready?.()
         const roster = deps.roster()
         const wanted = accountParam(req)
         /**
@@ -382,6 +393,7 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
         if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
+        await deps.ready?.()
         /**
          * The same list the picker gets.
          *
@@ -411,6 +423,7 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
         if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
+        await deps.ready?.()
         const account = accountFor(deps.roster(), accountParam(req))
         const campaign = await fetchCampaign(account?.session)
         return json(res, 200, {
@@ -428,6 +441,7 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
         if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
+        await deps.ready?.()
         /**
          * Claim for ONE account, or for every account when none is named.
          *

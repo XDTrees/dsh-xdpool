@@ -1239,25 +1239,47 @@ function canonicalJson(value: unknown): string {
    * a jar, so the new one overwrote it. `doubao-roster.ts` owns the list, the per-account
    * browser slots and the failure cooldowns; this file only wires it.
    *
-   * Restoring from disk is what makes a restart keep every account working, and it is
-   * deliberately not awaited — the plugin must not block its own start on a disk read.
+   * Restoring from disk is what makes a restart keep every account working.
+   *
+   * IT IS TRACKED, and every reader awaits it before doing anything else. Reading it in the
+   * background with a bare `void` was a real defect: the card's first poll can land before the
+   * file resolves, and a poll that harvests nothing would then persist an EMPTY roster — which
+   * `persistDoubaoRoster` turns into "delete the session file". The accounts survived, but the
+   * card said "not signed in" until the next restart, and a sign-in in that window would have
+   * wiped the file.
+   *
+   * The read is still not awaited by `apply()` itself: the plugin must not block its own start
+   * on disk. It is awaited by the code that MUTATES or REPORTS the roster below.
    */
   const doubaoRoster = createDoubaoRoster()
-  void readStoredAccounts().then((stored) => {
-    if (stored.length > 0) doubaoRoster.replace(stored)
-  })
+  let doubaoRestored: Promise<void> = readStoredAccounts()
+    .then((stored) => {
+      if (stored.length > 0) doubaoRoster.replace(stored)
+    })
+    .catch((error: unknown) => {
+      ctx.logger.warn('dsh-xdpool: could not restore the Doubao accounts', error)
+    })
+  /** The restore, for the callers that must not act on an empty roster. */
+  const doubaoReady = async (): Promise<void> => { await doubaoRestored }
+
   /**
    * Write the roster back, coalescing concurrent writes into one chain.
    *
    * Every mutation goes through here rather than a fire-and-forget write per route: a sign-in
    * that lands while a card poll is adopting a jar would otherwise interleave two half-written
    * files, and the store's atomic rename only protects a SINGLE write.
+   *
+   * `persistDoubaoRoster` REFUSES to run before the restore has landed. An empty roster is
+   * indistinguishable from "the file has not been read yet", and the two have opposite
+   * consequences — one is a user who signed every account out, the other is a user whose
+   * accounts are all still on disk. Deleting on the second is silent data loss.
    */
   let doubaoWrite: Promise<void> | undefined
   const persistDoubaoRoster = (): void => {
-    const entries = entriesOf(doubaoRoster.list())
     doubaoWrite = (doubaoWrite ?? Promise.resolve())
       .then(async () => {
+        await doubaoReady()
+        const entries = entriesOf(doubaoRoster.list())
         if (entries.length === 0) {
           await removeStoredAccounts()
           return
@@ -1543,6 +1565,14 @@ function canonicalJson(value: unknown): string {
      */
     registerDoubaoRoutes(webCtx, {
       roster: () => doubaoRoster,
+      /**
+       * The routes must not read or mutate the roster before it has been restored.
+       *
+       * The first card poll after a restart is fast enough to beat a disk read, and a poll that
+       * ran against the empty starting roster would both report "not signed in" and persist
+       * that emptiness over a perfectly good session file.
+       */
+      ready: doubaoReady,
       trustedHosts,
       // The routes mutate the roster; persisting is this side's job, because the store is a
       // file this process owns rather than something a route should know how to write.
