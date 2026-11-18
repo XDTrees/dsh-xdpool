@@ -38,6 +38,51 @@ import { channelIcon } from './channel-icons.ts'
 export type RegionCardRegion = PoolRegion
 
 /**
+ * The lanes, in the order the page draws them.
+ *
+ * One list, used for the poll loop, the render loop and the presence filter
+ * below. A second hand-written pair anywhere is how a lane ends up polled but
+ * never drawn, or drawn but never polled.
+ */
+export const REGION_CARD_ORDER = ['cn', 'global'] as const
+
+/**
+ * Which lanes the pool page should put on screen.
+ *
+ * The rule the user asked for: 绑定了哪个渠道，就显示什么渠道 — a lane nobody
+ * signed in to has no business on the page. Both cards used to render
+ * unconditionally; that was right while the two lanes were the only content,
+ * and wrong once a domestic-only user had to scroll past a whole international
+ * card — its endpoint, its model count, and a step-by-step guide to installing
+ * an app they do not have — on every single visit.
+ *
+ * `accountCounts` carries a count ONLY for lanes whose status document has
+ * arrived, which is what makes the three states distinguishable:
+ *
+ *  - some lane holds an account → exactly those lanes. This is the ordinary
+ *    case and the whole point: one sign-in, one card.
+ *  - every lane answered, all empty → both. A fresh install has no bound lane,
+ *    no summary and no instructions, and the two lanes' guides are the only
+ *    way in; filtering them away would leave a blank page with no door. Same
+ *    forfeit-the-filter rule `ChannelPoolSection` applies when nothing is
+ *    bound yet.
+ *  - still reading → none. Defaulting to both here would make the international
+ *    card flash in and collapse back out on every visit, and a card that
+ *    appears-then-vanishes is the complaint, not a smaller version of it.
+ *
+ * A lane that is filtered out is still POLLED. Signing in on the login page
+ * lands in the pool, and the lane has to appear on its own without a reload.
+ */
+export function visibleRegionCards(
+  accountCounts: Readonly<Partial<Record<RegionCardRegion, number>>>,
+): readonly RegionCardRegion[] {
+  const answered = REGION_CARD_ORDER.filter(region => accountCounts[region] !== undefined)
+  const bound = answered.filter(region => (accountCounts[region] ?? 0) > 0)
+  if (bound.length > 0) return bound
+  return answered.length === REGION_CARD_ORDER.length ? REGION_CARD_ORDER : []
+}
+
+/**
  * Which login channel each lane IS.
  *
  * The pool serves the same two vendors the login page offers, so the lane's

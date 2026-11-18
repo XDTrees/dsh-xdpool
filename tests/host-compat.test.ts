@@ -317,10 +317,13 @@ describe('the settings page renders on both kernel lines', () => {
     expect(card).toMatch(/dsm-xdpool-card dsm-xdpool-usage/)
     expect(card).toMatch(/dsm-xdpool-regions/)
     expect(card).toMatch(/dsm-xdpool-region-grid/)
-    // Both lanes render, always — the tab that only appeared after a sign-in
-    // is the failure mode here.
-    expect(card).toContain('REGION_CARDS.map(region =>')
-    expect(card).toContain("const REGION_CARDS = ['cn', 'global'] as const")
+    // Every lane the user is signed in to renders, always — the tab that only
+    // appeared after a sign-in is the failure mode here. Which lanes those are
+    // is `visibleRegionCards`' answer: a lane with no account in it must not be
+    // on the page at all (the user's "绑定了哪个渠道，就显示什么渠道"), while a
+    // fresh install still gets both guides.
+    expect(card).toContain('{visibleRegions.map(region =>')
+    expect(card).toContain('const REGION_CARDS = REGION_CARD_ORDER')
   })
 
   it('exposes the region disclosures as accessible controls', () => {
