@@ -53,7 +53,7 @@ import { AggregatePage } from './AggregatePage.tsx'
 import { ChannelsPage } from './ChannelsPage.tsx'
 import { RoutingPage } from './RoutingPage.tsx'
 import { GatewayPage } from './GatewayPage.tsx'
-import { RegionCardPane, RegionCardTile, RegionCardTrigger, regionCardStyle } from './region-card.tsx'
+import { REGION_CARD_ORDER, RegionCardPane, RegionCardTile, RegionCardTrigger, regionCardStyle, visibleRegionCards } from './region-card.tsx'
 import type { RegionCardState } from './region-card.tsx'
 import { REGION_CHANNEL_BY_REGION } from './region-card.tsx'
 import { POOL_CHANNELS_PATH } from '../status-paths.ts'
@@ -215,12 +215,13 @@ function formatCapacity(value: number | undefined): string {
 /**
  * The two supplier cards, in the order they are shown.
  *
- * Both are always rendered, so an empty side reads as "not signed in here
- * yet" rather than the card appearing only after the user has already signed
- * in. Keeping the list here (rather than a literal pair in the JSX) is what lets
- * the poll loop fetch every card without a second source of truth.
+ * One list for the poll loop and the presence filter, so a lane cannot be
+ * polled and never considered, or considered and never polled. WHICH of them
+ * the page actually draws is `visibleRegionCards`' answer, not this list's —
+ * this one names the lanes that exist, that one names the lanes the user is
+ * signed in to.
  */
-const REGION_CARDS = ['cn', 'global'] as const
+const REGION_CARDS = REGION_CARD_ORDER
 /** The settings key holding each region's model selection. */
 const MODEL_SELECTION_KEY = { cn: 'modelSelectionCn', global: 'modelSelectionGlobal' } as const
 /**
@@ -1504,6 +1505,18 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
         : (accountCount > 0 && cooling < accountCount ? 'ok' : 'cooling'),
     }
   }
+  /**
+   * Which lanes the page actually draws — see {@link visibleRegionCards}.
+   *
+   * Computed from the counts this card already holds rather than from a second
+   * copy of the rule: the pool page and the login-channels page answer "is this
+   * lane bound" from the same document, and two implementations of that answer
+   * is how "shows here, hidden there" gets reported.
+   */
+  const visibleRegions = visibleRegionCards({
+    ...(statusOf('cn') === undefined ? {} : { cn: statusOf('cn')?.accounts.length ?? 0 }),
+    ...(statusOf('global') === undefined ? {} : { global: statusOf('global')?.accounts.length ?? 0 }),
+  })
   /*
    * The pool page's own header. The pages that read a different document
    * (channels, providers) render theirs, because each has its own actions and
@@ -1632,13 +1645,14 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                 </p>
               </section>
 
-              {/* Two region cards side by side, one per supplier lane.
-                  Both are always rendered, so a lane with no accounts reads as
-                  "not signed in here yet" rather than a tab that only appears
-                  after the user has already signed in somewhere else. */}
+              {/* One region card per supplier lane the user actually signed in to.
+                  `visibleRegions` decides which: see its comment for the three
+                  states. Rendering both unconditionally is what put an entire
+                  international card — and its install guide — in front of a
+                  domestic-only user on every visit. */}
               <section className="dsm-xdpool-regions">
               <div className="dsm-xdpool-region-grid">
-                {REGION_CARDS.map(region => {
+                {visibleRegions.map(region => {
                   const card = cardOf(region)
                   const accountsPaneId = `dsm-xdpool-${region}-accounts`
                   const modelsPaneId = `dsm-xdpool-${region}-models`
@@ -1753,7 +1767,26 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                           />
                         </div>
                       </div>
-                      {region === 'cn'
+                      {/*
+                        * The account-usage picker, on the first lane that is on
+                        * screen; the automation panel, on the domestic lane only.
+                        *
+                        * Both used to be pinned to `region === 'cn'`. That was
+                        * right while both cards always rendered, but once a lane
+                        * with no account in it is hidden, an international-only
+                        * user would have had no card carrying the picker at all —
+                        * and the distribution is a property of the ONE pool
+                        * instance (one settings key, both gateways), so it is not
+                        * a domestic setting that a hidden card could quietly take
+                        * away with it. The first visible lane is `cn` whenever
+                        * `cn` is visible, so the domestic user sees exactly what
+                        * they saw before.
+                        *
+                        * Automation stays CN-only, and that is a host fact rather
+                        * than a layout choice: the international gateway has no
+                        * growth system, so a switch there could never do anything.
+                        */}
+                      {region === 'cn' || region === visibleRegions[0]
                         ? <div className="dsm-xdpool-region-cntools">
                             <button
                               type="button"
@@ -1768,23 +1801,25 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                 {distLabel(card.status?.distribution ?? 'priority', t)}
                               </span>
                             </button>
-                            <button
-                              type="button"
-                              className="dsm-xdpool-region-tool"
-                              aria-expanded={autoOpen}
-                              aria-controls={autoPaneId}
-                              onClick={() => { setPane(autoPaneId, !autoOpen) }}
-                            >
-                              <span className="dsm-xdpool-region-tool-caret" aria-hidden="true">▸</span>
-                              <span>{t?.('row.autoTitle') ?? 'Automation'}</span>
-                              <span className="dsm-xdpool-region-tool-value">
-                                {card.automation === undefined
-                                  ? '–'
-                                  : card.automation.enabled
-                                    ? (t?.('row.autoOn') ?? 'On')
-                                    : (t?.('row.autoOff') ?? 'Off')}
-                              </span>
-                            </button>
+                            {region === 'cn'
+                              ? <button
+                                  type="button"
+                                  className="dsm-xdpool-region-tool"
+                                  aria-expanded={autoOpen}
+                                  aria-controls={autoPaneId}
+                                  onClick={() => { setPane(autoPaneId, !autoOpen) }}
+                                >
+                                  <span className="dsm-xdpool-region-tool-caret" aria-hidden="true">▸</span>
+                                  <span>{t?.('row.autoTitle') ?? 'Automation'}</span>
+                                  <span className="dsm-xdpool-region-tool-value">
+                                    {card.automation === undefined
+                                      ? '–'
+                                      : card.automation.enabled
+                                        ? (t?.('row.autoOn') ?? 'On')
+                                        : (t?.('row.autoOff') ?? 'Off')}
+                                  </span>
+                                </button>
+                              : null}
                           </div>
                         : null}
                       <RegionCardPane id={accountsPaneId} open={accountsOpen}>

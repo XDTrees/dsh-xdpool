@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { REGION_PALETTES, REGION_GLYPH_BY_REGION, regionCardStyle } from '../src/client/region-card.tsx'
+import { REGION_CARD_ORDER, REGION_PALETTES, REGION_GLYPH_BY_REGION, regionCardStyle, visibleRegionCards } from '../src/client/region-card.tsx'
 import { BRAND_TILE_GLYPHS } from '../src/client/brand-tile.tsx'
 import { CHANNEL_ICONS, channelIcon } from '../src/client/channel-icons.ts'
 
@@ -145,16 +145,79 @@ describe('the region cards stack the way the login page stacks', () => {
     expect(rule('.dsm-xdpool-channels')).toContain('flex-direction:column')
   })
 
-  it('renders both lanes on every visit, not one tab at a time', () => {
+  it('renders every BOUND lane on every visit, not one tab at a time', () => {
     // The old page switched lanes with a tab, so an un-signed-in lane was a tab
-    // the user had to go looking for. Both cards always present means an empty
-    // lane is simply visible.
-    expect(card).toContain("const REGION_CARDS = ['cn', 'global'] as const")
-    expect(card).toContain('REGION_CARDS.map(region =>')
+    // the user had to go looking for. Every card the user is signed in to is
+    // present at once now — no tab strip to imply one-at-a-time — while a lane
+    // with no account in it stays off the page entirely (see the
+    // `visibleRegionCards` suite below).
+    expect(card).toContain('REGION_CARD_ORDER')
+    expect(card).toContain('{visibleRegions.map(region =>')
     expect(card).toMatch(/data-region=\{region\}/)
     // and no tab strip is left behind to imply one-at-a-time.
     expect(card).not.toContain('role="tablist"')
     expect(card).not.toContain('dsm-xdpool-tab-active')
+  })
+})
+
+describe('only the lanes the user is signed in to are on the page', () => {
+  it('shows the domestic lane alone when only the domestic side is bound', () => {
+    // The report: "我没有绑定国际版的账号，就不要在账号池首页显示国际版相关内容".
+    // The international card carried its own endpoint, its own model count and a
+    // four-step guide to installing an app this user does not have — on every
+    // visit, with a zero in it.
+    expect(visibleRegionCards({ cn: 2, global: 0 })).toEqual(['cn'])
+  })
+
+  it('shows the international lane alone when only that side is bound', () => {
+    // The mirror case, and the reason this is a filter rather than
+    // "always drop global": a user who signed in to the international build
+    // only must not be handed a domestic card they never bound.
+    expect(visibleRegionCards({ cn: 0, global: 1 })).toEqual(['global'])
+  })
+
+  it('shows both, in display order, when both are bound', () => {
+    expect(visibleRegionCards({ cn: 1, global: 3 })).toEqual(['cn', 'global'])
+    // Order is a property of the list, not of the argument's key order.
+    expect(visibleRegionCards({ global: 3, cn: 1 })).toEqual(['cn', 'global'])
+  })
+
+  it('shows both when every lane answered and none is bound', () => {
+    // A fresh install. Filtering to the empty set would leave a page with no
+    // lane, no summary and no instructions — the two guides are the only door
+    // in, so they have to survive the filter that exists to hide a SECOND
+    // empty lane.
+    expect(visibleRegionCards({ cn: 0, global: 0 })).toEqual(['cn', 'global'])
+  })
+
+  it('draws nothing until every lane has answered', () => {
+    // `{cn: 1}` alone could still be a half-arrived document: drawing the
+    // domestic card and then growing the international one underneath it is
+    // the flash-to-stable reflow this avoids. One empty poll later the
+    // question is settled and both states above apply.
+    expect(visibleRegionCards({})).toEqual([])
+    expect(visibleRegionCards({ cn: 1 })).toEqual(['cn'])
+  })
+
+  it('reads the counts the card already holds', () => {
+    // The pool page must not re-derive "is this lane bound" from a second
+    // document: the login-channels page answers the same question from the same
+    // status, and two derivations is how "shows here, hidden there" gets filed.
+    expect(card).toContain('visibleRegionCards({')
+    expect(card).toContain("statusOf('cn')?.accounts.length")
+    expect(card).toContain("statusOf('global')?.accounts.length")
+    // And a lane filtered OUT is still polled: a sign-in performed while the
+    // page is open has to make its lane appear without a reload.
+    expect(card).toContain('REGION_CARDS.filter(other => other !== activeRegion)')
+  })
+
+  it('keeps one lane list, so nothing can be polled-but-never-drawn', () => {
+    // The order constant lives beside the filter that consumes it. A second
+    // literal `['cn', 'global']` in the card is how a lane silently stops being
+    // fetched.
+    expect(REGION_CARD_ORDER).toEqual(['cn', 'global'])
+    expect(card).toContain('const REGION_CARDS = REGION_CARD_ORDER')
+    expect(card).not.toContain("const REGION_CARDS = ['cn', 'global'] as const")
   })
 })
 
@@ -490,7 +553,7 @@ describe('the disclosures open in place', () => {
     }
   })
 
-  it('keeps the two tool buttons on the domestic lane only', () => {
+  it('keeps the automation switch on the domestic lane only', () => {
     // The international gateway has no growth system at all, so an automation
     // switch there would be a control that can never do anything.
     expect(card).toContain('dsm-xdpool-region-cntools')
@@ -498,6 +561,18 @@ describe('the disclosures open in place', () => {
     // And the card it reads from must be this lane's status, not the focused one.
     expect(card).toContain('const here = card.status')
     expect(card).not.toContain('automation: status?.automation')
+  })
+
+  it('keeps the account-usage picker reachable when the domestic card is hidden', () => {
+    // The picker used to hang off `region === 'cn'` alongside the automation
+    // switch. Once a lane with no account in it is filtered out, an
+    // international-only user had no card carrying it — and the distribution is
+    // a property of the ONE pool instance (one settings key, both gateways), so
+    // hiding it was losing a control that still applied. The first visible lane
+    // carries it, which is `cn` for every domestic user.
+    expect(card).toContain("region === 'cn' || region === visibleRegions[0]")
+    // Automation stays CN-only, inside that same tool row.
+    expect(card).toMatch(/\{region === 'cn'\s+\? <button/)
   })
 })
 
