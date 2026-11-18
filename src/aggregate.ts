@@ -415,6 +415,25 @@ export function buildAggregateCatalog(store: AggregateStore): AggregateModelRow[
   }
   return rows
 }
+/**
+ * Whether two row sets describe the same roster.
+ *
+ * Compared field by field rather than by id. An edit can keep every id and still
+ * change what the row CLAIMS — a chain member swapped for another while the count
+ * stays the same, a renamed chain, a window or image flag that moved — and an
+ * id-only comparison publishes none of those: the picker and the adapter keep
+ * serving the previous numbers until the process restarts.
+ */
+function sameRows<T extends { id: string }>(previous: readonly T[], next: readonly T[]): boolean {
+  if (previous.length !== next.length) return false
+  return next.every((row, index) => {
+    const before = previous[index]
+    if (before === undefined) return false
+    const keys = Object.keys(row) as (keyof T)[]
+    if (keys.length !== Object.keys(before).length) return false
+    return keys.every(key => JSON.stringify(row[key]) === JSON.stringify(before[key]))
+  })
+}
 /** One stored aggregate row set, refreshed on change, for the shim and adapter. */
 export class AggregateCatalog {
   private rows: readonly AggregateModelRow[] = []
@@ -466,11 +485,7 @@ export class AggregateCatalog {
       host: this.hostRows(),
     })
     pruneRotation(combosOf(store))
-    const same = next.length === this.rows.length
-      && chains.length === this.chainRows.length
-      && next.every((row, index) => row.id === this.rows[index]?.id)
-      && chains.every((row, index) => row.id === this.chainRows[index]?.id)
-    if (same) return this.current()
+    if (sameRows(this.rows, next) && sameRows(this.chainRows, chains)) return this.current()
     this.rows = next
     this.chainRows = chains
     for (const listener of this.listeners) listener()
