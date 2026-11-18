@@ -310,26 +310,37 @@ interface ChannelEntry {
  * credential was written last.
  */
 /**
- * Doubao's account, described in the pack's account shape.
+ * Doubao's accounts, described in the pack's account shape.
  *
- * The lane is the plugin's own, so this reads its session route and translates the answer
- * into the row the rest of this page already knows how to draw. `undefined` means "no
- * session", which is the ordinary state before a sign-in.
+ * The lane is the plugin's own, so this reads its session route and translates the answer into
+ * the rows the rest of this page already knows how to draw. A LIST, not one row (#171): the
+ * route reports every signed-in account, each with its own id, so the card can delete or
+ * refresh one without touching the others.
+ *
+ * `undefined` means "no session", which is the ordinary state before a sign-in; an EMPTY array
+ * means the route answered and there are no accounts, which draws the same thing but lets the
+ * caller tell a failed read from an empty one.
  */
-async function readDoubaoAccount(): Promise<ChannelAccount | undefined> {
+async function readDoubaoAccounts(): Promise<readonly ChannelAccount[] | undefined> {
   try {
     const response = await fetch(POOL_DOUBAO_SESSION_PATH, { credentials: 'same-origin' })
     const body = await response.json().catch(() => undefined) as
-      | { signedIn?: boolean; savedAt?: string; name?: string }
+      | { signedIn?: boolean; accounts?: { id?: string; name?: string; label?: string; enabled?: boolean; coolingDown?: boolean; cooldownReason?: string }[] }
       | undefined
-    if (body?.signedIn !== true) return undefined
-    return {
-      id: 'doubao:session',
-      provider: 'doubao',
-      // The vendor's own name for the user, so two Doubao accounts are distinguishable.
-      nickname: typeof body.name === 'string' && body.name !== '' ? body.name : '豆包账号',
-      enabled: true,
-    }
+    if (body?.signedIn !== true) return []
+    const rows = Array.isArray(body.accounts) ? body.accounts : []
+    return rows
+      .filter(row => typeof row.id === 'string' && row.id !== '')
+      .map(row => ({
+        id: row.id as string,
+        provider: 'doubao',
+        // The vendor's own name for the user, so two Doubao accounts are distinguishable. The
+        // route already falls back to a numbered label when it has none.
+        nickname: typeof row.name === 'string' && row.name !== ''
+          ? row.name
+          : typeof row.label === 'string' && row.label !== '' ? row.label : '豆包账号',
+        enabled: row.enabled !== false,
+      }))
   } catch {
     return undefined
   }
@@ -375,31 +386,60 @@ async function readDoubaoModels(): Promise<readonly { id: string; name: string; 
   }
 }
 
-async function readDoubaoBalance(): Promise<readonly ChannelBalance[]> {
+/**
+ * Doubao's quota, in the pack's balance row shape — ONE ROW PER ACCOUNT.
+ *
+ * The card prints one number per account row, so it is the NARROWEST window that counts: that
+ * is the one that stops the next request, and reporting the widest would overstate what is
+ * left. `?all=1` is what makes a pool of two accounts show two figures instead of the first
+ * account's repeated twice (#171).
+ */
+async function readDoubaoBalance(accountIds: readonly string[]): Promise<readonly ChannelBalance[]> {
+  type QuotaReading = {
+    ok?: boolean
+    error?: string
+    windows?: {
+      type?: string
+      label?: string
+      usedPercent?: number
+      remainingPercent?: number
+      usedAmount?: number
+      totalAmount?: number
+    }[]
+  }
+  let readings: Record<string, QuotaReading> = {}
   try {
-    const response = await fetch(POOL_DOUBAO_QUOTA_PATH, { credentials: 'same-origin' })
+    const response = await fetch(`${POOL_DOUBAO_QUOTA_PATH}?all=1`, { credentials: 'same-origin' })
     const body = await response.json().catch(() => undefined) as
-      | {
-        signedIn?: boolean
-        error?: string
-        windows?: {
-          type?: string
-          label?: string
-          usedPercent?: number
-          remainingPercent?: number
-          usedAmount?: number
-          totalAmount?: number
-        }[]
-      }
+      | { signedIn?: boolean; accounts?: Record<string, QuotaReading> }
       | undefined
     if (body?.signedIn !== true) return []
-    const windows = Array.isArray(body.windows) ? body.windows : []
+    readings = body.accounts ?? {}
+  } catch {
+    return []
+  }
+  const rows: ChannelBalance[] = []
+  for (const accountId of accountIds) {
+    const reading = readings[accountId]
+    /**
+     * An account the route did not answer for still gets a row.
+     *
+     * Silence here would make the card show fewer accounts than it has, which reads as "the
+     * second sign-in did not work" — the exact confusion this change is meant to remove. An
+     * empty reading is reported as such.
+     */
+    if (reading === undefined) {
+      rows.push({ accountId, nickname: '', error: '未读到额度' })
+      continue
+    }
+    const windows = Array.isArray(reading.windows) ? reading.windows : []
     if (windows.length === 0) {
-      return [{
-        accountId: 'doubao:session',
-        nickname: '豆包账号',
-        ...(typeof body.error === 'string' && body.error !== '' ? { error: body.error } : {}),
-      }]
+      rows.push({
+        accountId,
+        nickname: '',
+        ...(typeof reading.error === 'string' && reading.error !== '' ? { error: reading.error } : {}),
+      })
+      continue
     }
     /**
      * One package per quota window, so the card's own expander lists them the way it lists a
@@ -426,16 +466,15 @@ async function readDoubaoBalance(): Promise<readonly ChannelBalance[]> {
     })
     const pointsLeft = packages.reduce((sum, entry) => sum + (typeof entry.points === 'number' ? entry.points : 0), 0)
     const lowestPercent = packages.reduce((low, entry) => Math.min(low, entry.remaining), 100)
-    return [{
-      accountId: 'doubao:session',
-      nickname: '豆包账号',
+    rows.push({
+      accountId,
+      nickname: '',
       balance: pointsLeft > 0 ? pointsLeft : Math.round(lowestPercent),
       extra: { unit: pointsLeft > 0 ? '点' : '%', windows: windows.length },
       packages,
-    }]
-  } catch {
-    return []
+    })
   }
+  return rows
 }
 /**
  * The catalogue as cards, with no counts.
@@ -712,11 +751,11 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
        * channel before anything can be drawn. A signed-in Doubao session would then exist,
        * work, and appear nowhere on this page.
        */
-      const doubaoAccount = await readDoubaoAccount()
+      const doubaoAccounts = await readDoubaoAccounts()
       const scanProviders = channels
         .map(channel => channel.id)
         .filter(id => (statuses.get(id)?.accountsTotal ?? 0) > 0
-          || (id === 'doubao' && doubaoAccount !== undefined))
+          || (id === 'doubao' && (doubaoAccounts?.length ?? 0) > 0))
       // Facts are fetched AFTER the model lists below, not before: the host's
       // own listing is gated per provider, and a gated channel answers "no
       // models" even while its card shows nine. The ids this page just rendered
@@ -745,7 +784,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
          * empty numbers would look like a failed sign-in.
          */
         const accountsPromise = provider === 'doubao'
-          ? Promise.resolve({ ok: true, value: { accounts: doubaoAccount === undefined ? [] : [doubaoAccount] } } as ChannelRpcEnvelope)
+          ? Promise.resolve({ ok: true, value: { accounts: [...(doubaoAccounts ?? [])] } } as ChannelRpcEnvelope)
           : callPack('account.list', { provider })
         const modelsPromise = provider === 'doubao'
           ? readDoubaoModels().then(models => ({ ok: true, value: { models } } as ChannelRpcEnvelope))
@@ -1102,7 +1141,9 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
        * provider" and the card printed "no balance reported" under a signed-in account.
        */
       if (provider === 'doubao') {
-        const rows = await readDoubaoBalance()
+        const ids = entriesRef.current
+          .find(entry => entry.channel.id === provider)?.accounts.map(account => account.id) ?? []
+        const rows = await readDoubaoBalance(ids)
         setEntries(previous => previous.map(entry =>
           entry.channel.id === provider
             ? { ...entry, balancePending: false, balanceError: undefined, balances: rows }
@@ -1261,23 +1302,48 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
        * `account.delete` / `test` / `refresh` are pack RPCs addressed to the pack's credential
        * store, and Doubao has no entry there — every one of them answered "unsupported
        * provider", so the buttons did nothing and the row could not be removed.
+       *
+       * EVERY call names the account. The routes address one row now, and a call that left the
+       * id out would act on the FIRST account — so "remove" on the second row would have signed
+       * the first one out (#171).
        */
       if (provider === 'doubao') {
+        const query = `account=${encodeURIComponent(accountId)}`
         if (action === 'delete') {
-          await fetch(POOL_DOUBAO_SESSION_PATH, { method: 'DELETE', credentials: 'same-origin' })
+          await fetch(`${POOL_DOUBAO_SESSION_PATH}?${query}`, { method: 'DELETE', credentials: 'same-origin' })
         } else if (action === 'refresh') {
-          await fetch(POOL_DOUBAO_QUOTA_PATH, { credentials: 'same-origin' })
+          await fetch(`${POOL_DOUBAO_QUOTA_PATH}?${query}`, { credentials: 'same-origin' })
         } else if (action === 'test') {
           await fetch(POOL_DOUBAO_SESSION_PATH, { credentials: 'same-origin' })
+        } else if (action === 'toggle') {
+          /**
+           * The row's switch, written to the roster.
+           *
+           * `account.update` is a pack RPC and Doubao has no entry there — the toggle used to
+           * answer "unsupported provider" and snap back. `PATCH` on the session route is the
+           * half of the same concept that survives a reload.
+           */
+          const current = entries
+            .find(entry => entry.channel.id === provider)?.accounts.find(account => account.id === accountId)
+          const enabled = current?.enabled === false
+          await fetch(`${POOL_DOUBAO_SESSION_PATH}?${query}`, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ enabled }),
+          })
         } else if (action === 'claim') {
           /**
-           * Collect the account's credit tasks.
+           * Collect one account's credit tasks.
            *
            * The claim endpoint takes one item at a time, so the route loops over everything
            * the campaign reports as claimable and answers how many landed. That is what makes
            * this a single button rather than a per-task checklist.
            */
-          const response = await fetch(POOL_DOUBAO_CLAIM_PATH, { method: 'POST', credentials: 'same-origin' })
+          const response = await fetch(`${POOL_DOUBAO_CLAIM_PATH}?${query}`, {
+            method: 'POST',
+            credentials: 'same-origin',
+          })
           const body = await response.json().catch(() => undefined) as
             | { claimed?: number; failed?: number; reason?: string }
             | undefined
@@ -1295,7 +1361,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
         if (!mountedRef.current) return
         invalidatePoolSnapshot()
         await load()
-        setNotice(action === 'delete' ? '已删除豆包会话' : '已刷新')
+        setNotice(action === 'delete' ? '已删除该豆包账号' : action === 'toggle' ? '已切换账号状态' : '已刷新')
         return
       }
       const entry = entries.find(item => item.channel.id === provider)

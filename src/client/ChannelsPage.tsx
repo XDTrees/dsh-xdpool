@@ -238,11 +238,31 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
         try {
           const response = await fetch(POOL_DOUBAO_SESSION_PATH, { method: 'POST', credentials: 'same-origin' })
           const body = await response.json().catch(() => undefined) as
-            | { ok?: boolean; signedIn?: boolean; message?: string }
+            | {
+              ok?: boolean
+              signedIn?: boolean
+              message?: string
+              /** The account this sign-in landed on, so the card can say WHICH one. */
+              account?: { id?: string; name?: string; label?: string }
+            }
             | undefined
           if (!mounted.current) return
           if (body?.signedIn === true) {
-            setUi(prev => ({ ...prev, [channel.id]: { phase: 'done' } }))
+            /**
+             * Say which account was added.
+             *
+             * A second sign-in used to replace the first silently (#171), so the one thing the
+             * user needs after pressing this button is confirmation that a DIFFERENT account
+             * joined the pool rather than the old one being overwritten.
+             */
+            const label = body.account?.name ?? body.account?.label
+            setUi(prev => ({
+              ...prev,
+              [channel.id]: {
+                phase: 'done',
+                ...(label === undefined ? {} : { message: `已登录：${label}` }),
+              },
+            }))
             void load()
             void loadConnected()
             return

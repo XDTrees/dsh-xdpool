@@ -30,6 +30,17 @@
  * — harvests the jar. The dedicated profile persists, so the second visit usually needs no
  * scan at all.
  *
+ * WHY A SLOT, AND WHY A PROFILE PER SLOT (#171)
+ *
+ * One browser profile holds ONE signed-in account. Signing a second account into the same
+ * profile overwrites the first account's `sessionid` **inside the browser**, and the harvest
+ * that followed then stored the second jar over the first — so the pool could only ever hold
+ * the account that signed in last, and the first account appeared to be "kicked out".
+ *
+ * A slot is therefore one (profile directory, debugging port) pair, and each stored account
+ * owns one. Slot 0 keeps the directory and port this plugin has always used, so an install
+ * that is already signed in keeps its account and needs no re-login.
+ *
  * @module dsh-xdpool/doubao-auth
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
@@ -46,13 +57,35 @@ const DOUBAO_DOMAIN = /(^|\.)(doubao|bytedance|zijieapi)\.com$/iu
 /** The page that mints the jar. */
 export const DOUBAO_LOGIN_URL = 'https://www.doubao.com/chat/'
 
-/** Where the dedicated Chromium profile lives. Persisted on purpose. */
-export function browserProfileDir(): string {
-  return join(homedir(), '.dsh', 'doubao-browser-profile')
+/**
+ * Where a sign-in slot keeps its Chromium profile.
+ *
+ * Slot 0 is the directory this plugin has always used, deliberately: an installation that is
+ * already signed in holds a live jar in it, and moving the path would present as "signed out"
+ * to every existing user. Later slots get their own directory, which is the whole point —
+ * two accounts in one profile cannot both stay signed in.
+ */
+export function browserProfileDir(slot = 0): string {
+  const root = join(homedir(), '.dsh', 'doubao-browser-profile')
+  return slot <= 0 ? root : `${root}-${String(slot)}`
 }
 
-/** The port the sign-in browser listens on. Unusual enough to avoid a real session. */
-const DEBUG_PORT = 9333
+/**
+ * The port a sign-in slot listens on.
+ *
+ * Unusual enough to avoid a real session, and spaced one number apart so two sign-ins can be
+ * open at once: a single fixed port made the second window fail to start, which read as
+ * "port occupied" rather than "you already have a sign-in open".
+ */
+const DEBUG_PORT_BASE = 9333
+
+/** The DevTools port belonging to one slot. */
+export function debugPortOf(slot: number): number {
+  return DEBUG_PORT_BASE + Math.max(0, Math.trunc(slot))
+}
+
+/** The slot whose window this process started, per slot, so a read knows what to harvest. */
+const started = new Map<number, ChildProcess>()
 
 /**
  * Browsers this can drive, and where they actually live.
@@ -190,6 +223,18 @@ async function waitForDevtools(port: number, deadline: number): Promise<string |
   return undefined
 }
 
+/** Whether a DevTools endpoint is already listening on this slot's port. */
+async function devtoolsAlive(port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${String(port)}/json/version`, {
+      signal: AbortSignal.timeout(1200),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
 /**
  * One `Storage.getCookies` round-trip.
  *
@@ -266,12 +311,19 @@ function terminate(child: ChildProcess): void {
   }
 }
 
+/** The UA every harvested session is stored under. */
+function clientUserAgent(): string {
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 SamanthaDoubao/${DOUBAO_VERSION}`
+}
+
 /** What one interactive sign-in produced. */
 export interface BrowserLoginResult {
   ok: boolean
   /** Actionable failure text, or undefined on success. Never a secret. */
   reason?: string
   session?: DoubaoSession
+  /** The slot the window ran in, so the caller can file the jar against its own profile. */
+  slot?: number
 }
 
 /**
@@ -283,8 +335,13 @@ export interface BrowserLoginResult {
 export async function browserLogin(options: {
   timeoutMs?: number
   onProgress?: (message: string) => void
+  /** Which (profile, port) pair to open. Defaults to slot 0. */
+  slot?: number
 } = {}): Promise<BrowserLoginResult> {
   const say = options.onProgress ?? (() => {})
+  const slot = Math.max(0, Math.trunc(options.slot ?? 0))
+  const port = debugPortOf(slot)
+  const profile = browserProfileDir(slot)
 
   /**
    * A SIGN-IN WINDOW OF OUR OWN, and that is the arrangement the reference implementation
@@ -300,30 +357,40 @@ export async function browserLogin(options: {
    * touches, and the debugging port is what makes the result readable. Nothing is asked of
    * the user beyond signing in once.
    */
-  const exe = findBrowser()
-  if (exe === undefined) {
-    return { ok: false, reason: '没找到 Chrome 或 Edge。浏览器扫码登录需要一个 Chromium 内核的浏览器。' }
-  }
-
   const timeoutMs = options.timeoutMs ?? 300_000
   const deadline = Date.now() + timeoutMs
-  const profile = browserProfileDir()
-  mkdirSync(profile, { recursive: true })
 
-  const child = spawn(exe, [
-    `--remote-debugging-port=${String(DEBUG_PORT)}`,
-    `--user-data-dir=${profile}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-features=Translate',
-    DOUBAO_LOGIN_URL,
-  ], { stdio: 'ignore', detached: false })
+  /**
+   * A window from an earlier attempt is REUSED rather than raced.
+   *
+   * Spawning a second Chromium on the same `--user-data-dir` is silently refused (the profile
+   * lock is held), and the old code then reported "port occupied" while a perfectly good
+   * sign-in window sat on screen. If the endpoint already answers, that window is the one to
+   * watch.
+   */
+  let child: ChildProcess | undefined
+  if (!(await devtoolsAlive(port))) {
+    const exe = findBrowser()
+    if (exe === undefined) {
+      return { ok: false, reason: '没找到 Chrome 或 Edge。浏览器扫码登录需要一个 Chromium 内核的浏览器。' }
+    }
+    mkdirSync(profile, { recursive: true })
+    child = spawn(exe, [
+      `--remote-debugging-port=${String(port)}`,
+      `--user-data-dir=${profile}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-features=Translate',
+      DOUBAO_LOGIN_URL,
+    ], { stdio: 'ignore', detached: false })
+    started.set(slot, child)
+  }
 
   try {
-    say('已打开浏览器，请在弹出的窗口里扫码或短信登录…')
-    const wsUrl = await waitForDevtools(DEBUG_PORT, Math.min(deadline, Date.now() + 20_000))
+    say(slot === 0 ? '已打开浏览器，请在弹出的窗口里扫码或短信登录…' : `已打开第 ${String(slot + 1)} 个登录窗口，请在这个窗口里登录另一个豆包账号…`)
+    const wsUrl = await waitForDevtools(port, Math.min(deadline, Date.now() + 20_000))
     if (wsUrl === undefined) {
-      return { ok: false, reason: `浏览器调试端口 ${String(DEBUG_PORT)} 没起来（可能被占用）。` }
+      return { ok: false, reason: `浏览器调试端口 ${String(port)} 没起来（可能被占用）。` }
     }
 
     let lastNote = 0
@@ -348,11 +415,11 @@ export async function browserLogin(options: {
           await sleep(1500)
           continue
         }
-        const userAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 SamanthaDoubao/${DOUBAO_VERSION}`
         say(`已取到登录态（${String(Object.keys(pairs).length)} 条 cookie）`)
         return {
           ok: true,
-          session: { cookies: pairs, userAgent, savedAt: new Date().toISOString() },
+          slot,
+          session: { cookies: pairs, userAgent: clientUserAgent(), savedAt: new Date().toISOString() },
         }
       }
       if (Date.now() - lastNote > 10_000) {
@@ -363,21 +430,32 @@ export async function browserLogin(options: {
     }
     return { ok: false, reason: '等待登录超时。扫码完成后请重试。' }
   } finally {
-    terminate(child)
+    // Only a window THIS call started is closed: a reused one belongs to the user's earlier
+    // attempt, and closing it would take away the tab they are still working in.
+    if (child !== undefined) {
+      terminate(child)
+      started.delete(slot)
+    }
   }
 }
 
 /**
- * Read the session out of the sign-in browser WITHOUT opening it.
+ * Read the session out of ONE slot's sign-in browser WITHOUT opening it.
  *
  * Used by the background poll: the window is already open (the user started a sign-in), and
  * the card asks every couple of seconds whether the jar is complete yet. Returns undefined
  * when there is nothing usable — which is the ordinary answer while the user is still typing.
+ *
+ * It is deliberately slot-scoped. The old version probed a fixed port and, on any hit, handed
+ * the jar back to the caller — which then stored it over whatever the user already had. A
+ * stale window from an earlier sign-in could therefore replace a working account without
+ * anybody pressing anything (#171).
  */
-export async function readExistingSession(): Promise<DoubaoSession | undefined> {
+export async function harvestSession(slot: number): Promise<DoubaoSession | undefined> {
+  const port = debugPortOf(slot)
   let wsUrl: string | undefined
   try {
-    const response = await fetch(`http://127.0.0.1:${String(DEBUG_PORT)}/json/version`, {
+    const response = await fetch(`http://127.0.0.1:${String(port)}/json/version`, {
       signal: AbortSignal.timeout(1500),
     })
     if (!response.ok) return undefined
@@ -390,9 +468,18 @@ export async function readExistingSession(): Promise<DoubaoSession | undefined> 
   try {
     const pairs = pickPairs(await readCookies(wsUrl, 4000))
     if (pairs['sessionid'] === undefined) return undefined
-    const userAgent = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 SamanthaDoubao/${DOUBAO_VERSION}`
-    return { cookies: pairs, userAgent, savedAt: new Date().toISOString() }
+    return { cookies: pairs, userAgent: clientUserAgent(), savedAt: new Date().toISOString() }
   } catch {
     return undefined
   }
+}
+
+/** Whether a sign-in window is open in this slot right now. */
+export async function slotWindowOpen(slot: number): Promise<boolean> {
+  return await devtoolsAlive(debugPortOf(slot))
+}
+
+/** The slots whose window this process started. */
+export function startedSlots(): readonly number[] {
+  return [...started.keys()]
 }

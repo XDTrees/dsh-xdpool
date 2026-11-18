@@ -15,7 +15,7 @@
  * @module dsh-xdpool/doubao-automation
  */
 import { attemptCheckin, claimTasks, fetchCampaign } from './doubao-campaign.ts'
-import type { DoubaoSession } from './doubao-auth.ts'
+import type { DoubaoRoster } from './doubao-roster.ts'
 
 /** How often a pass runs while the switch is on. */
 const INTERVAL_MS = 6 * 60 * 60 * 1000
@@ -31,9 +31,11 @@ export interface DoubaoAutomationState {
   lastNote?: string
   /** What the daily sign-in answered, so the card can show it separately from the tasks. */
   lastCheckin?: string
+  /** How many accounts the last pass walked. */
+  lastAccounts?: number
 }
 
-/** The holder: one per plugin instance, since one session means one account. */
+/** The holder: one per plugin instance, walking every signed-in account. */
 export interface DoubaoAutomation {
   state: () => DoubaoAutomationState
   setEnabled: (enabled: boolean) => void
@@ -43,13 +45,20 @@ export interface DoubaoAutomation {
 }
 
 /**
- * The automation, wired to a session getter.
+ * The automation, wired to the roster.
  *
- * `runOn()` is separate from the timer so the card's manual button and the scheduled pass do the
- * same thing — a second implementation for the button would be the one that drifts.
+ * `runPass()` is separate from the timer so the card's manual button and the scheduled pass do
+ * the same thing — a second implementation for the button would be the one that drifts.
+ *
+ * EVERY ACCOUNT IS WALKED (#171)
+ *
+ * A pass used to take "the" session. With two accounts that meant the second one's campaign
+ * was never read at all, so its rewards were invisible no matter what the switch said. The
+ * per-account results are summed for the card and the first refusal is kept as the note,
+ * because ten identical "already claimed" sentences are noise.
  */
 export function createDoubaoAutomation(options: {
-  session: () => DoubaoSession | undefined
+  roster: () => DoubaoRoster
   /** Called with a human sentence when a pass finishes, for the plugin log. */
   logger?: { info?: (...args: unknown[]) => void } | undefined
 }): DoubaoAutomation {
@@ -65,57 +74,61 @@ export function createDoubaoAutomation(options: {
   }
 
   /**
-   * One pass.
+   * One pass over every signed-in account.
    *
    * "Nothing to collect" is recorded as a note rather than a failure: an account whose tasks are
    * all done has nothing wrong with it, and reporting that as an error every six hours is how a
    * working feature reads as broken.
    */
   const runPass = async (): Promise<DoubaoAutomationState> => {
-    const session = options.session()
-    if (session === undefined) {
+    const accounts = options.roster().list().filter(account => account.disabled !== true)
+    if (accounts.length === 0) {
       state = { ...state, enabled, lastNote: '还没有登录态' }
       return state
     }
-    /**
-     * The daily sign-in first, then the tasks.
-     *
-     * `daily_signin` appears in the campaign as a task, but the endpoint its own button calls
-     * is a separate one — and claiming the task does not perform the sign-in that earns it. So
-     * both are attempted, and a refused sign-in does not stop the task collection that follows.
-     */
-    const checkin = await attemptCheckin(session)
-    const before = await fetchCampaign(session)
-    if (before.error !== undefined) {
-      state = { ...state, enabled, lastNote: before.error }
-      return state
-    }
-    const checkinNote = checkin.ok ? '签到成功' : checkin.message
-    if (before.claimableCount === 0) {
-      state = {
-        ...state,
-        enabled,
-        lastRunAt: new Date().toISOString(),
-        lastClaimed: 0,
-        lastNote: '今天没有可领取的积分',
-        lastCheckin: checkinNote,
+    let claimed = 0
+    const checkins: string[] = []
+    let note: string | undefined
+    let ran = 0
+    for (const account of accounts) {
+      /**
+       * The daily sign-in first, then the tasks.
+       *
+       * `daily_signin` appears in the campaign as a task, but the endpoint its own button calls
+       * is a separate one — and claiming the task does not perform the sign-in that earns it.
+       * So both are attempted, and a refused sign-in does not stop the task collection that
+       * follows.
+       */
+      const checkin = await attemptCheckin(account.session)
+      checkins.push(checkin.ok ? '签到成功' : checkin.message)
+      const before = await fetchCampaign(account.session)
+      if (before.error !== undefined) {
+        note ??= before.error
+        continue
       }
-      return state
+      ran += 1
+      if (before.claimableCount === 0) {
+        note ??= '今天没有可领取的积分'
+        continue
+      }
+      const result = await claimTasks(account.session)
+      claimed += result.claimed
+      if (result.reason !== undefined) note ??= result.reason
     }
-    const result = await claimTasks(session)
+    const uniqueCheckins = [...new Set(checkins)]
     state = {
       ...state,
       enabled,
       lastRunAt: new Date().toISOString(),
-      lastClaimed: result.claimed,
-      lastCheckin: checkinNote,
-      ...(result.reason === undefined
+      lastClaimed: claimed,
+      lastAccounts: ran,
+      ...(uniqueCheckins.length === 0
         ? {}
-        : { lastNote: result.reason }),
+        : { lastCheckin: uniqueCheckins.length === 1 ? uniqueCheckins[0] : `${String(uniqueCheckins.length)} 种结果` }),
+      ...(note === undefined ? {} : { lastNote: note }),
     }
     options.logger?.info?.(
-      `[xdpool] doubao automation: claimed ${String(result.claimed)} task(s)`
-        + (result.failed > 0 ? `, ${String(result.failed)} failed` : ''),
+      `[xdpool] doubao automation: claimed ${String(claimed)} task(s) across ${String(ran)} account(s)`,
     )
     return state
   }
