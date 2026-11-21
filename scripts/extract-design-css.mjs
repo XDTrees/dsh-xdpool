@@ -206,6 +206,12 @@ label.sw:has(input:disabled) { opacity: .5; cursor: not-allowed }
 .search-wrap > .search { flex: 1 1 auto; min-width: 0 }
 .search-wrap > .hint { flex: 0 0 auto; margin: 0 }
 
+
+/* 窄屏侧栏（60px）里，版本号竖排会换行成两行 —— 藏掉，鼠标悬停时用 title 看 */
+@media (max-width: 1180px) {
+  .rail-ver { display: none }
+}
+
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}
 `
