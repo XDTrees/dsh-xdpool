@@ -517,7 +517,8 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
       */}
       {state === 'unavailable' && status?.reason === ROUTE_OWNED_ELSEWHERE && (
         <p className="hint">
-          {t?.('chan.ownedElsewhere') ?? 'Another plugin already serves these login channels.'}
+          {t?.('chan.ownedElsewhere', { count: channels.length })
+            ?? `Another plugin already serves these ${String(channels.length)} login channels.`}
         </p>
       )}
       {state === 'unavailable' && status?.reason !== ROUTE_OWNED_ELSEWHERE && (

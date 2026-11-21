@@ -418,7 +418,7 @@ export const en = {
   'chan.doubaoHint': 'Pressing “Add account” opens a browser window — scan or enter a phone number there. Doubao has closed its third-party QR endpoint, so this is the only door.',
   'chan.pending': 'The login channels are still loading…',
   'chan.unavailable': 'The login channels could not start on this host.',
-  'chan.ownedElsewhere': 'These login channels are already served by another plugin — the same fourteen sign-in methods are one click away on that build’s own page.',
+  'chan.ownedElsewhere': 'Another plugin already serves these {count} login channels — the same sign-in methods work from its own page.',
   'chan.ownedElsewhereRow': 'Sign in on the “Our Free Model” page',
 
   'chan.empty': 'No channel is connected yet.',
@@ -977,7 +977,7 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   'row.autoFromBonus': '连登奖励 +{credit} 积分',
   'row.autoFromTravel': '猫猫旅行 +{credit} 积分',
   'row.autoFromCompensation': '补偿 +{credit} 积分',
-  // 聚合页（76 家 provider 白嫖）
+  // 聚合页（77 家 provider 白嫖）
   'agg.tab': '聚合渠道',
   'agg.title': '聚合渠道',
   'agg.note': '把各家免费额度接进同一个模型池。这里默认一家都不接；展开某一家、填上 key，它的模型才会出现在选择器里。',
@@ -1108,7 +1108,7 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   'route.missingHint': '链原样保留着这些成员，但调不通——你以为自己下的指令被照做了，其实是别的模型在答。',
   'route.chainDisabled': '已停用',
   'route.strategyLabel': '{strategy} · {members}',
-  // 扫码登录页（vendored pack 的十三家 + 豆包）
+  // 扫码登录页（22 家渠道）
   'chan.tab': '扫码登录',
   'chan.title': '扫码登录',
   'chan.note': '每个渠道点「登录」都会打开一个浏览器窗口，登录完成后自动接上。凭据只存在本机，不会上传。',
@@ -1137,7 +1137,7 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   'chan.doubaoHint': '点「添加账号」会弹出一个浏览器窗口，在里面扫码或填手机号即可；豆包已关闭第三方扫码接口，所以只能这样登。',
   'chan.pending': '扫码登录通道正在加载…',
   'chan.unavailable': '本机上扫码登录通道没能启动。',
-  'chan.ownedElsewhere': '这些扫码登录通道已经由另一个插件接管了——同样这十三种登录方式，在它自己的页面上点一下就能用。',
+  'chan.ownedElsewhere': '这些扫码登录通道已经由另一个插件接管了——同样这 {count} 种登录方式，在它自己的页面上点一下就能用。',
   'chan.ownedElsewhereRow': '在「我们的免费模型」里登录',
 
   'chan.empty': '还没有任何渠道连上来。',
