@@ -10,7 +10,7 @@
  * 用最小 DOM 垫片，不引入 jsdom（那会拖进 300KB 依赖）。
  */
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 
 const BUNDLE = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
 
@@ -41,6 +41,28 @@ describe('构建产物', () => {
         return !after.trimStart().startsWith('{')
       })
     expect(calls.length, 'installDesignCss 必须被调用，不能只定义').toBeGreaterThan(0)
+  })
+
+  it('源码里没有任何页面还在注入旧样式表', () => {
+    /*
+      这一条是补一次真实事故：我改完 PoolCard 之后以为所有页面都切到
+      设计稿 CSS 了，结果登录页、聚合页、网关页、路由页、page.tsx
+      各自还留着 `<style>{XXX_CARD_CSS}</style>` —— 那些页面一直在
+      加载 73KB 的旧样式，和设计稿那份抢同样的属性。
+
+      git 里 grep 一次就能发现，但前面几轮没查。钉在这里。
+    */
+    const dir = new URL('../src/client/', import.meta.url)
+    const files = readdirSync(dir).filter(f => f.endsWith('.tsx'))
+    const offenders = []
+    for (const f of files) {
+      const src = readFileSync(new URL(f, dir), 'utf8')
+      // 注入形如 <style>{XXX_CARD_CSS}</style>
+      for (const m of src.matchAll(/<style>\{([A-Z_]+_CSS)\}<\/style>/g)) {
+        offenders.push(`${f} ← ${m[1]}`)
+      }
+    }
+    expect(offenders, `这些文件还在注入旧样式: ${offenders.join(', ')}`).toEqual([])
   })
 
   it('不再注入旧样式表', () => {

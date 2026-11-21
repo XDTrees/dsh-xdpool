@@ -27,7 +27,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { POOL_RELAY_PATH, type PoolWebRelayStatus } from '../status-paths.ts'
 import { copyText } from './clipboard.ts'
-import { GATEWAY_CARD_CSS } from './styles.ts'
 import { PageHero } from './shell.tsx'
 import type { XdPoolSettingsKey } from './locales.ts'
 /** The translator the settings section injects. */
@@ -269,7 +268,6 @@ export function GatewayPage({ t }: GatewayPageProps) {
     : `Base URL: ${baseUrl}\nAPI Key: ${key}`
   return (
     <div className="main">
-      <style>{GATEWAY_CARD_CSS}</style>
       <PageHero
         title={t?.('gw.title') ?? 'Gateway'}
         sub={t?.('gw.sub') ?? ''}

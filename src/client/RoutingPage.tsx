@@ -32,7 +32,6 @@ import {
   type PoolWebCombosStatus,
 } from '../status-paths.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
-import { ROUTING_CARD_CSS } from './styles.ts'
 import { PageHero } from './shell.tsx'
 /** The translator the settings section injects; the page renders every string through it. */
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
@@ -355,7 +354,6 @@ export function RoutingPage({ t }: RoutingPageProps) {
   }, [])
   return (
     <div className="main mbody">
-      <style>{ROUTING_CARD_CSS}</style>
       <PageHero
         title={t?.('route.title') ?? 'Routing'}
         sub={t?.('route.sub') ?? ''}

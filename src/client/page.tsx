@@ -27,7 +27,6 @@
 import { type ReactNode } from 'react'
 
 import { PoolCard, type PoolCardProps } from './PoolCard.tsx'
-import { PAGE_CSS } from './styles.ts'
 
 /**
  * `PoolCard`, sized and scrolled for the main column.
@@ -40,7 +39,6 @@ import { PAGE_CSS } from './styles.ts'
 export function PoolPage(props: PoolCardProps): ReactNode {
   return (
     <div className="page">
-      <style>{PAGE_CSS}</style>
       <PoolCard {...props} />
     </div>
   )

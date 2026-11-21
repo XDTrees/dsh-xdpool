@@ -33,7 +33,6 @@ import {
   type PoolWebModelProbeResult,
 } from '../status-paths.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
-import { AGGREGATE_CARD_CSS } from './styles.ts'
 import { DIST_OPTIONS, distLabel } from './distribution.ts'
 import { BrandTile } from './brand-tile.tsx'
 import { channelIcon, channelInitials } from './channel-icons.ts'
@@ -403,7 +402,6 @@ export function AggregatePage({ t }: AggregatePageProps) {
   }, [status?.models])
   return (
     <div className="main">
-      <style>{AGGREGATE_CARD_CSS}</style>
       <PageHero
         title={t?.('agg.title') ?? 'Providers'}
         sub={t?.('agg.sub') ?? ''}

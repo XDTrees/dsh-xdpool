@@ -97,7 +97,8 @@ export function initialShellTab<T extends string>(
   // 记住的那个 id 必须真的在这份列表里 —— 换过版本之后它可能已经不存在，
   // 那时回到第一个，而不是渲染一个空页。
   const known = tabs.some(tab => tab.id === remembered)
-  return known ? (remembered as T) : tabs[0]?.id === undefined ? '' : tabs[0].id
+  // 空列表时返回 '' —— 调用方据此渲染空页，而不是崩
+  return known ? (remembered as T) : (tabs[0]?.id ?? ('' as T))
 }
 
 function rememberTab(id: string): void {
