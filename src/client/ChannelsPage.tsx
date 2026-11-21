@@ -10,6 +10,15 @@
  *
  * @module dsh-xdpool/client/ChannelsPage
  */
+import {
+  POOL_ASTUDIO_LOGIN_PATH,
+  POOL_ACCIO_SESSION_PATH,
+  POOL_MONKEYCODE_CN_SESSION_PATH,
+  POOL_MONKEYCODE_INTL_SESSION_PATH,
+  POOL_BAIZHI_SESSION_PATH,
+  POOL_AUTOCLAW_INTL_SESSION_PATH,
+  POOL_AUTOCLAW_CN_SESSION_PATH,
+} from '../status-paths.ts'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   POOL_CHANNELS_PATH,
@@ -41,7 +50,7 @@ const POLL_INTERVAL_MS = 2_000
  */
 const POLL_TIMEOUT_MS = 10 * 60_000
 /** Per-channel UI phase. `signing-in` carries the pending login while it waits. */
-type ChannelPhase = 'idle' | 'signing-in' | 'done' | 'failed'
+type ChannelPhase = 'idle' | 'signing-in' | 'paste-credential' | 'done' | 'failed'
 interface ChannelUiState {
   phase: ChannelPhase
   /** The pack's account id while a login is in flight. */
@@ -50,8 +59,29 @@ interface ChannelUiState {
   loginUrl?: string | undefined
   /** A line to print under the row. */
   message?: string | undefined
+  /** 粘贴框里正在输入的内容（只在内存里，不落盘）。 */
+  paste?: string | undefined
 }
 const IDLE: ChannelUiState = { phase: 'idle' }
+
+/**
+ * 只能粘贴凭据进来的渠道。
+ *
+ * 这五家的登录要验证码或桌面流程，本页扛不住 —— 用户从官方页面复制一段东西
+ * （bearer、cookie 串、整份文档都可以），这里送上去并让后端解析。
+ *
+ * AStudio 走 LOGIN 而不是 SESSION：它是唯一一个必须先解析「你给的是什么」才能入库的。
+ */
+const PASTE_ROUTES: Readonly<Record<string, string>> = {
+  'astudio': POOL_ASTUDIO_LOGIN_PATH,
+  'accio': POOL_ACCIO_SESSION_PATH,
+  'monkeycode': POOL_MONKEYCODE_CN_SESSION_PATH,
+  'monkeycode-intl': POOL_MONKEYCODE_INTL_SESSION_PATH,
+  'baizhi': POOL_BAIZHI_SESSION_PATH,
+  'autoclaw-intl': POOL_AUTOCLAW_INTL_SESSION_PATH,
+  'autoclaw': POOL_AUTOCLAW_CN_SESSION_PATH,
+}
+
 
 /**
  * How many distinct people a channel holds.
@@ -78,6 +108,31 @@ function distinctAccounts(accounts: readonly ChannelAccount[]): readonly Channel
   }
   return order.map(key => byKey.get(key)).filter((account): account is ChannelAccount => account !== undefined)
 }
+
+/**
+ * 这个渠道要不要粘贴框。
+ *
+ * 单独一个函数而不是散在 JSX 里：五个渠道的判断各写一次就会漂，
+ * 而漂掉的后果是「按钮点了没反应」——最难查的那种。
+ */
+function needsPaste(channel: { id: string }): boolean {
+  /*
+    逐个写出来，不从表里查。
+
+    这五个 id 是「本页能处理的」白名单，而 PASTE_ROUTES 是「路由在哪」的映射。
+    两件事分开写是有意的：将来有人给表里加一条路由，不会因此让一个
+    本就该走扫码的渠道突然多出个粘贴框。
+  */
+  if (channel.id === 'astudio') return true
+  if (channel.id === 'accio') return true
+  if (channel.id === 'monkeycode') return true
+  if (channel.id === 'monkeycode-intl') return true
+  if (channel.id === 'baizhi') return true
+  if (channel.id === 'autoclaw') return true
+  if (channel.id === 'autoclaw-intl') return true
+  return false
+}
+
 export function ChannelsPage({ t }: ChannelsPageProps) {
   const [status, setStatus] = useState<PoolWebChannelsStatus | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -358,6 +413,43 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
       if (mounted.current) setAutoBusy(false)
     }
   }, [autoCheckin])
+  /**
+   * 提交一次粘贴的凭据。
+   *
+   * 成功后刷新渠道列表（新账号要出现），失败把原因写在行下 —— 不弹窗：
+   * 弹窗会盖住刚粘贴的内容，而用户正想改它。
+   */
+  const submitPaste = async (channelId: string): Promise<void> => {
+    const route = PASTE_ROUTES[channelId]
+    if (route === undefined) return
+    const value = (ui[channelId]?.paste ?? '').trim()
+    if (value === '') return
+    setUi(prev => ({ ...prev, [channelId]: { phase: 'signing-in' } }))
+    try {
+      const response = await fetch(route, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ credential: value }),
+      })
+      const body = await response.json() as { ok?: boolean; error?: string; reason?: string }
+      if (body.ok === false || !response.ok) {
+        setUi(prev => ({
+          ...prev,
+          [channelId]: { phase: 'failed', message: body.error ?? body.reason ?? '凭据没被接受' },
+        }))
+        return
+      }
+      await load()
+      setUi(prev => ({ ...prev, [channelId]: { phase: 'done' } }))
+    } catch (cause) {
+      setUi(prev => ({
+        ...prev,
+        [channelId]: { phase: 'failed', message: cause instanceof Error ? cause.message : '提交失败' },
+      }))
+    }
+  }
+
   const state = status?.state ?? 'pending'
   const channels = status?.channels ?? []
   return (
@@ -439,6 +531,10 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
           ownedElsewhere={status?.reason === ROUTE_OWNED_ELSEWHERE}
           onSignIn={() => { void signIn(channel) }}
           onCancel={() => cancel(channel.id)}
+          onPasteChange={(value) => {
+            setUi(prev => ({ ...prev, [channel.id]: { phase: 'paste-credential', paste: value } }))
+          }}
+          onSubmitPaste={() => { void submitPaste(channel.id) }}
         />
       ))}
     </div>
@@ -451,6 +547,10 @@ interface ChannelRowProps {
   connectedCount: number
   onSignIn: () => void
   onCancel: () => void
+  /** 粘贴框的内容变了。 */
+  onPasteChange: (value: string) => void
+  /** 提交粘贴的凭据。 */
+  onSubmitPaste: () => void
   /**
    * True when the pack that owns this channel's sign-in lives in another plugin.
    *
@@ -466,6 +566,8 @@ function ChannelRow({
   connectedCount,
   onSignIn,
   onCancel,
+  onPasteChange,
+  onSubmitPaste,
   ownedElsewhere,
 }: ChannelRowProps) {
   const busy = ui.phase === 'signing-in'
@@ -499,7 +601,27 @@ function ChannelRow({
         <p className="ch-note">{channel.note}</p>
       )}
       <div className="ch-foot">
-        {busy ? (
+        {ui.phase === 'paste-credential' ? (
+          <>
+            {/* 这五家要验证码或桌面流程，本页只能收复制来的凭据。 */}
+            <input
+              className="input"
+              type="password"
+              placeholder={'粘贴凭据（bearer / cookie / 整份文档）'}
+              value={ui.paste ?? ''}
+              onChange={(event) => {
+                const value = event.currentTarget.value
+                onPasteChange(value)
+              }}
+            />
+            <button type="button" className="tiny tiny-primary" onClick={onSubmitPaste}>
+              {'提交'}
+            </button>
+            <button type="button" className="tiny" onClick={onCancel}>
+              {t?.('agg.clear') ?? '取消'}
+            </button>
+          </>
+        ) : busy ? (
           <>
             <span className="ch-note">
               {ui.message ?? t?.('chan.signingIn') ?? 'Waiting for sign-in…'}

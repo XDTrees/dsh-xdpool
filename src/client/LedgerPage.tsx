@@ -44,11 +44,21 @@ export interface LedgerPageProps {
 }
 /** How many recent calls the detail table lists. */
 const DETAIL_ROWS = 12
-function fmtInt(value: number): string {
+/**
+ * 一个整数，用逗号分千位。
+ *
+ * 收 undefined 时返回「—」而不是抛错：这个函数喂的是上游聚合出来的字段，
+ * 一条记录缺字段（老样本、某渠道不报 cached）在真实数据里是常态。
+ * 原来直接 .toLocaleString()，一个缺字段就让整页白屏 —— 用户报的
+ * 「点数据面板直接空白」就是它。
+ */
+function fmtInt(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
   return value.toLocaleString('en-US')
 }
 /** Milliseconds as `1.2s` / `340ms`, because `1200ms` is not a unit anyone reads. */
-function fmtMs(ms: number): string {
+function fmtMs(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—'
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${String(ms)}ms`
 }
 /** Tokens per second, kept integer: 12.4 tok/s reads as false precision. */
@@ -350,8 +360,8 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
                               <td className="num">{fmtInt(row.calls)}</td>
                               <td className="num">{fmtInt(row.inputTokens)}</td>
                               <td className="num">{fmtInt(row.outputTokens)}</td>
-                              <td className="td-mono" title={row.topModels.join(', ')}>
-                                {row.topModels.join(', ') || '—'}
+                              <td className="td-mono" title={(row.topModels ?? []).join(', ')}>
+                                {(row.topModels ?? []).join(', ') || '—'}
                               </td>
                             </tr>
                           ))}

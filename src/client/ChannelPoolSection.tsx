@@ -56,6 +56,20 @@ import {
 } from './channel-rpc.ts'
 import type { ChannelAccount, ChannelRpcEnvelope } from '../channels.ts'
 import {
+  POOL_ASTUDIO_WALLET_PATH,
+  POOL_ACCIO_QUOTA_PATH,
+  POOL_MONKEYCODE_CN_WALLET_PATH,
+  POOL_MONKEYCODE_INTL_WALLET_PATH,
+  POOL_BAIZHI_WALLET_PATH,
+  POOL_AUTOCLAW_INTL_WALLET_PATH,
+  POOL_AUTOCLAW_CN_WALLET_PATH,
+  POOL_ASTUDIO_CHECKIN_PATH,
+  POOL_BAIZHI_CHECKIN_PATH,
+  POOL_MAGICREW_CN_CHECKIN_PATH,
+  POOL_MAGICREW_INTL_CHECKIN_PATH,
+} from '../status-paths.ts'
+
+import {
   POOL_CATALOG_REFRESH_PATH,
   POOL_DOUBAO_CLAIM_PATH,
   POOL_DOUBAO_MODELS_PATH,
@@ -576,6 +590,87 @@ async function cachedProviderStatus(providers: readonly string[]): Promise<Chann
   const answer = await callPack('provider.status', { providers: [...providers] })
   providerStatusCache = { at: Date.now(), key, answer }
   return answer
+}
+
+
+/**
+ * 走自己钱包路由的渠道。
+ *
+ * 这五家的余额不在 pack 的 `credits.balances` 里 —— 那是给二十二家通用厂商用的，
+ * 对它们只会答 "unsupported"。每家有自己的 route、自己的返回字段，
+ * 所以用一张表列出来，比在读取处写五个 if 更容易核对。
+ *
+ * 缺了这张表的表现是「卡片上有账号、没有金额」，而且不报错 —— 用户以为它们没余额。
+ */
+const OWN_WALLET_ROUTES: Readonly<Record<string, string>> = {
+  astudio: POOL_ASTUDIO_WALLET_PATH,
+  accio: POOL_ACCIO_QUOTA_PATH,
+  'monkeycode': POOL_MONKEYCODE_CN_WALLET_PATH,
+  'monkeycode-intl': POOL_MONKEYCODE_INTL_WALLET_PATH,
+  baizhi: POOL_BAIZHI_WALLET_PATH,
+  'autoclaw-intl': POOL_AUTOCLAW_INTL_WALLET_PATH,
+  'autoclaw': POOL_AUTOCLAW_CN_WALLET_PATH,
+}
+
+/** 从一家自己的钱包路由读余额；失败返回 undefined，卡片就不印数字。 */
+async function fetchOwnWallet(channel: string): Promise<number | undefined> {
+  const route = OWN_WALLET_ROUTES[channel]
+  if (route === undefined) return undefined
+  try {
+    const response = await fetch(route, { headers: { accept: 'application/json' }, credentials: 'same-origin' })
+    if (!response.ok) return undefined
+    const body = await response.json() as { ok?: boolean; total?: number; buckets?: readonly { amount?: number }[] }
+    if (body.ok === false) return undefined
+    if (typeof body.total === 'number') return body.total
+    // accio 报的是 buckets，加总才是总数
+    if (Array.isArray(body.buckets)) {
+      const sum = body.buckets.reduce((n, b) => n + (typeof b.amount === 'number' ? b.amount : 0), 0)
+      return sum > 0 ? sum : undefined
+    }
+    return undefined
+  } catch {
+    return undefined
+  }
+}
+
+
+/**
+ * 签到不走 `credits.claimAll` 的渠道。
+ *
+ * pack 的 claimAll 对它们答 "unsupported provider" —— 那三个路由是插件自己实现的，
+ * 于是「全部领取」按下去像是坏的，而不是没这个功能。
+ */
+const OWN_CHECKIN_CHANNELS: Readonly<Record<string, string>> = {
+  'astudio': POOL_ASTUDIO_CHECKIN_PATH,
+  'baizhi': POOL_BAIZHI_CHECKIN_PATH,
+  'magicrew': POOL_MAGICREW_CN_CHECKIN_PATH,
+  'magicrew-intl': POOL_MAGICREW_INTL_CHECKIN_PATH,
+  /* autoclaw 与 magicrew 共用同一套签到实现 */
+  'autoclaw': POOL_MAGICREW_CN_CHECKIN_PATH,
+  'autoclaw-intl': POOL_MAGICREW_INTL_CHECKIN_PATH,
+}
+
+/**
+ * 领一个渠道的签到积分。
+ *
+ * 一个分发器而不是四处复制：文案与随后的余额刷新必须一致，复制四份就会漂。
+ * 返回一句给用户看的结果，失败也返回（而不是抛），调用处直接显示。
+ */
+async function ownCheckin(channel: string): Promise<string | undefined> {
+  const route = OWN_CHECKIN_CHANNELS[channel]
+  if (route === undefined) return undefined
+  try {
+    const response = await fetch(route, {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+      credentials: 'same-origin',
+    })
+    const body = await response.json() as { ok?: boolean; credit?: number; reason?: string; error?: string }
+    if (body.ok === false) return body.reason ?? body.error ?? '签到失败'
+    return typeof body.credit === 'number' ? `已领 ${String(body.credit)} 积分` : '已签到'
+  } catch {
+    return '签到失败'
+  }
 }
 
 export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }): ReactElement {
@@ -1107,6 +1202,29 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
           entry.channel.id === provider
             ? { ...entry, balancePending: false, balanceError: undefined, balances: rows }
             : entry))
+        return
+      }
+      /*
+        自己带钱包路由的五家（astudio / accio / monkeycode ×2 / baizhi / autoclaw ×2）。
+
+        和 doubao 同一个理由：`credits.balances` 是给二十二家通用厂商的，
+        对这些渠道只答 "unsupported"，卡片因此只有账号、没有金额。
+      */
+      if (OWN_WALLET_ROUTES[provider] !== undefined) {
+        const total = await fetchOwnWallet(provider)
+        if (mountedRef.current) {
+          setEntries(previous => previous.map(entry =>
+            entry.channel.id === provider
+              ? {
+                  ...entry,
+                  balancePending: false,
+                  balanceError: undefined,
+                  balances: total === undefined
+                    ? []
+                    : [{ accountId: provider, balance: { total } } as never],
+                }
+              : entry))
+        }
         return
       }
       const envelope = await callPack('credits.balances', force ? { provider, force: true } : { provider })
