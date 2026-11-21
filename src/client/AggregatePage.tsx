@@ -372,7 +372,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
       if (provider.name.toLowerCase().includes(needle)) return true
       if (provider.id.includes(needle)) return true
       if (provider.notes?.toLowerCase().includes(needle) === true) return true
-      return provider.models.some(model => model.toLowerCase().includes(needle))
+      return (provider.models ?? []).some(model => model.toLowerCase().includes(needle))
     })
   }, [providers, query, category])
   /** Model ids contributed right now, so a row can say what it is worth. */
@@ -678,8 +678,8 @@ function ProviderRow({
     : provider.configured
       ? (t?.('agg.keySet') ?? 'Key set')
       : (t?.('agg.noKey') ?? 'No key')
-  const preview = provider.models.slice(0, MODEL_PREVIEW)
-  const rest = provider.models.length - preview.length
+  const preview = (provider.models ?? []).slice(0, MODEL_PREVIEW)
+  const rest = (provider.models ?? []).length - preview.length
   const category = CATEGORY_LABEL[provider.category as Category]
   // Sign-in channel artwork first: where a vendor is both (minimax, gemini) that
   // icon is already worn by the other two pages, and showing two different marks
@@ -748,9 +748,16 @@ function ProviderRow({
    * to that free roster so it cannot quietly tick a paid id.
    */
   const freeOnly = usesLocalCapabilities(provider)
+  /*
+    availableModels 可能是 undefined（新接入、还没发现过模型）。
+
+    原来直接 .filter，一家没发现过的厂商就让整页白屏 —— 而页面上没有任何
+    提示说「这家还没拉过模型」，读者只会看到空白。
+  */
+  const available = provider.availableModels ?? []
   const roster = freeOnly
-    ? provider.availableModels.filter(id => isFreeLane(id))
-    : provider.availableModels
+    ? available.filter(id => isFreeLane(id))
+    : available
   const rosterSize = roster.length
   const chooserWorthIt = rosterSize >= MODEL_CHOOSER_THRESHOLD
   const needle = modelQuery.trim().toLowerCase()
@@ -809,9 +816,16 @@ function ProviderRow({
    * order the user clicked in, and a save that only reordered the list must not
    * present itself as a change worth writing.
    */
+  /*
+    models 可能是 undefined —— 新接入的厂商还没拉过模型列表。
+
+    原来直接 (provider.models ?? []).length，一家没拉过的厂商就让整页白屏
+    （键都读不到，读者只会看到一片空白，没有任何提示）。
+  */
+  const knownModels = provider.models ?? []
   const modelSelectionDirty =
-    chosen.size !== provider.models.length ||
-    provider.models.some(id => !chosen.has(id))
+    chosen.size !== knownModels.length ||
+    knownModels.some(id => !chosen.has(id))
   return (
     <article
       className="vd"
@@ -849,15 +863,15 @@ function ProviderRow({
             {keyState}
           </span>
           <span className="lane" data-tone="info">
-            {t?.('agg.models', { count: provider.models.length }) ?? `${provider.models.length} models`}
+            {t?.('agg.models', { count: (provider.models ?? []).length }) ?? `${(provider.models ?? []).length} models`}
           </span>
           {/* Only worth its own chip once the roster is bigger than the exposed
               set: "3 of 85" is the answer to "why does this vendor only show
               three", and at 3 of 3 it would just repeat the count beside it. */}
-          {rosterSize > provider.models.length
+          {rosterSize > (provider.models ?? []).length
             ? <span className="lane" data-tone="busy">
-                {t?.('agg.chosenOf', { chosen: provider.models.length, total: rosterSize })
-                  ?? `${provider.models.length} of ${rosterSize} chosen`}
+                {t?.('agg.chosenOf', { chosen: (provider.models ?? []).length, total: rosterSize })
+                  ?? `${(provider.models ?? []).length} of ${rosterSize} chosen`}
               </span>
             : null}
           {contributed > 0
