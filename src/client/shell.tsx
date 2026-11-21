@@ -52,6 +52,14 @@ export interface PoolShellProps {
   version?: string | undefined
   /** The user's avatar, as a data URI. */
   avatar: string
+  /**
+   * 两列还是三列。
+   *
+   * 设计稿只有账号池是「功能页 + 条目栏 + 详情」三列；
+   * 登录 / 聚合 / 看板 / 路由 / 网关 / 备份都是「功能页 + 内容」两列。
+   * 全用三列的话，那六页的 main 会落到第二列（264px），右边空出 936px。
+   */
+  wide?: boolean | undefined
   tabs: readonly ShellTab[]
   /** Id of the page on screen. */
   active: string
@@ -178,6 +186,7 @@ export function PoolShell({
   t,
   version,
   avatar,
+  wide = false,
   tabs,
   active,
   onSelect,
@@ -253,7 +262,7 @@ export function PoolShell({
   }, [active, select, tabs])
 
   return (
-    <div className="app">
+    <div className={wide ? 'app app-wide' : 'app'}>
       <nav className="rail" aria-label={'Pages'} ref={railRef} onKeyDown={onKeyDown}>
         {brand}
         {tabs.map(tab => (

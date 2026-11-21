@@ -1514,6 +1514,8 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
       tabs={shellTabs}
       active={page}
       onSelect={setPage}
+      /* 账号池是三列（有中栏），其余六页是两列 */
+      wide={page !== 'pool'}
       hero={page === 'pool' ? poolHero : undefined}
     >
       {page === 'aggregate' ? <AggregatePage t={t} />
