@@ -255,6 +255,7 @@ export const en = {
   // Aggregate lane (the 76-provider roster).
   'agg.tab': 'Providers',
   'agg.title': 'Providers',
+  'agg.note': "Bring each vendor's free tier into one model pool. None are connected by default — expand one and paste a key to make its models selectable.",
   'agg.sub': 'Fold other vendors’ free allowances into the same pool. Nothing here is in the pool until you add it: open a vendor, paste its key, and its models appear in the picker.',
   'agg.laneOn': 'Aggregate lane',
   'agg.laneOffHint': 'With this off, providers contribute no models. Your WorkBuddy accounts are untouched.',
@@ -389,6 +390,7 @@ export const en = {
   // Login channels (the vendored pack's thirteen QR/browser logins, plus Doubao).
   'chan.tab': 'Login channels',
   'chan.title': 'Login channels',
+  'chan.note': 'Each channel opens a browser window to sign in; the credential stays on this machine.',
   'chan.groupBound': 'Connected',
   'chan.groupUnbound': 'Not connected',
   'chan.sub': 'Thirteen vendors that sign you in with a browser or a QR code — scan once and their free models join the same picker.',
@@ -960,6 +962,7 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   // 聚合页（76 家 provider 白嫖）
   'agg.tab': '聚合渠道',
   'agg.title': '聚合渠道',
+  'agg.note': '把各家免费额度接进同一个模型池。这里默认一家都不接；展开某一家、填上 key，它的模型才会出现在选择器里。',
   'agg.sub': '把各家免费额度接进同一个模型池。这里默认一家都不接：展开某一家、填上 key，它的模型才会出现在选择器里。',
   'agg.laneOn': '聚合开关',
   'agg.laneOffHint': '关闭后聚合渠道不再贡献任何模型，WorkBuddy 账号池不受影响。',
@@ -1090,6 +1093,7 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   // 扫码登录页（vendored pack 的十三家 + 豆包）
   'chan.tab': '扫码登录',
   'chan.title': '扫码登录',
+  'chan.note': '每个渠道点「登录」都会打开一个浏览器窗口，登录完成后自动接上。凭据只存在本机，不会上传。',
   'chan.groupBound': '已连接',
   'chan.groupUnbound': '未连接',
   'chan.sub': '十四家支持网页或扫码登录的厂商：登一次，它们的免费模型就出现在同一个选择器里。',

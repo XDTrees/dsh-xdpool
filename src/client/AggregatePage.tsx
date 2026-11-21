@@ -417,6 +417,10 @@ export function AggregatePage({ t }: AggregatePageProps) {
       />
 
       <div className="mbody">
+      {/* 说明行 —— 设计稿 mbody 里 lane 之后是 p.note */}
+      <p className="note">
+        {t?.('agg.note') ?? '把各家免费额度接进同一个模型池。这里默认一家都不接；展开某一家、填上 key，它的模型才会出现在选择器里。'}
+      </p>
       <div className="lane">
         <label className="sw">
           <input

@@ -469,6 +469,13 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
         </span>}
       />
       <div className="mbody">
+      {/*
+        说明行 —— 设计稿 mbody 的第一块是 p.note。
+        读者进来先要知道「这些渠道各自怎么登录」，而不是直接面对二十六张卡。
+      */}
+      <p className="note">
+        {t?.('chan.note') ?? '每个渠道点「登录」都会打开一个浏览器窗口，登录完成后自动接上。凭据只存在本机，不会上传。'}
+      </p>
       <div className="groups">
       {autoCheckin !== undefined && (
         <div className="hint">
