@@ -229,6 +229,15 @@ label.sw:has(input:disabled) { opacity: .5; cursor: not-allowed }
   .rail-ver { display: none }
 }
 
+
+/*
+  按钮的 line-height 是 UA 给的 normal，不继承父级。
+  只给侧栏项补上 —— .btn / .search 各自定了字号，强行 inherit 会覆盖它们。
+*/
+.rail-item {
+  line-height: 1.65;
+}
+
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}
 `
