@@ -458,7 +458,13 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
     <div className="main">
       <PageHero
         title={t?.('chan.title') ?? 'Login channels'}
-        sub={t?.('chan.sub') ?? ''}
+        /*
+          副标题里的「多少家」不写死 —— 渠道数从 14 涨到 22 之后，
+          硬编码的数字一直是错的。用当前实际数量。
+        */
+        sub={channels.length > 0
+          ? (t?.('chan.sub', { count: channels.length }) ?? `${String(channels.length)} 家厂商：登一次，它们的免费模型就出现在同一个选择器里。`)
+          : (t?.('chan.subLoading') ?? '正在读取渠道…')}
         // The hero's pill slot, not the big total card. `.panel-total` is a
         // full-width banner: centred text, a 3px bar across its top edge, meant
         // to be read across a section. Dropped into a row of 11px capsules it
