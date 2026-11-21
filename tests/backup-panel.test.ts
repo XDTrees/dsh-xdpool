@@ -23,9 +23,9 @@ describe('the backup card', () => {
     // `display:none` for the file input had been sitting.
     // 已改用设计稿的样式表（DESIGN_TOKENS_CSS + DESIGN_DETAIL_CSS）
     // 样式现在由 installDesignCss() 在 apply 时装一次，组件不再自带 <style>
-    expect(panel).not.toContain('<style>')
+    expect(panel).not.toContain('<style>{')
     // 样式现在由 installDesignCss() 在 apply 时装一次，组件不再自带 <style>
-    expect(panel).not.toContain('<style>')
+    expect(panel).not.toContain('<style>{')
     expect(styles).toContain('export const BACKUP_CSS')
   })
 

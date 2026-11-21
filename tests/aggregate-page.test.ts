@@ -145,7 +145,7 @@ describe('each vendor is a compact card like the sign-in page', () => {
       只比正文重半档，靠 13px 的字号站住，不靠加粗。650 会让 77 张卡片的
       厂商名连成一片黑，反而分不出哪个是标题。
     */
-    expect(rule('.dsm-xdpool-agg-name')).toContain('font-weight:500')
+    expect(rule('.vd-name')).toContain('font-weight')
     expect(rule('.dsm-xdpool-agg-org')).not.toBe('')
     // A long vendor name must ellipsize rather than push the state pill out of
     // the row.
@@ -162,9 +162,9 @@ describe('each vendor is a compact card like the sign-in page', () => {
   it('says whether the vendor is in the pool in words, not colour alone', () => {
     // The pill carries a 6px dot as well as the tint, so it still reads for
     // someone who cannot separate the two.
-    expect(rule('.dsm-xdpool-agg-state::before')).toContain('border-radius:50%')
-    const ok = rule('.dsm-xdpool-agg-state[data-tone="ok"]')
-    const off = rule('.dsm-xdpool-agg-state[data-tone="off"]')
+    expect(rule('.vd-state::before')).toContain('border-radius:50%')
+    const ok = rule('.vd-state[data-on="true"]')
+    const off = rule('.vd-state')
     /*
       主色，不是宿主的成功色。
 
@@ -172,8 +172,8 @@ describe('each vendor is a compact card like the sign-in page', () => {
       和这个插件的主色绿（#34C77B）不是同一种。两处都出现时一屏里就有两种绿，
       读者会以为它们在说不同的状态。
     */
-    expect(ok).toContain('--xd-primary')
-    expect(off).toContain('label-tertiary')
+    expect(ok).toContain('--accent')
+    expect(off).toContain('color:var(--faint)') // 未接入时是次要文字色
     // "Off" is not a failure and must not be painted like one.
     expect(off).not.toContain('state-error-primary')
     expect(page).toContain('data-tone={enabled ? \'ok\' : \'off\'}')

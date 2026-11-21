@@ -27,7 +27,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { POOL_USAGE_PATH } from '../status-paths.ts'
 import type { UsageAccountRow, UsageCall, UsageSummary } from '../stats.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
-import { LEDGER_CARD_CSS } from './styles.ts'
 import { KpiCard, PageHero } from './shell.tsx'
 /** The translator the settings section injects. */
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
@@ -225,7 +224,6 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
   const accounts: readonly UsageAccountRow[] = summary?.accounts ?? []
   return (
     <>
-      <style>{LEDGER_CARD_CSS}</style>
       <PageHero
         title={t?.('ledger.title') ?? 'Data dashboard'}
         sub={t?.('ledger.sub') ?? 'What this machine actually sent and got back, since the pool last started.'}

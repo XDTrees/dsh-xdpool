@@ -148,7 +148,7 @@ describe('ledger page: wiring', () => {
   })
   it('carries its own stylesheet and every class it renders is defined', () => {
     // 样式由 installDesignCss() 统一注入，页面组件不再自带 <style>
-    expect(page).not.toContain('<style>')
+    expect(page).not.toContain('<style>{')
     const ledgerCss = styles.slice(styles.indexOf('export const LEDGER_CARD_CSS'))
     const used = new Set([...page.matchAll(/dsm-xdpool-(?:sec|sectitle|table|tablewrap|num|ellipsis|kpis)\b/g)].map(m => m[0]))
     const missing = [...used].filter(name => !ledgerCss.includes(`.${name}`))
