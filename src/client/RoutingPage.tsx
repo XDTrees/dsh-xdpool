@@ -354,7 +354,7 @@ export function RoutingPage({ t }: RoutingPageProps) {
     setEditing(draft.key)
   }, [])
   return (
-    <div className="dsm-xdpool-rt">
+    <div className="main mbody">
       <style>{ROUTING_CARD_CSS}</style>
       <PageHero
         title={t?.('route.title') ?? 'Routing'}
@@ -484,7 +484,7 @@ function ChainRow({
         <span className="pill" data-tone={draft.enabled ? 'ok' : 'off'}>
           {draft.enabled ? (t?.('route.enabled') ?? 'Enabled') : (t?.('route.chainDisabled') ?? 'Disabled')}
         </span>
-        <span className="dsm-xdpool-pills">
+        <span className="chip">
           <span className="pill" data-tone="off">
             {t?.('route.platformCount', { count: draft.platforms.length }) ?? `${draft.platforms.length} platform(s)`}
           </span>
@@ -518,7 +518,7 @@ function ChainRow({
       */}
       {draft.platforms.length === 0
         ? <p className="pill">{t?.('route.noMembers') ?? 'Add at least one member.'}</p>
-        : <ol className="dsm-xdpool-rt-lanes">
+        : <ol className="filters">
             {draft.platforms.map((platform, index) => (
               <li className="lane" key={`${platform.owner}-${index}`}>
                 <span className="num">{index + 1}</span>

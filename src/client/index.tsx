@@ -40,6 +40,7 @@ import { PanelIcon } from './panel-icon.tsx'
 import { PoolPage } from './page.tsx'
 import { POOL_NAV_ICON_MASK_URL } from './nav-icon.ts'
 import { installPackRpc } from './channel-rpc.ts'
+import { installDesignCss } from './design-style.ts'
 import { readSidebarRow } from './sidebar-row.ts'
 import type { PoolCardInjected } from './PoolCard.tsx'
 import { en, zh } from './locales.ts'
@@ -135,6 +136,7 @@ export function apply(ctx: WorkBuddyClientContext): void {
     // where the apply closure's ctx is alive; channel-rpc resolves the service
     // lazily on every call, because the sibling fiber that provides
     // `connection` is not guaranteed to have settled by the time this runs.
+    installDesignCss()
     installPackRpc(ctx)
 
     ctx.slots.inject('settings.section', () => ctx.slots.register({

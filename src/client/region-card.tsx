@@ -207,17 +207,17 @@ export function RegionCardTrigger({
   return (
     <button
       type="button"
-      className="dsm-xdpool-region-seg-btn"
+      className="seg"
       aria-expanded={open}
       aria-controls={controls}
       aria-label={label}
       onClick={onToggle}
     >
-      <span className="dsm-xdpool-region-seg-glyph" aria-hidden="true">{glyph}</span>
-      <span className="dsm-xdpool-region-seg-text">{text}</span>
+      <span className="" aria-hidden="true">{glyph}</span>
+      <span className="seg">{text}</span>
       {count === undefined
         ? null
-        : <span className="dsm-xdpool-region-seg-count">{count}</span>}
+        : <span className="num">{count}</span>}
     </button>
   )
 }

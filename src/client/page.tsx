@@ -39,7 +39,7 @@ import { PAGE_CSS } from './styles.ts'
  */
 export function PoolPage(props: PoolCardProps): ReactNode {
   return (
-    <div className="dsm-xdpool-page">
+    <div className="page">
       <style>{PAGE_CSS}</style>
       <PoolCard {...props} />
     </div>

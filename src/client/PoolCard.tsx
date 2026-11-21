@@ -1599,7 +1599,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                     role="switch"
                     aria-checked={sidebarRow}
                     disabled={!settingsWritable || sidebarRowBusy}
-                    className={`dsm-xdpool-auto-switch${sidebarRow ? ' dsm-xdpool-auto-switch-on' : ''}`}
+                    className={`sw${sidebarRow ? ' is-on' : ''}`}
                     onClick={() => { void setSidebarRow(!sidebarRow) }}
                   >
                     {sidebarRowBusy
@@ -1621,7 +1621,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                   "not signed in here yet" rather than a tab that only appears
                   after the user has already signed in somewhere else. */}
               <section className="dsm-xdpool-regions">
-              <div className="region-grid">
+              <div className="region-grid dsm-xdpool-region-grid">
                 {REGION_CARDS.map(region => {
                   const card = cardOf(region)
                   const accountsPaneId = `dsm-xdpool-${region}-accounts`
@@ -1691,7 +1691,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                         </span>
                       </div>
                       <div className="sec-actions">
-                        <div className="dsm-xdpool-region-btns">
+                        <div className="filters">
                           <button
                             type="button"
                             className="dsm-btn dsm-btn-outline btn"
@@ -1738,7 +1738,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                         </div>
                       </div>
                       {region === 'cn'
-                        ? <div className="dsm-xdpool-region-cntools">
+                        ? <div className="filters">
                             <button
                               type="button"
                               className="field"
@@ -1774,23 +1774,23 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                       <RegionCardPane id={accountsPaneId} open={accountsOpen}>
                         {card.accountCount === 0 && card.status !== undefined
                           ? <div className="hint">
-                              <p className="dsm-xdpool-empty-title">
+                              <p className="sec-title">
                                 {t?.('row.regionEmptyTitle', { region: card.regionLabel })
                                   ?? t?.('row.regionEmpty') ?? 'No account yet'}
                               </p>
-                              <div className="dsm-xdpool-empty-steps">
-                                <p className="dsm-xdpool-empty-steps-title">
+                              <div className="sec">
+                                <p className="sec-title">
                                   {t?.('row.regionHowToTitle', { region: card.regionLabel })
                                     ?? `How to sign in to the ${card.regionLabel} version`}
                                 </p>
-                                <ol className="dsm-xdpool-empty-list">
+                                <ol className="facts">
                                   <li>{t?.('row.regionHowTo1') ?? ''}</li>
                                   <li>{t?.('row.regionHowTo2') ?? ''}</li>
                                   <li>{t?.('row.regionHowTo3') ?? ''}</li>
                                   <li>{t?.('row.regionHowTo4') ?? ''}</li>
                                 </ol>
                               </div>
-                              <p className="dsm-xdpool-empty-note">
+                              <p className="hint">
                                 {t?.('row.regionHowToNote') ?? ''}
                               </p>
                             </div>
@@ -1848,17 +1848,17 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                               ))}
                             </div>}
                         {(card.status?.ignored.length ?? 0) > 0
-                          ? <div className="dsm-xdpool-ignored">
-                              <p className="dsm-xdpool-ignored-summary">
+                          ? <div className="sec">
+                              <p className="sec-head">
                                 {t?.('row.ignoredSummary', { count: card.status?.ignored.length ?? 0 })
                                   ?? `${card.status?.ignored.length ?? 0} account(s) no longer in the pool`}
                               </p>
                               {card.status?.ignored.map(entry => (
-                                <div key={entry.id} className="dsm-xdpool-ignored-row">
-                                  <span className="dsm-xdpool-ignored-label">{entry.label}</span>
+                                <div key={entry.id} className="tr">
+                                  <span className="td-name">{entry.label}</span>
                                   <button
                                     type="button"
-                                    className="dsm-xdpool-ignored-restore"
+                                    className="tiny"
                                     title={t?.('row.ignoredRestoreHint') ?? 'Put this account back into the pool'}
                                     disabled={accountBusyId === entry.id}
                                     onClick={() => { void setAccountIgnored(region, entry.id, false) }}
@@ -1900,7 +1900,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                     }) ?? `${card.modelState.missing.length} saved model(s) not offered right now`}
                                   </span>
                                 )}
-                                <div className="dsm-xdpool-models-actions">
+                                <div className="models-actions">
                                   {card.status?.catalogSource !== 'fallback'
                                     ? null
                                     : <span
@@ -1929,7 +1929,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                   </button>
                                 </div>
                               </div>
-                              <div className="dsm-xdpool-model-list">
+                              <div className="models">
                                 {/*
                                   Collapsed to the ENABLED rows by default.
                                   
@@ -1977,7 +1977,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                               {models.length > models.filter(model => card.modelState.draft[model.id]?.enabled ?? model.enabled).length
                                 ? <button
                                     type="button"
-                                    className="dsm-xdpool-model-more"
+                                    className="tiny"
                                     onClick={() => { setShowAllModels(prev => ({ ...prev, [region]: !(prev[region] === true) })) }}
                                   >
                                     {showAllModels[region] === true
@@ -1994,18 +1994,18 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                           : <div className="seg" role="radiogroup"
                               aria-label={t?.('row.distTitle') ?? 'Account usage'}>
                               <div className="sec-head">
-                                <span className="dsm-xdpool-dist-title">
+                                <span className="sec-title">
                                   {t?.('row.distTitle') ?? 'Account usage'}
                                 </span>
                                 <span className="pill">
                                   {distLabel(card.status.distribution ?? 'priority', t)}
                                 </span>
                               </div>
-                              <div className="dsm-xdpool-dist-options">
+                              <div className="facts">
                                 {DIST_OPTIONS.map(option => {
                                   const active = (card.status?.distribution ?? 'priority') === option
-                                  const cls = 'dsm-xdpool-dist-option'
-                                    + (active ? ' dsm-xdpool-dist-option-active' : '')
+                                  const cls = 'seg'
+                                    + (active ? ' is-on' : '')
                                   return (
                                     <button
                                       key={option}
@@ -2017,10 +2017,10 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                       className={cls}
                                       onClick={() => { void setDistribution(region, option) }}
                                     >
-                                      <span className="dsm-xdpool-dist-option-top">
-                                        <span className="dsm-xdpool-dist-option-name">{distLabel(option, t)}</span>
+                                      <span className="row">
+                                        <span className="td-name">{distLabel(option, t)}</span>
                                         {option === 'sticky'
-                                          ? <span className="dsm-xdpool-dist-option-badge">
+                                          ? <span className="badge">
                                               {t?.('row.distRecommended') ?? 'Recommended'}
                                             </span>
                                           : null}
@@ -2063,7 +2063,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                   role="switch"
                                   aria-checked={automation.enabled}
                                   disabled={!settingsWritable || automationBusyRegion !== undefined}
-                                  className={`dsm-xdpool-auto-switch${automation.enabled ? ' dsm-xdpool-auto-switch-on' : ''}`}
+                                  className={`sw${automation.enabled ? ' is-on' : ''}`}
                                   onClick={() => { void setAutomationEnabled(region, !automation.enabled) }}
                                 >
                                   {automationBusyRegion === region
@@ -2170,7 +2170,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                                   if (group.length === 0) return null
                                                   return <span
                                                     key={status}
-                                                    className={`dsm-xdpool-auto-job-item dsm-xdpool-auto-job-item-${status}`}
+                                                    className={`fact fact-${status}`}
                                                     title={group.map(item => item.title
                                                       + (item.note === undefined ? '' : ` (${item.note})`)).join('\n')}
                                                   >
@@ -2277,12 +2277,12 @@ function AccountBlock({
   // A rejected sign-in outranks "cooling": a cooldown lifts on its own, this
   // one needs the user to sign in again, so it is the more useful thing to say.
   const tag = isDead
-    ? { text: t?.('row.credentialDeadTag') ?? 'Sign-in rejected', cls: 'dsm-xdpool-account-tag dsm-xdpool-account-tag-dead' }
+    ? { text: t?.('row.credentialDeadTag') ?? 'Sign-in rejected', cls: 'pill' }
     : isCooling
-      ? { text: t?.('row.cooling') ?? 'Cooling', cls: 'dsm-xdpool-account-tag dsm-xdpool-account-tag-cooling' }
+      ? { text: t?.('row.cooling') ?? 'Cooling', cls: 'pill' }
       : null
   return (
-    <div className={isDisabled ? 'dsm-xdpool-account dsm-xdpool-account-off' : 'dsm-xdpool-account'}
+    <div className={isDisabled ? 'is-off' : 'ch'}
          data-serving={serving === true ? 'true' : undefined}
     >
       <div className="ch-head">
@@ -2305,8 +2305,8 @@ function AccountBlock({
         <button
           type="button"
           className={isPreferred
-            ? 'dsm-xdpool-account-prefer dsm-xdpool-account-prefer-on'
-            : 'dsm-xdpool-account-prefer'}
+            ? 'is-on'
+            : 'tiny'}
           aria-pressed={isPreferred}
           title={isPreferred
             ? (t?.('row.accountPreferClearHint') ?? 'Stop preferring this account; the distribution strategy decides again')
@@ -2322,8 +2322,8 @@ function AccountBlock({
           role="switch"
           aria-checked={!isDisabled}
           className={isDisabled
-            ? 'dsm-xdpool-account-toggle'
-            : 'dsm-xdpool-account-toggle dsm-xdpool-account-toggle-on'}
+            ? 'sw'
+            : 'is-on'}
           title={t?.('row.accountToggleHint') ?? 'Enable this account (uncheck to keep it out of the pool)'}
           disabled={accountBusyId === account.id}
           onClick={() => { onToggleDisabled(account.id, !isDisabled) }}
@@ -2681,7 +2681,7 @@ function AccountStats({
               // lines, so it becomes a short marker with the text in the tooltip.
               ? <li>
                   <span
-                    className={`dsm-xdpool-panel-error${account.credentialDead === true ? ' dsm-xdpool-panel-error-dead' : ''}`}
+                    className={`hint${account.credentialDead === true ? ' is-bad' : ''}`}
                     title={account.creditsError}
                   >
                     {account.credentialDead === true
@@ -2703,14 +2703,14 @@ function AccountStats({
                     : (expiry === '' ? null : (t?.('row.creditsExpiresAt', { time: expiry }) ?? `Expires ${expiry}`))
                   return (
                     <li key={`${pack.packageName}-${String(index)}`}>
-                      <span className="dsm-xdpool-packages-name">{pack.packageName}</span>
-                      <span className="dsm-xdpool-packages-value">
+                      <span className="td-name">{pack.packageName}</span>
+                      <span className="td-num">
                         {t?.('row.creditsPackage', { remain: formatNumber(pack.remain), size: formatNumber(pack.size) })
                           ?? `${formatNumber(pack.remain)} / ${formatNumber(pack.size)}`}
                       </span>
                       {when === null ? null
                         : <span
-                            className={`dsm-xdpool-packages-when${soon ? ' dsm-xdpool-packages-when-soon' : ''}`}
+                            className={`hint${soon ? ' hint' : ''}`}
                             title={t?.('row.creditsExpiresSoonTitle') ?? 'Expiring within 3 days'}
                           >
                             {when}
@@ -2848,17 +2848,17 @@ function ModelRow({
    */
   const probeProvider = XDPOOL_REGION_PROVIDER[region]
   return (
-    <div className={`dsm-xdpool-model${draft.enabled ? '' : ' dsm-xdpool-model-off'}`}>
-      <div className="dsm-xdpool-model-head">
-        <label className="dsm-xdpool-model-check">
+    <div className={`model${draft.enabled ? '' : ' is-off'}`}>
+      <div className="model-top">
+        <label className="sw">
           <input
             type="checkbox"
             checked={draft.enabled}
             disabled={!editable}
             onChange={() => { onToggle(model.id) }}
           />
-          <span className="dsm-xdpool-model-copy">
-            <span className="dsm-xdpool-model-name">
+          <span className="model-main">
+            <span className="model-name">
               <span>{model.name}</span>
               {/* A zero multiplier IS the upstream's way of saying "free"
                   (`credits: "x0.00"`), so printing "x0.00 积分" next to a
@@ -2869,11 +2869,11 @@ function ModelRow({
                     {t?.('row.rate', { rate: model.multiplier.toFixed(2) }) ?? `${model.multiplier.toFixed(2)}x`}
                   </span>}
             </span>
-            <span className="dsm-xdpool-model-id">{model.id}</span>
+            <span className="mono">{model.id}</span>
           </span>
         </label>
-        <div className="dsm-xdpool-model-controls">
-          <label className="dsm-xdpool-model-image" title={t?.('row.modelImage') ?? 'Image input'}>
+        <div className="model-side">
+          <label className="badge" title={t?.('row.modelImage') ?? 'Image input'}>
             <input
               type="checkbox"
               checked={draft.images}
@@ -2912,7 +2912,7 @@ function ModelRow({
         {tagText === null ? null
           : <span className="badge">{tagText}</span>}
         {laterHint === null ? null
-          : <span className="dsm-xdpool-model-meta-later">{laterHint}</span>}
+          : <span className="badge">{laterHint}</span>}
         {promoUntil === null ? null
           : <span className="badge">{promoUntil}</span>}
         {paidTwin === undefined ? null

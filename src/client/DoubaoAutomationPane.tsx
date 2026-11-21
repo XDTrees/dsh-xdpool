@@ -93,7 +93,7 @@ export function DoubaoAutomationPane({ t }: { readonly t?: Translate | undefined
   const enabled = state.enabled === true
   const lastRun = agoText(state.lastRunAt)
   return (
-    <div className="dsm-xdpool-cpool-auto">
+    <div className="sec">
       <button
         type="button"
         className="field"
@@ -111,7 +111,7 @@ export function DoubaoAutomationPane({ t }: { readonly t?: Translate | undefined
           豆包的签到自己点了会报系统错误（710010702），所以这里领的是「每日签到」等任务里
           已经完成、可以领的积分。开启后每 6 小时自动领一次。
         </p>
-        <div className="dsm-xdpool-cpool-autorow">
+        <div className="row">
           <button
             type="button"
             className="btn"

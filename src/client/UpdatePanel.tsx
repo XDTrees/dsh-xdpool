@@ -132,15 +132,15 @@ export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): Reac
   return (
     <div className="sec">
       <div className="sec-head">
-        <span className="dsm-xdpool-update-title">
+        <span className="sec-title">
           {t?.('update.title') ?? '检查更新'}
         </span>
         {status?.current === undefined ? null : (
-          <span className="dsm-xdpool-update-versions">
+          <span className="facts">
             {t?.('update.current') ?? '当前'} <b>{status.current}</b>
             {status.latest === undefined ? null : (
               <>
-                <span className="dsm-xdpool-update-sep" aria-hidden="true">·</span>
+                <span className="mono" aria-hidden="true">·</span>
                 {t?.('update.latest') ?? '最新'} <b>{status.latest}</b>
               </>
             )}
@@ -164,7 +164,7 @@ export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): Reac
 
       {status?.error !== undefined || status === undefined ? null : newer ? (
         <>
-          <p className="dsm-xdpool-update-newer">
+          <p className="pill">
             {t?.('update.available', { version: status.latest ?? '' }) ?? `有新版本 ${status.latest ?? ''}`}
             {published === undefined ? '' : `（发布于 ${published}）`}
           </p>
