@@ -1124,6 +1124,15 @@ function ProviderRow({
                   {t?.('agg.editModels') ?? 'Choose…'}
                 </button>
               </div>
+              {/*
+                已选计数 —— 设计稿的 .pick-sum。
+                模型多到要用浮层时，"选了哪些、还剩多少"是读者最想知道的两个数。
+              */}
+              <div className="pick-tools">
+                <span className="pick-sum">
+                  已选 <b>{String(chosen.size)}</b> / {String(listedModels.length)}
+                </span>
+              </div>
               <p className="hint">
                 {t?.('agg.modelPickHint') ?? ''}
               </p>
