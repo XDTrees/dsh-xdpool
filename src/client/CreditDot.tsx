@@ -482,7 +482,7 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
       {!open ? null : createPortal((
         <div
           ref={panelRef}
-          className="dsm-xdpool-dotpanel"
+          className="pop"
           role="dialog"
           aria-label={t?.('dot.panelTitle') ?? '本会话积分'}
           style={pos === undefined ? { visibility: 'hidden' } : { top: `${String(pos.top)}px`, left: `${String(pos.left)}px` }}
@@ -520,7 +520,7 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
             its own click; "not loaded yet" is an answer, an empty box is not.
           */}
           {!ready ? (
-            <p className="dsm-xdpool-dotpanel-empty">
+            <p className="hint">
               {failed
                 ? (t?.('dot.loadFailed') ?? '积分数据读取失败')
                 : (t?.('dot.loading') ?? '正在读取积分…')}
@@ -529,7 +529,7 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
           {!ready ? null : (
             <>
           <div className="dsm-xdpool-dotpanel-head">
-            <span className="dsm-xdpool-dotpanel-channel">
+            <span className="ch">
               {snapshot.all.length === 0
                 ? (t?.('dot.channelUnknown') ?? '未连接渠道')
                 : `${snapshot.channel?.name ?? ''} · ${grouped(snapshot.all.reduce((sum, row) => sum + row.total, 0))}`}
@@ -550,15 +550,15 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
           )}
           {/* The channel lives in the header now, so it is not repeated here. This row
               and the one below are the two things the header does not carry. */}
-          <div className="dsm-xdpool-dotpanel-sec">
-            <span className="dsm-xdpool-dotpanel-k">{t?.('dot.spentToday') ?? '今日已用'}</span>
-            <span className="dsm-xdpool-dotpanel-v">
+          <div className="pop-sec">
+            <span className="pop-k">{t?.('dot.spentToday') ?? '今日已用'}</span>
+            <span className="pop-v">
               {snapshot.spentToday === undefined ? '—' : grouped(snapshot.spentToday)}
             </span>
           </div>
-          <div className="dsm-xdpool-dotpanel-sec">
-            <span className="dsm-xdpool-dotpanel-k">{t?.('dot.model') ?? '模型'}</span>
-            <span className="dsm-xdpool-dotpanel-v">
+          <div className="pop-sec">
+            <span className="pop-k">{t?.('dot.model') ?? '模型'}</span>
+            <span className="pop-v">
               {snapshot.model === '' ? '—' : snapshot.model}
               {snapshot.multiplier === undefined ? '' : ` · x${rate(snapshot.multiplier)}`}
             </span>
@@ -569,15 +569,15 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
               cluttered. */}
           {snapshot.all.length > 1
             ? (
-              <div className="dsm-xdpool-dotpanel-more">
+              <div className="pop-more">
                 {snapshot.all.map(channel => {
                   const used = snapshot.usedChannels?.some(row => row.id === channel.id) === true
                   return (
-                    <div className="dsm-xdpool-dotpanel-row" key={channel.id}>
-                      <span className="dsm-xdpool-dotpanel-rowname" data-used={used ? 'true' : 'false'}>
+                    <div className="pop-row" key={channel.id}>
+                      <span className="pop-rowname" data-used={used ? 'true' : 'false'}>
                         {channel.name}
                       </span>
-                      <span className="dsm-xdpool-dotpanel-rowval">{grouped(channel.total)}</span>
+                      <span className="pop-rowval">{grouped(channel.total)}</span>
                     </div>
                   )
                 })}
