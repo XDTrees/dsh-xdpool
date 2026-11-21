@@ -1607,7 +1607,7 @@ export function ChannelPoolSection({ t, active }: {
       </div>
     </nav>
 
-    <main className="main dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
+    <main className="main dsm-xdpool-cpool dsm-xdpool-regions" aria-label={t?.('channelpool.title') ?? 'Channels'}>
       {error === undefined ? null
         : <p className="hint">{t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}</p>}
       {notice === undefined ? null : <p className="note">{notice}</p>}

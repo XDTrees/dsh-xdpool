@@ -317,9 +317,17 @@ describe('the settings page renders on both kernel lines', () => {
     expect(card).not.toContain('dsm-xdpool-usageline')
     expect(card).toMatch(/dsm-xdpool-regions/)
     expect(card).toMatch(/dsm-xdpool-region-grid/)
-    // Both lanes render, always — the tab that only appeared after a sign-in
-    // is the failure mode here.
-    expect(card).toContain('REGION_CARDS.map(region =>')
+    /*
+      两张 region-card 不再渲染。
+
+      设计稿的右栏是「中栏选中那一个渠道的详情」，不是两张并列的 WorkBuddy 汇总卡。
+      那两张卡曾经和 ChannelPoolSection 一起挂在 .app 下，各自占一格 ——
+      三列网格里塞进四五块内容，整页塌成一坨（用户的原话）。
+
+      现在账号池的内容只有一处来源：ChannelPoolSection 渲染的 list + main。
+    */
+    expect(card).toContain('<ChannelPoolSection')
+    expect(card).not.toContain('REGION_CARDS.map(region =>')
     expect(card).toContain("const REGION_CARDS = ['cn', 'global'] as const")
   })
 

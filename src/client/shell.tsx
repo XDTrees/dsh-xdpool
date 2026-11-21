@@ -342,8 +342,17 @@ export function PoolShell({
         .app 的直接子元素必须正好是 rail / list / main。这一层 display:contents
         不参与布局，只承载 dsm-xdpool-body 这个测试锚点。
       */}
-      {hero === undefined ? null : hero}
-      <div className="dsm-xdpool-body" style={{ display: 'contents' }}>{children}</div>
+      {/*
+        hero 与 children 都放进这一层。
+
+        它们都是 .app 的网格内容：hero 是页头、children 是 list + main。
+        任何一个留在 .app 的直接子层，就会自己占掉一整列 ——
+        三列网格会因此多出格子，整页塌成一片。
+      */}
+      <div className="dsm-xdpool-body" style={{ display: 'contents' }}>
+        {hero}
+        {children}
+      </div>
       {footer}
     </div>
   )
