@@ -1960,6 +1960,35 @@ export function ChannelPoolSection({ t, active }: {
                             {typeof checkin.todayCredit === 'number' ? ` +${amount(checkin.todayCredit)}` : ''}
                           </span>
                         )}
+                        {/*
+                          用量条 —— 设计稿的 .quota。
+
+                          token 型渠道（豆包、Accio、Marvis）每天给固定额度，
+                          读者要知道的是「今天还剩多少」，不是「有 3 个窗口」。
+                          一根 4px 的条子比一行数字先被看见。
+                        */}
+                        {buckets.length > 0 && buckets.some(b => typeof b.remaining === 'number') && (
+                          <div className="quota">
+                            {buckets.slice(0, 2).map((b, i) => {
+                              const pct = typeof b.remaining === 'number' ? Math.max(0, Math.min(100, b.remaining)) : 0
+                              return (
+                                <div className="quota-bar" key={`${b.name}-${String(i)}`}
+                                  title={`${b.name} · ${String(Math.round(pct))}%`}>
+                                  <span style={{ width: `${String(pct)}%` }} />
+                                </div>
+                              )
+                            })}
+                            <span className="quota-text">
+                              <span className="quota-used">
+                                {buckets[0]?.name ?? ''}
+                                {typeof buckets[0]?.remaining === 'number'
+                                  ? ` ${String(Math.round(buckets[0].remaining))}%`
+                                  : ''}
+                              </span>
+                              {buckets.length > 1 && <span className="quota-reset">+{String(buckets.length - 1)}</span>}
+                            </span>
+                          </div>
+                        )}
                         {balance?.error !== undefined
                           ? <span className="td-num" data-tone="err">{balance.error}</span>
                           : amount1 !== undefined
