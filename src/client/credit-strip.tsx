@@ -159,42 +159,42 @@ export function CreditStrip({ t }: { readonly t?: Translate | undefined }): Reac
   const unpriced = channels.reduce((sum, row) => sum + row.unpricedModels, 0)
 
   return (
-    <div className="dsm-xdpool-strip">
+    <div className="strip">
       <button
         type="button"
-        className="dsm-xdpool-strip-main"
+        className="strip-main"
         aria-expanded={open}
         onClick={() => { setOpen(current => !current) }}
         title={t?.('strip.hint') ?? '今日估算消耗，按渠道拆分；数字是 token × 模型倍率的估算'}
       >
-        <span className="dsm-xdpool-strip-k">{t?.('strip.today') ?? '今日消耗'}</span>
+        <span className="ch-name">{t?.('strip.today') ?? '今日消耗'}</span>
         <span className="dsm-xdpool-strip-v">{compact(total)}</span>
         <span className="dsm-xdpool-strip-u">{t?.('strip.credits') ?? '积分'}</span>
-        <span className="dsm-xdpool-strip-sep">·</span>
+        <span className="mono">·</span>
         <span className="dsm-xdpool-strip-tok">{tokens(totalTokens)} tokens</span>
         {unpriced > 0
           ? (
             <>
-              <span className="dsm-xdpool-strip-sep">·</span>
+              <span className="mono">·</span>
               <span className="dsm-xdpool-strip-warn" title={t?.('strip.unpricedHint') ?? '这些模型没有公布倍率，只统计 token 不计积分'}>
                 {t?.('strip.unpriced', { count: unpriced }) ?? `${String(unpriced)} 个未定价`}
               </span>
             </>
           )
           : null}
-        <span className="dsm-xdpool-strip-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <span className="strip-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
       </button>
       {!open ? null : (
-        <div className="dsm-xdpool-strip-list">
+        <div className="facts">
           {channels.map(row => (
             <div className="dsm-xdpool-strip-row" key={row.channel}>
-              <span className="dsm-xdpool-strip-ch">{row.channel}</span>
+              <span className="ch">{row.channel}</span>
               {/* Credits first: the strip's whole purpose is "who is expensive". A
                   channel with no priced model shows a dash rather than 0. */}
-              <span className="dsm-xdpool-strip-n">
+              <span className="td-num">
                 {row.credits > 0 ? compact(row.credits) : '—'}
               </span>
-              <span className="dsm-xdpool-strip-meta">
+              <span className="strip-meta">
                 {tokens(row.inputTokens + row.outputTokens)} · {String(row.requests)} {t?.('strip.calls') ?? '次'}
               </span>
             </div>
