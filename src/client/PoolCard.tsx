@@ -1538,7 +1538,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
               <style>{POOL_CARD_CSS}</style>
               {usage === undefined
                 ? null
-                : <section className="dsm-xdpool-card sec" aria-label={t?.('row.usageTitle') ?? 'Usage'}>
+                : <section className="card sec" aria-label={t?.('row.usageTitle') ?? 'Usage'}>
                     <div className="dsm-xdpool-usage-head">
                       <h3 className="sec-title">
                         {t?.('row.usageTitle') ?? 'Usage'}
@@ -1548,7 +1548,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                           the user asked for and THREE upstream round trips;
                           collapsing them is what makes a panel disagree with
                           the person reading it. */}
-                      <p className="dsm-xdpool-usage-summary">
+                      <p className="sec-head">
                         {t?.('row.usageTurns', {
                           turns: usage.turns,
                           calls: usage.calls,
@@ -1568,11 +1568,11 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                     {usage.usageReported
                       ? null
                       : <p className="hint">{t?.('row.usageNotReported') ?? 'The gateway reported no token counts.'}</p>}
-                    <div className="dsm-xdpool-usage-rows">
+                    <div className="table">
                       {usage.rows.map(row => (
-                        <div className="dsm-xdpool-usage-row" key={`${row.region}:${row.model}`}>
-                          <span className="dsm-xdpool-usage-model">{row.model}</span>
-                          <span className="dsm-xdpool-usage-numbers">
+                        <div className="tr" key={`${row.region}:${row.model}`}>
+                          <span className="td-name">{row.model}</span>
+                          <span className="td-num">
                             {t?.('row.usageTokens', {
                               input: formatNumber(row.inputTokens),
                               output: formatNumber(row.outputTokens),
@@ -1607,7 +1607,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                   of reach), and the model pool is untouched: this is a question
                   about where the page is reachable from, not about what it
                   serves. */}
-              <section className="dsm-xdpool-card dsm-xdpool-sidebar-row" aria-label={t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}>
+              <section className="card dsm-xdpool-sidebar-row" aria-label={t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}>
                 <div className="dsm-xdpool-sidebar-row-head">
                   <h3 className="sec-title">{t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}</h3>
                   <button
@@ -1667,15 +1667,15 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                       data-state={card.cardState}
                       style={regionCardStyle(region) as Record<string, string>}
                     >
-                      <div className="dsm-xdpool-region-head">
+                      <div className="sec-head">
                         <RegionCardTile region={region} />
                         <div className="mhead-title">
                           <h3 className="mhead-name">{card.brandName}</h3>
                           <p className="mhead-org">{card.brandSub}</p>
                         </div>
-                        <span className="dsm-xdpool-region-state">{card.stateLabel}</span>
+                        <span className="pill">{card.stateLabel}</span>
                       </div>
-                      <p className="dsm-xdpool-region-note">{card.brandNote}</p>
+                      <p className="hint">{card.brandNote}</p>
                       {/*
                         * Numbers first, label after — the order the reference
                         * build reads them in, and the order a user compares two
@@ -1732,7 +1732,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                               : (t?.('row.catalogRefresh') ?? 'Refresh models')}
                           </button>
                         </div>
-                        <div className="dsm-xdpool-region-seg">
+                        <div className="seg">
                           <RegionCardTrigger
                             controls={accountsPaneId}
                             open={accountsOpen}
@@ -2899,7 +2899,7 @@ function ModelRow({
             <span>{t?.('row.modelImage') ?? 'Image'}</span>
           </label>
           {capped
-            ? <fieldset className="dsm-xdpool-model-budget" aria-label={t?.('row.modelContextBudget') ?? 'Context'}>
+            ? <fieldset className="badge" aria-label={t?.('row.modelContextBudget') ?? 'Context'}>
                 <label>
                   <input
                     type="radio"
