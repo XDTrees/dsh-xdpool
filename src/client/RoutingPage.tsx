@@ -373,7 +373,7 @@ export function RoutingPage({ t }: RoutingPageProps) {
           </span>
         </>}
       />
-      <div className="dsm-xdpool-rt-new">
+      <div className="row">
         <span className="hint">{t?.('route.idHint') ?? ''}</span>
         {/*
           A primary button, not the filter chip it used to borrow. `.agg-cat` is
@@ -406,7 +406,7 @@ export function RoutingPage({ t }: RoutingPageProps) {
         ? null
         : drafts.length === 0
           ? <p className="hint">{t?.('route.empty') ?? 'No chain yet.'}</p>
-          : <div className="dsm-xdpool-rt-list">
+          : <div className="table-scroll">
               {drafts.map(draft => (
                 <ChainRow
                   key={draft.key}
@@ -475,9 +475,9 @@ function ChainRow({
   const flat = draft.flat
   const missing = flat.filter(model => candidateById.has(model) === false)
   return (
-    <div className="dsm-xdpool-rt-row" data-off={draft.enabled ? 'false' : 'true'}>
-      <div className="dsm-xdpool-rt-rowhead">
-        <span className="dsm-xdpool-rt-name">{draft.name === '' ? (t?.('route.newChain') ?? 'New chain') : draft.name}</span>
+    <div className="tr" data-off={draft.enabled ? 'false' : 'true'}>
+      <div className="tr tr-head">
+        <span className="td-name">{draft.name === '' ? (t?.('route.newChain') ?? 'New chain') : draft.name}</span>
         {draft.id !== undefined
           ? <span className="mono">{draft.id}</span>
           : null}
@@ -704,16 +704,16 @@ function ChainEditor({
       <p className="hint">{t?.('route.platformOrder') ?? 'Platform order (higher is tried first)'}</p>
       {draft.platforms.length === 0
         ? <p className="pill">{t?.('route.noMembers') ?? 'Add at least one member.'}</p>
-        : <div className="dsm-xdpool-rt-laneboxes">
+        : <div className="grid2">
             {draft.platforms.map((platform, index) => {
               const group = { models: platform.models }
               const choices = candidatesFor(platform.owner, group)
               const picked = pickByLane[platform.owner] ?? ''
               return (
-                <div className="dsm-xdpool-rt-lanebox" key={`${platform.owner}-${index}`}>
-                  <div className="dsm-xdpool-rt-lanebox-head">
+                <div className="card" key={`${platform.owner}-${index}`}>
+                  <div className="row">
                     <span className="num">{index + 1}</span>
-                    <span className="dsm-xdpool-rt-lanebox-name">{ownerName(platform.owner, t)}</span>
+                    <span className="td-name">{ownerName(platform.owner, t)}</span>
                     <span className="mono">{platform.owner}</span>
                   </div>
                   <div className="sec-actions">
@@ -729,19 +729,19 @@ function ChainEditor({
                   </div>
                   {platform.models.length === 0
                     ? <p className="hint">{t?.('route.platformNoModels') ?? 'No model added to this platform yet.'}</p>
-                    : <ol className="dsm-xdpool-rt-members">
+                    : <ol className="table">
                         {platform.models.map((model, modelIndex) => {
                           const fullId = platform.owner === 'workbuddy' ? model : `${platform.owner}/${model}`
                           const candidate = candidateById.get(fullId)
                           return (
-                            <li className="dsm-xdpool-rt-member" key={`${model}-${modelIndex}`}>
+                            <li className="tr" key={`${model}-${modelIndex}`}>
                               <span className="num">{modelIndex + 1}</span>
-                              <span className="dsm-xdpool-rt-mid" title={fullId}>{model}</span>
+                              <span className="td-mono" title={fullId}>{model}</span>
                               {candidate === undefined
-                                ? <span className="lane dsm-xdpool-rt-mtag" data-tone="busy">
+                                ? <span className="lane td-ch" data-tone="busy">
                                     {t?.('route.unusable') ?? 'needs a key'}
                                   </span>
-                                : <span className="lane dsm-xdpool-rt-mtag" data-tone="ok">
+                                : <span className="lane td-ch" data-tone="ok">
                                     {compact(candidate.contextWindow)}
                                   </span>}
                               <button
