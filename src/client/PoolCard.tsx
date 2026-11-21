@@ -1529,7 +1529,32 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                   of reach), and the model pool is untouched: this is a question
                   about where the page is reachable from, not about what it
                   serves. */}
-              <section className="card row" aria-label={t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}>
+
+
+              {/* dsm-xdpool-regions 是几处测试的锚点，挂在这里标记「这一页是账号池」 */}
+              <div className="dsm-xdpool-regions dsm-xdpool-region-grid" style={{ display: 'contents' }}>
+              {/*
+                两张 region-card（WorkBuddy 国内/国际）不再渲染。
+
+                设计稿的右栏是「中栏选中那一个渠道的详情」，不是两张并列的汇总卡。
+                这两张曾经和 ChannelPoolSection 一起挂在 .app 下，各自占一格 ——
+                三列网格里塞进四五块内容，整页塌成一坨（用户就是这么说的）。
+
+                它们的数据（账号数、模型数、积分）已经在中栏的渠道行和详情里，
+                这里不需要第二份。
+              */}
+              <ChannelPoolSection t={t} active={selectedChannel} />
+              {/*
+                侧栏入口开关：它是设置项，不属于渠道详情。
+                放进第三列（详情列）的末尾 —— 挂在 .app 层会让它自己占一格，
+                把三列挤成四块（用户说的「一坨」就是这个）。
+              */}
+              <div className="dsm-xdpool-settingslot" /*
+                  绝对定位钉在详情列底部，不参与网格排布 ——
+                  它是第四个网格项时会把 main 挤到第二行（三列塌成一坨的最后一环）。
+                */
+                style={{ position: 'absolute', right: 0, bottom: 0, width: 'calc(100% - 464px)', padding: '0 32px 16px' }}>
+                <section className="card row" aria-label={t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}>
                 <div className="sec-head">
                   <h3 className="sec-title">{t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}</h3>
                   <button
@@ -1548,20 +1573,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                     : (t?.('row.sidebarRowOff') ?? 'The sidebar row is hidden; the pool still opens from Settings → XD Pool, and models are unaffected.')}
                 </p>
               </section>
-
-              {/* dsm-xdpool-regions 是几处测试的锚点，挂在这里标记「这一页是账号池」 */}
-              <div className="dsm-xdpool-regions dsm-xdpool-region-grid" style={{ display: 'contents' }}>
-              {/*
-                两张 region-card（WorkBuddy 国内/国际）不再渲染。
-
-                设计稿的右栏是「中栏选中那一个渠道的详情」，不是两张并列的汇总卡。
-                这两张曾经和 ChannelPoolSection 一起挂在 .app 下，各自占一格 ——
-                三列网格里塞进四五块内容，整页塌成一坨（用户就是这么说的）。
-
-                它们的数据（账号数、模型数、积分）已经在中栏的渠道行和详情里，
-                这里不需要第二份。
-              */}
-              <ChannelPoolSection t={t} active={selectedChannel} />
+              </div>
               </div>
               {/* Backup moved to its own page. It operates on the whole credential set
                   rather than on one pool card, and sitting it under the accounts implied a
