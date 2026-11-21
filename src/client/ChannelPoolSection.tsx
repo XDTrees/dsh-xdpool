@@ -1540,14 +1540,73 @@ export function ChannelPoolSection({ t, active }: {
       </section>
     )
   }
-  return (
-    /*
-      这一栏就是详情列 —— 设计稿的 .main。
+  /*
+    两列：条目栏 + 详情。
 
-      外面不能再包一层 section：.app 的第三列要的就是这个元素，
-      多一层包装会让 grid 看不到 .main，详情被挤成 0 宽。
-      dsm-xdpool-cpool 保留为锚点（几处测试按它定位），不承载样式。
-    */
+    设计稿的 .list 是渠道列表（选中项高亮），.main 是选中那一个的详情。
+    这两栏必须一起出现在 .app 的网格里 —— 分开渲染的话第三列拿不到元素。
+
+    dsm-xdpool-cpool 保留在 main 上作锚点（几处测试按它定位），不承载样式。
+  */
+  return (
+    <>
+    <nav className="list" aria-label={t?.('channelpool.title') ?? 'Channels'}>
+      {/*
+        汇总三格：账号总数 / 已连 / 积分 —— 设计稿中间栏的第一屏。
+      */}
+      <div className="list-head">
+        <div className="list-title">{t?.('channelpool.title') ?? '渠道'}</div>
+        <div className="list-stats">
+          <div className="ls">
+            <span className="ls-v">{String(entries.length)}</span>
+            <span className="ls-k">账号总数</span>
+          </div>
+          <div className="ls">
+            <span className="ls-v">{String(entries.filter(e => e.accounts.length > 0).length)}</span>
+            <span className="ls-k">已连</span>
+          </div>
+          <div className="ls">
+            <span className="ls-v">—</span>
+            <span className="ls-k">积分</span>
+          </div>
+        </div>
+      </div>
+      <div className="list-scroll">
+        {(['bound', 'unbound'] as const).map(kind => {
+          const group = entries.filter(e => (kind === 'bound') === (e.accounts.length > 0))
+          if (group.length === 0) return null
+          return (
+            <div key={kind}>
+              <div className="list-group">
+                {kind === 'bound' ? '已登录' : '未登录'}
+                <span className="list-group-n">{String(group.length)}</span>
+              </div>
+              {group.map(entry => {
+                const icon = channelIcon(entry.channel.id)
+                const isOn = entry.channel.id === chosen
+                return (
+                  <button
+                    key={entry.channel.id}
+                    type="button"
+                    className="ch"
+                    data-active={isOn ? 'true' : false}
+                    aria-current={isOn ? 'true' : undefined}
+                    onClick={() => { setOwnActive(entry.channel.id) }}
+                  >
+                    {icon === undefined
+                      ? <span className="ch-mark" data-letters={channelInitials(entry.channel.name)}>{channelInitials(entry.channel.name)}</span>
+                      : <span className="ch-mark" style={{ backgroundImage: `url("${icon}")` }} />}
+                    <span className="ch-name">{entry.channel.name}</span>
+                    <span className="ch-n">{entry.accounts.length === 0 ? '' : String(entry.accounts.length)}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })}
+      </div>
+    </nav>
+
     <main className="main dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
       {error === undefined ? null
         : <p className="hint">{t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}</p>}
@@ -2125,5 +2184,6 @@ export function ChannelPoolSection({ t, active }: {
         </div>
       </div>
     </main>
+    </>
   )
 }
