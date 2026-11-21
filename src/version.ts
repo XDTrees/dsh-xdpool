@@ -11,4 +11,4 @@
  *
  * @module dsh-xdpool/version
  */
-export const POOL_VERSION = '2.7.6-ui78'
+export const POOL_VERSION = '2.7.6-ui79'
