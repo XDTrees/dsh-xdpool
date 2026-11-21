@@ -105,11 +105,14 @@ const bridge = `
    ============================================================ */
 
 .app {
+  /* body 的背景色也要带过来 —— 插件靠宿主给底色的话，浅色主题下会串色 */
+  background: var(--bg);
   font-family: var(--sans);
   font-size: var(--fs-sm);
   line-height: 1.65;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 /* ============================================================
