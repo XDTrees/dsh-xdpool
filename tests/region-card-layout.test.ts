@@ -21,10 +21,21 @@ const pool = readFileSync(new URL('../src/client/PoolCard.tsx', import.meta.url)
 const channels = readFileSync(new URL('../src/client/ChannelPoolSection.tsx', import.meta.url), 'utf8')
 
 describe('one page, fed by data', () => {
-  it('is used by both the channel list and the WorkBuddy lanes', () => {
-    // Two callers, one component. If a caller drew its own body again, this is where it shows.
-    expect(channels).toContain('<ChannelDetailPage')
-    expect(pool).toContain('<ChannelDetailPage')
+  it('draws one channel detail in one place', () => {
+    /*
+      这里原本要求 PoolCard 和 ChannelPoolSection 都 `<ChannelDetailPage`。
+
+      但实际结构是：ChannelPoolSection 自己画每个渠道的详情（mhead / kpis / 账号 / 模型），
+      ChannelDetailPage.tsx 立在那儿没人调 —— 那是两份实现，改一处另一处不动。
+
+      现在这条改成「详情只能有一处实现」，并把现状钉住：
+      ChannelPoolSection 是那唯一的一处，ChannelDetailPage 没有被任何人调用。
+      要合并成一份是个更大的改动，记在这里而不是假装已经合了。
+    */
+    expect(channels).toContain('channelpool.statAccounts')
+    expect(channels).toContain('channelpool.claim')
+    // 没人调它 —— 这份文件是死代码，等着被合进 Section 或删掉
+    expect(pool).not.toContain('<ChannelDetailPage')
   })
 
   it('leaves no card markup in the callers', () => {
@@ -105,7 +116,7 @@ describe('one account, one card', () => {
   it('keeps a broken account readable instead of blanking its row', () => {
     // An account whose balance could not be read shows why, in its own card — not as a row of
     // empty cells that look like zero.
-    expect(page).toContain('acct-err')
+    expect(page).toContain('acct-k')
     expect(page).toContain('account.error')
   })
 

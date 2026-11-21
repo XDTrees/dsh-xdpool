@@ -1892,8 +1892,8 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                               {t?.('row.regionNoModels') ?? 'No model published by this gateway yet.'}
                             </p>
                           : <>
-                              <div className="dsm-xdpool-region-pane-head">
-                                <span className="dsm-xdpool-region-pane-title">
+                              <div className="sec-head">
+                                <span className="sec-title">
                                   {t?.('row.modelsEnabledCount', {
                                     enabled: card.modelState.enabled,
                                     total: models.length,
