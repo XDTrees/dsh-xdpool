@@ -418,7 +418,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
         </>}
       />
       <div className="dsm-xdpool-agg-lanebar">
-        <label className="dsm-xdpool-switch">
+        <label className="sw">
           <input
             type="checkbox"
             checked={laneEnabled}
@@ -467,12 +467,12 @@ export function AggregatePage({ t }: AggregatePageProps) {
         </div>
       </div>
       {error !== undefined
-        ? <p className="dsm-xdpool-panel-error">{error}</p>
+        ? <p className="hint">{error}</p>
         : null}
       {status === undefined && error === undefined
-        ? <p className="dsm-xdpool-panel-empty">…</p>
+        ? <p className="hint">…</p>
         : visible.length === 0
-          ? <p className="dsm-xdpool-panel-empty">{t?.('agg.empty') ?? 'No vendor matches.'}</p>
+          ? <p className="hint">{t?.('agg.empty') ?? 'No vendor matches.'}</p>
           : <div className="dsm-xdpool-agg-list">
               {visible.map(provider => (
                 <ProviderRow
@@ -977,7 +977,7 @@ function ProviderRow({
             a vendor in the pool — that is the whole point of pasting one — but
             taking a vendor back OUT without throwing the key away is a different
             decision, and it needs its own control. */}
-        <label className="dsm-xdpool-switch dsm-xdpool-agg-switch">
+        <label className="sw dsm-xdpool-agg-switch">
           <input
             type="checkbox"
             checked={enabled}
@@ -1094,7 +1094,7 @@ function ProviderRow({
                 </span>
                 <button
                   type="button"
-                  className="dsm-xdpool-btn"
+                  className="btn"
                   data-tone="quiet"
                   onClick={onEditModels}
                 >
@@ -1160,7 +1160,7 @@ function ProviderRow({
                 ? <div className="dsm-xdpool-agg-pickeracts">
                     <button
                       type="button"
-                      className="dsm-xdpool-btn"
+                      className="btn"
                       data-tone="quiet"
                       disabled={busy}
                       onClick={() => { onSelectAllModels(false) }}
@@ -1169,7 +1169,7 @@ function ProviderRow({
                     </button>
                     <button
                       type="button"
-                      className="dsm-xdpool-btn"
+                      className="btn"
                       data-tone="quiet"
                       disabled={busy}
                       onClick={() => { onSelectAllModels(true) }}
@@ -1178,7 +1178,7 @@ function ProviderRow({
                     </button>
                     <button
                       type="button"
-                      className="dsm-xdpool-btn"
+                      className="btn"
                       data-tone="quiet"
                       disabled={busy}
                       onClick={onDiscardModels}
@@ -1187,7 +1187,7 @@ function ProviderRow({
                     </button>
                     <button
                       type="button"
-                      className="dsm-xdpool-btn"
+                      className="btn"
                       data-tone="primary"
                       disabled={busy}
                       onClick={() => { void onSaveModels() }}
