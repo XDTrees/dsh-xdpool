@@ -127,7 +127,7 @@ export function KpiCard({
   sub?: string | undefined
 }) {
   return (
-    <div className="sum-cell dsm-xdpool-glass">
+    <div className="sum-cell">
       <span className="sum-k">{label}</span>
       <span className="sum-v">{value}</span>
       <span className="sum-sub">{sub ?? ''}</span>
