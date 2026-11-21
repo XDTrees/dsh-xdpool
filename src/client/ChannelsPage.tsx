@@ -452,7 +452,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
   const state = status?.state ?? 'pending'
   const channels = status?.channels ?? []
   return (
-    <div className="groups">
+    <div className="main">
       <PageHero
         title={t?.('chan.title') ?? 'Login channels'}
         sub={t?.('chan.sub') ?? ''}
@@ -468,6 +468,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
           {t?.('chan.connectedCount', { count: connectedCount }) ?? `${connectedCount} connected`}
         </span>}
       />
+      <div className="mbody">
       {autoCheckin !== undefined && (
         <div className="hint">
           <label className="sw">
@@ -555,6 +556,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
             </div>
           </section>
         ))}
+      </div>
     </div>
   )
 }

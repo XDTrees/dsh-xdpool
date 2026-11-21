@@ -224,7 +224,11 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
   const details = useMemo(() => summary?.entries.slice(0, DETAIL_ROWS) ?? [], [summary])
   const accounts: readonly UsageAccountRow[] = summary?.accounts ?? []
   return (
-    <>
+    /*
+      两段：页头 + 正文 —— 设计稿每一页的 main 都是这个形状。
+      少了 .mbody，正文会贴着 pagehead 没有呼吸，圆角也框不住。
+    */
+    <div className="main">
       <PageHero
         title={t?.('ledger.title') ?? 'Data dashboard'}
         sub={t?.('ledger.sub') ?? 'What this machine actually sent and got back, since the pool last started.'}
@@ -239,6 +243,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
           </>
         )}
       />
+      <div className="mbody">
       {failed
         ? <p className="note" role="alert">
             {t?.('ledger.failed') ?? 'Could not read the usage numbers. The pool itself is unaffected.'}
@@ -447,6 +452,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
                   </section>
                 </>}
           </>}
-    </>
+      </div>
+    </div>
   )
 }

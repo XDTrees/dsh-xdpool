@@ -288,6 +288,8 @@ export function GatewayPage({ t }: GatewayPageProps) {
         </>}
       />
 
+      <div className="mbody">
+
       {/*
         网关转过什么：四格。
 
@@ -582,6 +584,7 @@ export function GatewayPage({ t }: GatewayPageProps) {
       <div className="sec">
         <p className="sec-title">{t?.('gw.usage') ?? 'Using it'}</p>
         <p className="note">{t?.('gw.usageHint') ?? ''}</p>
+      </div>
       </div>
     </div>
   )

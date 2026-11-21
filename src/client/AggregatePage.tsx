@@ -415,6 +415,8 @@ export function AggregatePage({ t }: AggregatePageProps) {
           </span>
         </>}
       />
+
+      <div className="mbody">
       <div className="lane">
         <label className="sw">
           <input
@@ -582,6 +584,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
                 />
               ))}
             </div>}
+      </div>
     </div>
   )
 }

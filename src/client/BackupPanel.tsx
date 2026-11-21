@@ -223,7 +223,15 @@ export function BackupPanel({ t }: { readonly t?: Translate | undefined }): Reac
   }, [chooseFile, password, picked, tooShort, t])
 
   return (
-    <div className="main mbody">
+    <div className="main">
+      {/* 页头：设计稿每一页都有（.mhead），免得读者不知道自己在哪一页 */}
+      <header className="mhead">
+        <div className="mhead-title">
+          <span className="mhead-name">{t?.('backup.title') ?? '备份'}</span>
+          <span className="mhead-org">账号池、设置、路由规则</span>
+        </div>
+      </header>
+      <div className="mbody">
       {/*
         警告横幅：这份文件里有凭据。
 
@@ -325,6 +333,7 @@ export function BackupPanel({ t }: { readonly t?: Translate | undefined }): Reac
       {notice === undefined ? null : <p className="note">{notice}</p>}
       {error === undefined ? null : <p className="hint">{error}</p>}
     </div>
+      </div>
     </div>
   )
 }

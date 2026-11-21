@@ -353,7 +353,8 @@ export function RoutingPage({ t }: RoutingPageProps) {
     setEditing(draft.key)
   }, [])
   return (
-    <div className="main mbody">
+    <div className="main">
+      <div className="mbody">
       <PageHero
         title={t?.('route.title') ?? 'Routing'}
         sub={t?.('route.sub') ?? ''}
@@ -457,6 +458,7 @@ export function RoutingPage({ t }: RoutingPageProps) {
                 </button>
               </div>
             </div>}
+      </div>
     </div>
   )
 }
