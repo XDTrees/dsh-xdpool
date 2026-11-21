@@ -108,6 +108,31 @@ export function channelInitials(name: string): string {
  * Returning undefined rather than a placeholder keeps the decision in one place:
  * the caller draws the initials tile, so there is exactly one fallback rule.
  */
+/**
+ * 厂商图标。
+ *
+ * 两个来源，先查 JS 里那一份（早期手写的），
+ * 再回退到设计稿的 CSS 变量。
+ *
+ * 为什么要两个：`icons.css` 里有 20 家，JS 里只有 9 家。
+ * 提取脚本一直没读 icons.css，所以那 11 家一直显示首字母块 ——
+ * 而设计稿早就把它们画好了。
+ *
+ * CSS 变量无法在 JS 里读成字符串，所以这里返回一个
+ * 特殊标记 `css:--icon-xxx`，由 BrandTile 写成 `var(--icon-xxx)`。
+ */
 export function channelIcon(id: string): string | undefined {
-  return CHANNEL_ICONS[id]
+  const own = CHANNEL_ICONS[id]
+  if (own !== undefined) return own
+  /* 设计稿的图标变量名与渠道 id 对不上的几家，单独对照 */
+  const CSS_ALIAS: Readonly<Record<string, string>> = {
+    'lobster': 'lobsterai',
+    'gemini-code-assist': 'gemini',
+    'autoclaw-global': 'autoclaw',
+    'autoclaw-cn': 'autoclaw',
+    'monkeycode-global': 'monkeycode',
+    'monkeycode-cn': 'monkeycode',
+  }
+  const cssName = CSS_ALIAS[id] ?? id
+  return `css:--icon-${cssName}`
 }

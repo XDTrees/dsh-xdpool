@@ -1670,7 +1670,10 @@ export function ChannelPoolSection({ t, active }: {
                   >
                     {icon === undefined
                       ? <span className="ch-mark" data-letters={channelInitials(entry.channel.name)}>{channelInitials(entry.channel.name)}</span>
-                      : <span className="ch-mark" style={{ backgroundImage: `url("${icon}")` }} />}
+                      /* css:--icon-xxx 是「用设计稿的 CSS 变量」，不能包进 url() */
+                      : <span className="ch-mark" style={{
+                          backgroundImage: icon.startsWith('css:') ? `var(${icon.slice(4)})` : `url("${icon}")`,
+                        }} />}
                     <span className="ch-name">{entry.channel.name}</span>
                     <span className="ch-n">{entry.accounts.length === 0 ? '' : String(entry.accounts.length)}</span>
                   </button>

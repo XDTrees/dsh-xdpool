@@ -24,6 +24,14 @@ const colors = readFileSync(`${DESIGN}/channel-colors.css`, 'utf8')
   页面靠 app.css 的媒体查询勉强撑着，但那些是「缩小」，不是「重排」。
   文件不存在时跳过，不打断构建。
 */
+/*
+  icons.css：20 家厂商的图标（base64），写成 --icon-* 变量。
+  这是插件「13 家没有图标」的答案 —— 设计稿早就画好了，
+  只是提取脚本从来没读过这个文件。
+*/
+let icons = ''
+try { icons = readFileSync(`${DESIGN}/icons.css`, 'utf8') } catch { icons = '' }
+
 let mobile = ''
 try { mobile = readFileSync(`${DESIGN}/mobile.css`, 'utf8') } catch { mobile = '' }
 
@@ -243,7 +251,7 @@ const out = `/**
  * 来源：xdpool-design 的 tokens.css / app.css / channel-colors.css / build-a.mjs。
  * 改样式请改设计稿源文件，再跑 scripts/extract-design-css.mjs。
  */
-export const DESIGN_TOKENS_CSS = \`${tokens}\n${colors}\`
+export const DESIGN_TOKENS_CSS = \`${tokens}\n${colors}\n${icons}\`
 
 export const DESIGN_DETAIL_CSS = \`${MIN_FONT_FIX(scoped)}\n${MIN_FONT_FIX(pageCss())}\n${scopedMobile}\n${bridge}\`
 `

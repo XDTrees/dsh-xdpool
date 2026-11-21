@@ -128,7 +128,10 @@ export function BrandTile({ accent, glyph, icon, initials, className }: BrandTil
       style={{
         '--ch-logo-accent': accent,
         '--ch-logo-glyph': letters === undefined ? BRAND_TILE_GLYPHS[glyph] : 'none',
-        '--ch-logo-icon': icon === undefined ? 'none' : `url("${icon}")`,
+        '--ch-logo-icon': icon === undefined ? 'none'
+          /* css:--icon-xxx 是「用设计稿的 CSS 变量」，不是 data URI */
+          : icon.startsWith('css:') ? `var(${icon.slice(4)})`
+            : `url("${icon}")`,
       } as Record<string, string>}
     >
       {letters}
