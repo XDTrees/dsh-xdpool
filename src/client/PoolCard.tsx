@@ -2213,7 +2213,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                   rather than on one pool card, and sitting it under the accounts implied a
                   scope it does not have. */}
               {flash === undefined ? null
-                : <p className="dsm-xdpool-note">{flash}</p>}
+                : <p className="note">{flash}</p>}
               {error === undefined ? null
                 : <p className="dsm-xdpool-error">
                     {t?.('row.error', { message: error }) ?? `Pool status unavailable: ${error}`}
@@ -2706,7 +2706,7 @@ function AccountStats({
                   </span>
                 </li>
               : packages.length === 0
-                ? <li className="dsm-xdpool-panel-empty">–</li>
+                ? <li className="hint">–</li>
                 : packages.map((pack, index) => {
                   const expiry = formatExpiry(pack.expiresAtMs)
                   const refresh = formatExpiry(pack.cycleRefreshMs)
