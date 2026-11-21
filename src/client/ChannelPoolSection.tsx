@@ -1353,7 +1353,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
         : <p className="hint">{t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}</p>}
       {notice === undefined ? null : <p className="note">{notice}</p>}
       {/* The switch that brings the unbound channels back, for adding another. */}
-      <div className="dsm-xdpool-cpool-bar">
+      <div className="sec-head">
         <button
           type="button"
           className="btn"
@@ -1423,9 +1423,9 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
               */}
               <div className="dsm-xdpool-region-head">
                 <BrandTile accent={channel.accent} glyph="login" {...tileMark} />
-                <div className="dsm-xdpool-region-titles">
-                  <h3 className="dsm-xdpool-region-title">{channel.name}</h3>
-                  <p className="dsm-xdpool-region-sub">{channel.org}</p>
+                <div className="mhead-title">
+                  <h3 className="mhead-name">{channel.name}</h3>
+                  <p className="mhead-org">{channel.org}</p>
                 </div>
                 <span className="dsm-xdpool-region-state" data-on={accounts.length > 0}>
                   {accounts.length > 0
@@ -1434,7 +1434,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 </span>
               </div>
               <p className="dsm-xdpool-region-note">{channel.note}</p>
-              <div className="dsm-xdpool-region-stats">
+              <div className="kpis">
                 <span className="fact">
                   <span className="td-name">
                     {t?.('channelpool.statAccounts') ?? '账号'}
@@ -1468,7 +1468,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                   </span>
                 )}
               </div>
-              <div className="dsm-xdpool-cpool-acts">
+              <div className="sec-actions">
                 {/* Only rendered when the pack really has a claim path for this
                     vendor. Drawing it for the others would put a button on the
                     card that answers `unsupported provider` every time it is
@@ -1613,10 +1613,10 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                           </span>
                         )}
                         {balance?.error !== undefined
-                          ? <span className="dsm-xdpool-cpool-acctbalance" data-tone="err">{balance.error}</span>
+                          ? <span className="td-num" data-tone="err">{balance.error}</span>
                           : amount1 !== undefined
                             ? (
-                              <span className="dsm-xdpool-cpool-acctbalance">
+                              <span className="td-num">
                                 {amount(amount1)} {unit}
                                 {buckets.length > 0
                                   ? ` · ${t?.('channelpool.balancePackages', { count: buckets.length }) ?? `${buckets.length} window(s)`}`
@@ -1714,7 +1714,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     <div className="dsm-xdpool-cpool-search">
                       <input
                         type="search"
-                        className="dsm-xdpool-cpool-searchbox"
+                        className="search"
                         value={query}
                         placeholder={t?.('channelpool.searchModels') ?? 'Search models'}
                         aria-label={t?.('channelpool.searchModels') ?? 'Search models'}
@@ -1729,12 +1729,12 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     </div>
                   )}
                   {visibleModels.length === 0 && models.length > 0 ? (
-                    <p className="dsm-xdpool-cpool-empty">
+                    <p className="hint">
                       {t?.('channelpool.searchNone', { query: query.trim() })
                         ?? `No model matches “${query.trim()}”.`}
                     </p>
                   ) : models.length === 0 ? (
-                    <p className="dsm-xdpool-cpool-empty">
+                    <p className="hint">
                       {entry.modelError === undefined
                         ? (t?.('channelpool.noModels') ?? 'No models published yet.')
                         // A refusal and an empty catalogue look identical on the
@@ -1905,7 +1905,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
             </article>
           )
         })}
-        <div className="dsm-xdpool-cpool-acts">
+        <div className="sec-actions">
           <button
             type="button"
             className="btn"
