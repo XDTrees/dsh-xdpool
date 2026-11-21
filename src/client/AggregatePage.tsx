@@ -929,26 +929,25 @@ function ProviderRow({
             </p>
           : null}
         {provider.authKind !== 'none'
-          ? <div className="grid2">
-              <label className="field">
-                <span>{t?.('agg.key') ?? 'API key'}</span>
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={draft?.apiKey ?? ''}
-                  placeholder={t?.('agg.keyPlaceholder') ?? 'Paste the key'}
-                  onChange={event => { onDraft({ apiKey: event.target.value, baseUrl: draft?.baseUrl ?? '', extraKey: draft?.extraKey ?? '' }) }}
-                />
-              </label>
-              <label className="field">
-                <span>{t?.('agg.baseUrl') ?? 'Endpoint'}</span>
-                <input
-                  type="text"
-                  value={draft?.baseUrl ?? provider.baseUrl ?? ''}
-                  placeholder={t?.('agg.baseUrlPlaceholder') ?? 'Blank uses the default'}
-                  onChange={event => { onDraft({ apiKey: draft?.apiKey ?? '', baseUrl: event.target.value, extraKey: draft?.extraKey ?? '' }) }}
-                />
-              </label>
+          ? /* 密钥行 —— 设计稿的 .vd-key-row（一行横排，等宽） */
+            <div className="vd-key-row">
+              <input
+                type="password"
+                autoComplete="off"
+                className="vd-input"
+                aria-label={t?.('agg.key') ?? 'API key'}
+                value={draft?.apiKey ?? ''}
+                placeholder={t?.('agg.keyPlaceholder') ?? 'Paste the key'}
+                onChange={event => { onDraft({ apiKey: event.target.value, baseUrl: draft?.baseUrl ?? '', extraKey: draft?.extraKey ?? '' }) }}
+              />
+              <input
+                type="text"
+                className="vd-input"
+                aria-label={t?.('agg.baseUrl') ?? 'Endpoint'}
+                value={draft?.baseUrl ?? provider.baseUrl ?? ''}
+                placeholder={t?.('agg.baseUrlPlaceholder') ?? 'Blank uses the default'}
+                onChange={event => { onDraft({ apiKey: draft?.apiKey ?? '', baseUrl: event.target.value, extraKey: draft?.extraKey ?? '' }) }}
+              />
             </div>
           : null}
         {/*
