@@ -408,10 +408,10 @@ export function AggregatePage({ t }: AggregatePageProps) {
         title={t?.('agg.title') ?? 'Providers'}
         sub={t?.('agg.sub') ?? ''}
         pills={<>
-          <span className="dsm-xdpool-agg-pill" data-tone={laneEnabled ? 'ok' : 'off'}>
+          <span className="vd-cat" data-tone={laneEnabled ? 'ok' : 'off'}>
             {t?.('agg.laneOn') ?? 'Aggregate lane'}
           </span>
-          <span className="dsm-xdpool-agg-pill" data-tone="info">
+          <span className="vd-cat" data-tone="info">
             {t?.('agg.count', { providers: status?.configured ?? 0, models: status?.modelCount ?? 0 })
               ?? `${status?.configured ?? 0} configured · ${status?.modelCount ?? 0} models`}
           </span>
@@ -428,7 +428,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
           <span>{t?.('agg.laneOn') ?? 'Aggregate lane'}</span>
         </label>
         {!laneEnabled
-          ? <span className="dsm-xdpool-agg-hint">{t?.('agg.laneOffHint') ?? ''}</span>
+          ? <span className="hint">{t?.('agg.laneOffHint') ?? ''}</span>
           : null}
       </div>
       <div className="dsm-xdpool-agg-filter">
@@ -814,23 +814,23 @@ function ProviderRow({
     provider.models.some(id => !chosen.has(id))
   return (
     <article
-      className="dsm-xdpool-agg-row"
+      className="vd"
       data-off={effective ? 'false' : 'true'}
       data-open={open ? 'true' : 'false'}
       style={{ '--dsm-xdpool-agg-accent': accentFor(provider.id) } as Record<string, string>}
     >
-      <div className="dsm-xdpool-agg-rowhead">
+      <div className="vd-head">
         {/* The same 40px tile the sign-in page and the pool cards wear, so the
             three lists read as one product. */}
         <BrandTile accent={accentFor(provider.id)} glyph="globe" {...tileMark} />
         <div className="dsm-xdpool-agg-titles">
-          <span className="dsm-xdpool-agg-name">{provider.name}</span>
+          <span className="vd-name">{provider.name}</span>
           <span className="dsm-xdpool-agg-org">
             {category === undefined ? provider.category : (t?.(category) ?? provider.category)}
             {` · ${provider.format}`}
           </span>
         </div>
-        <span className="dsm-xdpool-agg-state" data-tone={enabled ? 'ok' : 'off'}>
+        <span className="vd-state" data-tone={enabled ? 'ok' : 'off'}>
           {enabled
             ? (t?.('agg.stateOn') ?? 'In the pool')
             : (t?.('agg.stateOff') ?? 'Not in the pool')}
@@ -842,32 +842,32 @@ function ProviderRow({
           vendor's line and the row must not pretend it describes a model. */}
       {provider.notes === undefined
         ? null
-        : <p className="dsm-xdpool-agg-note">{provider.notes}</p>}
+        : <p className="vd-models-line">{provider.notes}</p>}
       <div className="dsm-xdpool-agg-foot">
         <div className="dsm-xdpool-agg-tags">
-          <span className="dsm-xdpool-agg-tag" data-tone={provider.configured ? 'ok' : 'off'}>
+          <span className="lane" data-tone={provider.configured ? 'ok' : 'off'}>
             {keyState}
           </span>
-          <span className="dsm-xdpool-agg-tag" data-tone="info">
+          <span className="lane" data-tone="info">
             {t?.('agg.models', { count: provider.models.length }) ?? `${provider.models.length} models`}
           </span>
           {/* Only worth its own chip once the roster is bigger than the exposed
               set: "3 of 85" is the answer to "why does this vendor only show
               three", and at 3 of 3 it would just repeat the count beside it. */}
           {rosterSize > provider.models.length
-            ? <span className="dsm-xdpool-agg-tag" data-tone="busy">
+            ? <span className="lane" data-tone="busy">
                 {t?.('agg.chosenOf', { chosen: provider.models.length, total: rosterSize })
                   ?? `${provider.models.length} of ${rosterSize} chosen`}
               </span>
             : null}
           {contributed > 0
-            ? <span className="dsm-xdpool-agg-tag" data-tone="busy">
+            ? <span className="lane" data-tone="busy">
                 {t?.('agg.contributed', { count: contributed })
                   ?? `contributes ${contributed} models`}
               </span>
             : null}
           {provider.discovered
-            ? <span className="dsm-xdpool-agg-tag" data-tone="live">
+            ? <span className="lane" data-tone="live">
                 {t?.('agg.discoveredTag') ?? 'live'}
               </span>
             : null}
@@ -875,14 +875,14 @@ function ProviderRow({
               what tells the user the "Fetch models" button is worth opening the
               row for in the first place. */}
           {provider.hasListing
-            ? <span className="dsm-xdpool-agg-tag" data-tone="info">
+            ? <span className="lane" data-tone="info">
                 {t?.('agg.listingYes') ?? 'Model list available'}
               </span>
             : null}
         </div>
         <button
           type="button"
-          className="dsm-xdpool-agg-open"
+          className="vd-foot"
           aria-expanded={open}
           aria-controls={paneId}
           onClick={onOpen}
@@ -906,7 +906,7 @@ function ProviderRow({
           : null}
         {provider.authKind !== 'none'
           ? <div className="dsm-xdpool-agg-fields">
-              <label className="dsm-xdpool-agg-field">
+              <label className="field">
                 <span>{t?.('agg.key') ?? 'API key'}</span>
                 <input
                   type="password"
@@ -916,7 +916,7 @@ function ProviderRow({
                   onChange={event => { onDraft({ apiKey: event.target.value, baseUrl: draft?.baseUrl ?? '', extraKey: draft?.extraKey ?? '' }) }}
                 />
               </label>
-              <label className="dsm-xdpool-agg-field">
+              <label className="field">
                 <span>{t?.('agg.baseUrl') ?? 'Endpoint'}</span>
                 <input
                   type="text"
@@ -942,7 +942,7 @@ function ProviderRow({
         */}
         {provider.authKind === 'apiKey' && provider.keyCount >= 1
           ? <div className="dsm-xdpool-agg-fields">
-              <label className="dsm-xdpool-agg-field">
+              <label className="field">
                 <span>
                   {t?.('agg.extraKey', { count: provider.keyCount })
                     ?? `Add another key (${String(provider.keyCount)} stored)`}
@@ -956,7 +956,7 @@ function ProviderRow({
                 />
               </label>
               {provider.keyCount > 1
-                ? <label className="dsm-xdpool-agg-field">
+                ? <label className="field">
                     <span>{t?.('row.distTitle') ?? 'Account usage'}</span>
                     <select
                       value={provider.distribution ?? 'priority'}
@@ -986,8 +986,8 @@ function ProviderRow({
           />
           <span>{t?.('agg.enable') ?? 'Add to the pool'}</span>
         </label>
-        <span className="dsm-xdpool-agg-hint">{t?.('agg.enableHint') ?? ''}</span>
-        <div className="dsm-xdpool-agg-actions">
+        <span className="hint">{t?.('agg.enableHint') ?? ''}</span>
+        <div className="vd-actions">
           <button
             type="button"
             className="dsm-btn dsm-btn-primary"
@@ -1046,7 +1046,7 @@ function ProviderRow({
             than re-fetched, so what is printed is the same numbers the lane
             serves from. */}
         {modelRows.length > 0
-          ? <ul className="dsm-xdpool-agg-facts">
+          ? <ul className="vd-models-line">
               {sortedModelRows.map(row => {
                 const key = `${provider.id}/${row.modelId}`
                 const recuse = isFreeLane(row.modelId) ? recommendUse(factsOf(row.modelId)) : undefined
@@ -1059,7 +1059,7 @@ function ProviderRow({
                     <span className="dsm-xdpool-agg-fact-name">
                       {row.name}
                       {isFreeLane(row.modelId) && (
-                        <span className="dsm-xdpool-cpool-tag" data-tone="free">
+                        <span className="lane" data-tone="free">
                           {t?.('agg.modelFreeTag') ?? 'free'}
                         </span>
                       )}
@@ -1072,8 +1072,8 @@ function ProviderRow({
                         : { probe: probes[key], probing: probing === key }}
                     />
                     {recuse === undefined ? null : (
-                      <p className="dsm-xdpool-recuse">
-                        <span className="dsm-xdpool-recuse-label">{t?.('recuse.label') ?? '推荐用途'}</span>
+                      <p className="hint">
+                        <span className="hint">{t?.('recuse.label') ?? '推荐用途'}</span>
                         {recuse}
                       </p>
                     )}
@@ -1101,7 +1101,7 @@ function ProviderRow({
                   {t?.('agg.editModels') ?? 'Choose…'}
                 </button>
               </div>
-              <p className="dsm-xdpool-agg-hint">
+              <p className="hint">
                 {t?.('agg.modelPickHint') ?? ''}
               </p>
               {chooserWorthIt || modelQuery !== ''
@@ -1127,7 +1127,7 @@ function ProviderRow({
                         />
                         <span className="dsm-xdpool-agg-modelid">{id}</span>
                         {isFreeLane(id) && (
-                          <span className="dsm-xdpool-cpool-tag" data-tone="free">
+                          <span className="lane" data-tone="free">
                             {t?.('agg.modelFreeTag') ?? 'free'}
                           </span>
                         )}
@@ -1140,8 +1140,8 @@ function ProviderRow({
                         ? null
                         : <ModelFactsRow t={t} facts={factsOf(id) ?? {}} />}
                       {recuse === undefined ? null : (
-                        <p className="dsm-xdpool-recuse">
-                          <span className="dsm-xdpool-recuse-label">{t?.('recuse.label') ?? '推荐用途'}</span>
+                        <p className="hint">
+                          <span className="hint">{t?.('recuse.label') ?? '推荐用途'}</span>
                           {recuse}
                         </p>
                       )}
@@ -1150,7 +1150,7 @@ function ProviderRow({
                 })}
               </ul>
               {listedModels.length === 0
-                ? <p className="dsm-xdpool-agg-hint">
+                ? <p className="hint">
                     {rosterSize === 0
                       ? (t?.('agg.modelNoneAtAll') ?? 'This vendor lists no models.')
                       : (t?.('agg.modelNone') ?? 'No model matches that filter.')}
