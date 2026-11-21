@@ -372,7 +372,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
         // rendered at the size of a title inside a box the size of a chip, and
         // the user read the mismatch as "this one never got styled".
         pills={<span
-          className="dsm-xdpool-pill"
+          className="pill"
           data-tone={connectedCount > 0 ? 'ok' : 'off'}
         >
           {t?.('chan.connectedCount', { count: connectedCount }) ?? `${connectedCount} connected`}
@@ -380,7 +380,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
       />
       {autoCheckin !== undefined && (
         <div className="dsm-xdpool-autocheckin">
-          <label className="dsm-xdpool-switch">
+          <label className="sw">
             <input
               type="checkbox"
               checked={autoCheckin.enabled}
@@ -395,10 +395,10 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
         </div>
       )}
       {error !== undefined && (
-        <p className="dsm-xdpool-panel-error">{error}</p>
+        <p className="hint">{error}</p>
       )}
       {state === 'pending' && (
-        <p className="dsm-xdpool-panel-empty">{t?.('chan.pending')}</p>
+        <p className="hint">{t?.('chan.pending')}</p>
       )}
       {/*
         Two different failures, two different sentences. A pack that is already
@@ -408,17 +408,17 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
         something was broken when nothing was.
       */}
       {state === 'unavailable' && status?.reason === ROUTE_OWNED_ELSEWHERE && (
-        <p className="dsm-xdpool-panel-empty">
+        <p className="hint">
           {t?.('chan.ownedElsewhere') ?? 'Another plugin already serves these login channels.'}
         </p>
       )}
       {state === 'unavailable' && status?.reason !== ROUTE_OWNED_ELSEWHERE && (
-        <p className="dsm-xdpool-panel-error">
+        <p className="hint">
           {t?.('chan.unavailable')}{status?.reason !== undefined ? ` (${status.reason})` : ''}
         </p>
       )}
       {state === 'ready' && channels.length === 0 && (
-        <p className="dsm-xdpool-panel-empty">{t?.('chan.empty')}</p>
+        <p className="hint">{t?.('chan.empty')}</p>
       )}
       {channels.map((channel) => (
         <ChannelRow
@@ -506,7 +506,7 @@ function ChannelRow({
             </span>
             {ui.loginUrl !== undefined && (
               <a
-                className="dsm-xdpool-btn"
+                className="btn"
                 href={ui.loginUrl}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -514,7 +514,7 @@ function ChannelRow({
                 {t?.('chan.openLogin') ?? 'Open the sign-in page'}
               </a>
             )}
-            <button type="button" className="dsm-xdpool-btn" onClick={onCancel}>
+            <button type="button" className="btn" onClick={onCancel}>
               {t?.('agg.clear') ?? 'Cancel'}
             </button>
           </>
@@ -530,7 +530,7 @@ function ChannelRow({
                 {t?.('chan.ownedElsewhereRow') ?? '在「我们的免费模型」里登录'}
               </span>
             ) : (
-              <button type="button" className="dsm-xdpool-btn" onClick={onSignIn}>
+              <button type="button" className="btn" onClick={onSignIn}>
                 {t?.('chan.login') ?? 'Add account'}
               </button>
             )}
