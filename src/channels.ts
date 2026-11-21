@@ -411,6 +411,14 @@ export interface ChannelAccount {
   expiresAt?: number
   /** Whether the pack can renew this credential without a new login. */
   refreshable?: boolean
+  /**
+   * 这个账号是不是账号池的首选。
+   *
+   * 首选是**整个池**的属性（下一次请求优先用它），不是某个渠道的 ——
+   * 后端把它放在 `/plugins/dsh-xdpool/accounts/preferred` 上。
+   * `account.list` 回来时会带上这个标记。
+   */
+  preferred?: boolean
 }
 /** What `apply` and `inject` look like on the bundle. */
 export interface ChannelPackLogger {

@@ -73,6 +73,7 @@ import {
   POOL_BAIZHI_CHECKIN_PATH,
   POOL_MAGICREW_CN_CHECKIN_PATH,
   POOL_MAGICREW_INTL_CHECKIN_PATH,
+  POOL_ACCOUNT_PREFER_PATH,
 } from '../status-paths.ts'
 
 import {
@@ -1510,6 +1511,36 @@ export function ChannelPoolSection({ t, active }: {
     }
   }
 
+  /**
+   * 把某个账号设为首选。
+   *
+   * 首选是整个账号池的属性，不是某个渠道的 ——
+   * 设了之后，下一次请求优先用它。
+   * 后端已经有这个路由，只是界面一直没接上。
+   */
+  const preferAccount = async (provider: string, accountId: string): Promise<void> => {
+    markBusy(provider, true)
+    try {
+      const res = await fetch(POOL_ACCOUNT_PREFER_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ accountId }),
+      })
+      if (!res.ok) {
+        setNotice(t?.('channelpool.preferFailed') ?? '没能设为首选')
+        return
+      }
+      setNotice(t?.('channelpool.preferDone') ?? '已设为首选')
+      /* 重新读一次，让首选标记跟着变 */
+      await load()
+    } catch {
+      setNotice(t?.('channelpool.preferFailed') ?? '没能设为首选')
+    } finally {
+      markBusy(provider, false)
+    }
+  }
+
   const accountAction = async (
     provider: string,
     accountId: string,
@@ -2094,7 +2125,22 @@ export function ChannelPoolSection({ t, active }: {
                             disabled={isBusy}
                             onClick={() => { void accountAction(channel.id, account.id, 'test') }}
                           >
-                            {t?.('channelpool.testAccount') ?? 'Test'}
+                            {t?.('channelpool.testAccount') ?? '测试'}
+                          </button>
+                          {/*
+                            设为首选 —— 设计稿的 account 页有。
+                            首选是整个账号池的属性：设了之后下一次请求优先用它。
+                          */}
+                          <button
+                            type="button"
+                            className="tiny"
+                            disabled={isBusy || account.preferred === true}
+                            title={t?.('channelpool.preferHint') ?? '优先用这个账号接下一次请求'}
+                            onClick={() => { void preferAccount(channel.id, account.id) }}
+                          >
+                            {account.preferred === true
+                              ? (t?.('channelpool.preferred') ?? '首选')
+                              : (t?.('channelpool.prefer') ?? '设为首选')}
                           </button>
                           <button
                             type="button"
