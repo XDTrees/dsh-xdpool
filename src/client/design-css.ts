@@ -94,7 +94,7 @@ export const DESIGN_TOKENS_CSS = `/* XD Pool 设计变量
   --t-slow: 260ms;
 }
 
-* { box-sizing: border-box; }
+.app, .app * { box-sizing: border-box }
 
 html, body {
   margin: 0;

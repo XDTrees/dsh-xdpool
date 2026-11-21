@@ -88,7 +88,8 @@ function pageCss() {
 /** body/html 那些全局规则去掉 —— 插件在宿主的对话框里，不该改宿主。 */
 const scoped = app
   .replace(/html,\s*body\s*\{[^}]*\}/gu, '')
-  .replace(/^\s*\*\s*\{\s*box-sizing:\s*border-box;?\s*\}/gmu, '')
+  /* 全局 box-sizing 收进 .app 作用域，不改宿主 */
+  .replace(/^\s*\*\s*\{\s*box-sizing:\s*border-box;?\s*\}/gmu, '.app, .app * { box-sizing: border-box }')
   .replace(/::-webkit-scrollbar/gu, '.app ::-webkit-scrollbar')
 
 const bridge = `
@@ -263,7 +264,7 @@ const out = `/**
  * 来源：xdpool-design 的 tokens.css / app.css / channel-colors.css / build-a.mjs。
  * 改样式请改设计稿源文件，再跑 scripts/extract-design-css.mjs。
  */
-export const DESIGN_TOKENS_CSS = \`${tokens}\n${colors}\n${icons}\`
+export const DESIGN_TOKENS_CSS = \`${tokens.replace(/^\*\s*\{\s*box-sizing:\s*border-box;?\s*\}/mu, '.app, .app * { box-sizing: border-box }')}\n${colors}\n${icons}\`
 
 export const DESIGN_DETAIL_CSS = \`${MIN_FONT_FIX(scoped)}\n${MIN_FONT_FIX(pageCss())}\n${scopedMobile}\n${bridge}\`
 `
