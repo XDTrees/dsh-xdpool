@@ -30,6 +30,7 @@
  *
  * @module dsh-xdpool/client/shell
  */
+import { POOL_NAV_ICON_MASK_URL } from './nav-icon.ts'
 import { UpdatePanel } from './UpdatePanel.tsx'
 import type { ReactElement } from 'react'
 import { RAIL_ICONS, type RailIconName } from './rail-icons.ts'
@@ -214,7 +215,16 @@ export function PoolShell({
   /** 品牌区，结构照设计稿的 .rail-brand。 */
   const brand = (
     <div className="rail-brand">
-      <span className="rail-logo" style={avatar === undefined ? undefined : { backgroundImage: `url(${avatar})` }} />
+      {/*
+        品牌 logo：有头像是头像，没有就用插件自己的图标。
+
+        设计稿的 .rail-logo 靠 --avatar 背景图；没有头像时它是空方块，
+        左上角会缺一块。这里给个兜底，两种情况下都是同一个 26px 圆角方块。
+      */}
+      <span
+        className="rail-logo"
+        style={{ backgroundImage: `url("${avatar === '' || avatar === undefined ? POOL_NAV_ICON_MASK_URL : avatar}")` }}
+      />
       <span>
         <div className="rail-name">{t?.('shell.brand') ?? 'XD Pool'}</div>
         {version === undefined || version === '' ? null : (
