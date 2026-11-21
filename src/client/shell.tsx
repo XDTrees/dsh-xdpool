@@ -30,6 +30,9 @@
  *
  * @module dsh-xdpool/client/shell
  */
+import { UpdatePanel } from './UpdatePanel.tsx'
+import type { ReactElement } from 'react'
+import { RAIL_ICONS, type RailIconName } from './rail-icons.ts'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { XdPoolSettingsKey } from './locales.ts'
@@ -58,6 +61,10 @@ export interface PoolShellProps {
    * the page is for, and the card's copy is the only place that does.
    */
   hero?: ReactNode | undefined
+  /** 底部附加的行（侧栏入口开关等），挂在 .rail-foot 里。 */
+  links?: ReactNode | undefined
+  /** 页面脚注。 */
+  footer?: ReactNode | undefined
   children: ReactNode
 }
 /** localStorage key for the remembered page. */
@@ -77,6 +84,16 @@ function readRememberedTab(): string | undefined {
     return undefined
   }
 }
+export function rememberedShellTab(): string | undefined {
+  if (typeof window === 'undefined') return undefined
+  return window.localStorage.getItem(SHELL_TAB_KEY) ?? undefined
+}
+
+export function initialShellTab<T extends string>(tabs: readonly { id: T }[]): T | undefined {
+  const remembered = rememberedShellTab()
+  return tabs.find(tab => tab.id === remembered)?.id ?? tabs[0]?.id
+}
+
 function rememberTab(id: string): void {
   try {
     window.localStorage.setItem(SHELL_TAB_KEY, id)
@@ -86,6 +103,14 @@ function rememberTab(id: string): void {
   }
 }
 /** A single statistic above the usage tables. */
+function RailIcon({ name }: { name: RailIconName }): ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+      dangerouslySetInnerHTML={{ __html: RAIL_ICONS[name] }} />
+  )
+}
+
 export function KpiCard({
   label,
   value,
@@ -151,6 +176,8 @@ export function PoolShell({
   active,
   onSelect,
   hero,
+  links,
+  footer,
   children,
 }: PoolShellProps) {
   /** Measured box of the active tab's button, in tab-strip coordinates. */
@@ -171,9 +198,48 @@ export function PoolShell({
       if (event.key === 'Escape') setGroupOpen(false)
     }
     window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [groupOpen])
+  useEffect(() => {
+    if (!groupOpen) return undefined
+    const onDown = (event: MouseEvent): void => { setGroupOpen(false) }
+    window.addEventListener('mousedown', onDown)
+    return () => { window.removeEventListener('mousedown', onDown) }
+  }, [groupOpen])
+  /** 品牌区，结构照设计稿的 .rail-brand。 */
+  const brand = (
+    <div className="rail-brand">
+      <span className="rail-logo" style={avatar === undefined ? undefined : { backgroundImage: `url(${avatar})` }} />
+      <span>
+        <div className="rail-name">{t?.('shell.brand') ?? 'XD Pool'}</div>
+        {version === undefined || version === '' ? null : (
+          <button type="button" className="rail-ver"
+            title={'检查更新'}
+            onClick={() => { setUpdateOpen(true) }}>
+            v{version}
+          </button>
+        )}
+      </span>
+    </div>
+  )
+  const [updateOpen, setUpdateOpen] = useState(false)
+  const railRef = useRef<HTMLElement | null>(null)
+  const select = useCallback((id: string): void => {
+    rememberTab(id)
+    onSelect(id)
+  }, [onSelect])
+  const onKeyDown = useCallback((event: React.KeyboardEvent<HTMLElement>): void => {
+    const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0
+    if (step === 0) return
+    event.preventDefault()
+    const at = tabs.findIndex(tab => tab.id === active)
+    const next = tabs[(at + step + tabs.length) % tabs.length]
+    if (next !== undefined) select(next.id)
+  }, [active, select, tabs])
+
   return (
     <div className="app">
-      <nav className="rail" aria-label={t?.('shell.tabs') ?? 'Pages'} ref={railRef} onKeyDown={onKeyDown}>
+      <nav className="rail" aria-label={'Pages'} ref={railRef} onKeyDown={onKeyDown}>
         {brand}
         {tabs.map(tab => (
           <button
@@ -209,7 +275,7 @@ export function PoolShell({
             <div className="pop-head">
               <span className="pop-name">{t?.('update.title') ?? '检查更新'}</span>
               <button type="button" className="pop-close"
-                aria-label={t?.('common.close') ?? '关闭'}
+                aria-label={'关闭'}
                 onClick={() => { setUpdateOpen(false) }}>×</button>
             </div>
             <UpdatePanel t={t} />
@@ -229,8 +295,8 @@ export function PoolShell({
           <div className="qr-grid">
             <div className="qr-item">
               <div className="qr" />
-              <span className="qr-label">{t?.('shell.groupWx') ?? '微信群'}</span>
-              <span className="qr-step">{t?.('shell.groupWxStep') ?? '扫码添加机器人后发送「XD」拉你进群'}</span>
+              <span className="qr-label">{'微信群'}</span>
+              <span className="qr-step">{'扫码添加机器人后发送「XD」拉你进群'}</span>
             </div>
             <div className="qr-item">
               <div className="qr" />
