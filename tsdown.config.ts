@@ -74,6 +74,13 @@ export default defineConfig([
       banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(PLUGIN_ID)}, factory: (require) => {`,
       footer: 'return module.exports; } });',
       intro: 'var module = { exports: {} }; var exports = module.exports;',
+      /*
+        剥掉注释。
+
+        源码里 160KB 是注释 —— 它们对维护这个插件的人是必要的，对浏览器
+        是纯粹的下载量。这个 bundle 只给浏览器跑，源码注释在 .tsx 里原样保留。
+      */
+      comments: false,
     },
   },
 ])
