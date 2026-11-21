@@ -402,7 +402,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
     return grouped
   }, [status?.models])
   return (
-    <div className="dsm-xdpool-agg">
+    <div className="main">
       <style>{AGGREGATE_CARD_CSS}</style>
       <PageHero
         title={t?.('agg.title') ?? 'Providers'}
@@ -417,7 +417,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
           </span>
         </>}
       />
-      <div className="dsm-xdpool-agg-lanebar">
+      <div className="lane">
         <label className="sw">
           <input
             type="checkbox"
@@ -843,7 +843,7 @@ function ProviderRow({
       {provider.notes === undefined
         ? null
         : <p className="vd-models-line">{provider.notes}</p>}
-      <div className="dsm-xdpool-agg-foot">
+      <div className="vd-foot">
         <div className="vd-key-tag">
           <span className="lane" data-tone={provider.configured ? 'ok' : 'off'}>
             {keyState}
@@ -887,14 +887,14 @@ function ProviderRow({
           aria-controls={paneId}
           onClick={onOpen}
         >
-          <span className="dsm-xdpool-agg-open-caret" aria-hidden="true" />
+          <span className="strip-caret" aria-hidden="true" />
           {open
             ? (t?.('row.collapse') ?? 'Collapse')
             : (t?.('agg.setup') ?? 'Set up')}
         </button>
       </div>
       <div
-        className="dsm-xdpool-agg-pane"
+        className="card"
         id={paneId}
         role="group"
         hidden={!open}
@@ -1053,10 +1053,10 @@ function ProviderRow({
                 return (
                   <li
                     key={row.id}
-                    className="dsm-xdpool-agg-fact"
+                    className="fact"
                     data-live={row.source === 'discovered' ? 'true' : undefined}
                   >
-                    <span className="dsm-xdpool-agg-fact-name">
+                    <span className="td-name">
                       {row.name}
                       {isFreeLane(row.modelId) && (
                         <span className="lane" data-tone="free">
@@ -1087,9 +1087,9 @@ function ProviderRow({
             which the ids on screen stop being readable — the ids list stays as
             the summary, and this is where they become choices. */}
         {rosterSize > MODEL_PREVIEW
-          ? <div className="dsm-xdpool-agg-picker">
-              <div className="dsm-xdpool-agg-pickerhead">
-                <span className="dsm-xdpool-agg-pickerlabel">
+          ? <div className="pick">
+              <div className="pick-head">
+                <span className="pick-title">
                   {t?.('agg.modelPick') ?? 'Choose which models this vendor contributes'}
                 </span>
                 <button
@@ -1113,19 +1113,19 @@ function ProviderRow({
                     onChange={event => { onModelQuery(event.target.value) }}
                   />
                 : null}
-              <ul className="dsm-xdpool-agg-modellist">
+              <ul className="models">
                 {listedModels.map(id => {
                   const on = chosen.has(id)
                   const recuse = isFreeLane(id) ? recommendUse(factsOf(id)) : undefined
                   return (
-                    <li key={id} className="dsm-xdpool-agg-modelrow">
+                    <li key={id} className="model">
                       <label>
                         <input
                           type="checkbox"
                           checked={on}
                           onChange={event => { onToggleModel(id, event.target.checked) }}
                         />
-                        <span className="dsm-xdpool-agg-modelid">{id}</span>
+                        <span className="mono">{id}</span>
                         {isFreeLane(id) && (
                           <span className="lane" data-tone="free">
                             {t?.('agg.modelFreeTag') ?? 'free'}
@@ -1157,7 +1157,7 @@ function ProviderRow({
                   </p>
                 : null}
               {modelSelectionDirty
-                ? <div className="dsm-xdpool-agg-pickeracts">
+                ? <div className="pick-actions">
                     <button
                       type="button"
                       className="btn"
@@ -1199,7 +1199,7 @@ function ProviderRow({
             </div>
           : null}
         {flash !== undefined
-          ? <p className="dsm-xdpool-agg-flash">{flash}</p>
+          ? <p className="hint">{flash}</p>
           : null}
       </div>
     </article>
