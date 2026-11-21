@@ -691,6 +691,39 @@ function ChannelRow({
                 {t?.('chan.login') ?? 'Add account'}
               </button>
             )}
+            {/*
+              登录进行中：三步引导 —— 设计稿的 .steps / .step。
+
+              点了按钮之后会弹出一个浏览器窗口，而「那窗口是干什么的、
+              要不要关、关早了会不会失败」没有人告诉读者。原来这里
+              只有一个禁用的按钮，看不出正在做什么。
+            */}
+            {busy && (
+              <div className="steps">
+                <div className="step">
+                  <span className="step-n" data-done="true">✓</span>
+                  <span className="step-b">
+                    <span className="step-t">{t?.('chan.stepOpen') ?? '打开浏览器窗口'}</span>
+                    <span className="step-d">{t?.('chan.stepOpenHint') ?? '用的是独立配置目录，不会动你自己的浏览器。'}</span>
+                  </span>
+                </div>
+                <div className="step">
+                  <span className="step-n" data-wait="true">2</span>
+                  <span className="step-b">
+                    <span className="step-t" data-wait="true">
+                      {t?.('chan.stepSignIn', { name: channel.name }) ?? `在窗口里登录 ${channel.name}`}
+                    </span>
+                    <span className="step-d">{t?.('chan.stepSignInHint') ?? '用手机号或已有的登录方式都行。'}</span>
+                  </span>
+                </div>
+                <div className="step">
+                  <span className="step-n">3</span>
+                  <span className="step-b">
+                    <span className="step-t">{t?.('chan.stepDone') ?? '关掉窗口，这里会自动接上'}</span>
+                  </span>
+                </div>
+              </div>
+            )}
             {/* Raccoon's own login page shows the QR and the phone-code form on
                 one screen, and its QR is the one that goes stale while the user
                 reads the message. The plugin cannot switch which door it opens —
