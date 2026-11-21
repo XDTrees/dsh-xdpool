@@ -1794,8 +1794,8 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                 {t?.('row.regionEmptyTitle', { region: card.regionLabel })
                                   ?? t?.('row.regionEmpty') ?? 'No account yet'}
                               </p>
-                              <div className="dsm-xdpool-empty-steps">
-                                <p className="dsm-xdpool-empty-steps-title">
+                              <div className="sec">
+                                <p className="sec-title">
                                   {t?.('row.regionHowToTitle', { region: card.regionLabel })
                                     ?? `How to sign in to the ${card.regionLabel} version`}
                                 </p>
@@ -2036,7 +2036,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                       <span className="dsm-xdpool-dist-option-top">
                                         <span className="dsm-xdpool-dist-option-name">{distLabel(option, t)}</span>
                                         {option === 'sticky'
-                                          ? <span className="dsm-xdpool-dist-option-badge">
+                                          ? <span className="badge">
                                               {t?.('row.distRecommended') ?? 'Recommended'}
                                             </span>
                                           : null}
