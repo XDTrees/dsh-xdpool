@@ -910,7 +910,16 @@ export declare const WORKBUDDY_AUTH_FILE_ENV = "WORKBUDDY_AUTH_FILE";
  */
 interface WorkBuddySkippedFile {
   path: string;
-  reason: 'encrypted' | 'expired' | 'unreadable' | 'malformed';
+  /**
+   * `key-rotated` is separated from `encrypted` on purpose (#178).
+   *
+   * Both mean "this file is sealed and we cannot open it", but the FIX differs: an
+   * `encrypted` file opens once the desktop app has run and handed over its key, while a
+   * file sealed under a keyId no installed build produces will NEVER open that way — the
+   * vendor rotated the at-rest key and the old envelope is orphaned. Reporting both as
+   * 「启动一次 WorkBuddy」 sent the user to do something that could not work.
+   */
+  reason: 'encrypted' | 'key-rotated' | 'expired' | 'unreadable' | 'malformed';
 }
 interface WorkBuddyCredential {
   accessToken: string;
@@ -1069,6 +1078,14 @@ interface AccountPoolOptions {
 export declare class WorkBuddyAccountPool {
   private readonly logger;
   private authDirs;
+  /**
+   * The directories the CALLER named, or undefined when the plugin guessed them.
+   *
+   * Only an explicit list is scanned now: the default pointed at the desktop app's credential
+   * store, which no account arrives from any more. Keeping the distinction means the import
+   * path and the tests can still point the pool at a directory.
+   */
+  private readonly explicitAuthDirs;
   private cooldownMs;
   /**
    * How long an account stays out of rotation after the upstream reports its
@@ -1966,7 +1983,7 @@ interface PoolWebChannel {
    */
   smsHint?: boolean;
   /** A sentence shown beside the button, for a login that needs explaining. */
-  loginHint?: 'doubao';
+  loginHint?: 'doubao' | 'marvis' | 'astudio' | 'magicrew' | 'accio' | 'qiniu' | 'monkeycode' | 'baizhi' | 'autoclaw';
   /**
    * What the pack can report about this vendor's credits, when it can report
    * something at all.
@@ -2105,6 +2122,19 @@ interface PoolWebRelayStatus {
   key: string;
   /** Why nothing is bound; '' when there is nothing to explain. */
   error: string;
+  /**
+   * 网关转发了什么。
+   *
+   * 只统计真正转发出去的请求：被拒的（没开、密钥不对、路径不认）不计入。
+   * 这是这个进程自己的记账，重启归零 —— 界面上要写清，不然会被当成历史总量。
+   */
+  stats?: {
+    requests: number;
+    failed: number;
+    avgLatencyMs?: number;
+    inputTokens: number;
+    outputTokens: number;
+  } | undefined;
   /**
    * Every model the gateway could serve, with the name a human reads.
    *
@@ -2441,7 +2471,12 @@ interface PoolWebStatus {
 interface PoolWebSkippedFile {
   /** Basename only; the full path lives in the desktop app's auth directory. */
   file: string;
-  reason: 'encrypted' | 'expired' | 'unreadable' | 'malformed';
+  /**
+   * `key-rotated` means the file is sealed under a key id no installed build produces
+   * (#178) — the vendor rotated the at-rest key. Starting the desktop app cannot fix it,
+   * which is why it is not folded into `encrypted`.
+   */
+  reason: 'encrypted' | 'key-rotated' | 'expired' | 'unreadable' | 'malformed';
 }
 /** How a region's model list was obtained. */
 type PoolWebCatalogSource = 'live' | 'fallback';
@@ -2915,6 +2950,23 @@ interface ComboModelRow {
    */
   combo: true;
 }
+/**
+ * One model served by a 扫码登录 channel, as the route editor sees it.
+ *
+ * These are the channels the vendored pack registers with the HOST (`trae`,
+ * `qoder`, `codebuddy`…). They are in neither catalog above: the pool catalog
+ * describes the WorkBuddy account lanes, and the aggregate catalog describes the
+ * vendors in this plugin's own registry. A chain could not name them at all, which
+ * is why the routing page offered exactly ONE platform — the pool — while the login
+ * page happily showed thirteen.
+ */
+interface HostModelRow {
+  /** `<channel>:<modelId>` — the id the shim already resolves to its fifth lane. */
+  id: string;
+  channel: string;
+  modelId: string;
+  name: string;
+}
 //#endregion
 //#region src/store.d.ts
 /**
@@ -3246,6 +3298,19 @@ interface AggregateModelRow {
 declare class AggregateCatalog {
   private readonly read;
   private readonly poolRows;
+  /**
+   * The scan-login channel rows, when the caller has them — issue #177.
+   *
+   * A chain member may name a channel model (`trae:deepseek-v4.1-flash`), and resolving one
+   * needs this list. Without it `resolveComboMember` answered undefined for every channel
+   * member, so a chain made entirely of them resolved to zero members and was skipped
+   * outright: it never reached the picker, and the gateway answered `combo_missing` for a
+   * chain the routing page showed as valid.
+   *
+   * Injected rather than fetched because the lane is async and this constructor is not; a
+   * caller that has no channel lane passes nothing and gets the old behaviour.
+   */
+  private readonly hostRows;
   private rows;
   private chainRows;
   /**
@@ -3254,7 +3319,20 @@ declare class AggregateCatalog {
    *   that names a WorkBuddy model. A chain may mix pool models with aggregate
    *   ones, so without this a perfectly valid chain would lose its pool half.
    */
-  constructor(read: () => AggregateStore | Promise<AggregateStore>, poolRows?: () => readonly WorkBuddyModelInfo[]);
+  constructor(read: () => AggregateStore | Promise<AggregateStore>, poolRows?: () => readonly WorkBuddyModelInfo[],
+  /**
+   * The scan-login channel rows, when the caller has them — issue #177.
+   *
+   * A chain member may name a channel model (`trae:deepseek-v4.1-flash`), and resolving one
+   * needs this list. Without it `resolveComboMember` answered undefined for every channel
+   * member, so a chain made entirely of them resolved to zero members and was skipped
+   * outright: it never reached the picker, and the gateway answered `combo_missing` for a
+   * chain the routing page showed as valid.
+   *
+   * Injected rather than fetched because the lane is async and this constructor is not; a
+   * caller that has no channel lane passes nothing and gets the old behaviour.
+   */
+  hostRows?: () => Promise<readonly HostModelRow[]>);
   /**
    * Every row this catalog offers: third-party rows first, then chain rows.
    *
@@ -3416,6 +3494,18 @@ interface WorkBuddyShimOptions {
    * threading an argument nobody reads.
    */
   usageRecorder?: UsageRecorder;
+  /**
+   * The scan-login channel rows, for chain members that name one — issue #177.
+   *
+   * A chain may mix pool models, aggregate models and channel models. Without this the channel
+   * half resolved to undefined and was silently dropped, so a chain of only channel members
+   * reached the executor with zero members and answered `combo_missing` — while the routing page
+   * showed the same chain as valid.
+   *
+   * Injected rather than imported: the lane is async and owns its own 60s cache, and this shim
+   * must not build one.
+   */
+  hostRows?: () => Promise<readonly HostModelRow[]>;
   /**
    * The second lane: providers the user holds a key for.
    *
@@ -4520,6 +4610,18 @@ interface PoolStatusRouteOptions {
    */
   channelsDocument?: () => PoolWebChannelsStatus;
   /**
+   * How each channel picks its account, and the pool-wide default.
+   *
+   * Read from the plugin's own file rather than the host's settings document: the host's write
+   * path for a plugin section accepts only its own toggle, so the per-channel overrides live where
+   * this plugin already keeps state.
+   */
+  channelUsage?: () => {
+    pool: string;
+    channels: Record<string, string>;
+  };
+  setChannelUsage?: (channel: string, strategy: string | undefined) => Promise<void>;
+  /**
    * The chains plus the roster their members are drawn from, built host-side.
    *
    * One dep because the two halves are the same question asked twice — "what can
@@ -4614,6 +4716,13 @@ export interface Config {
    * Absent reads as `priority`.
    */
   distribution?: 'priority' | 'round-robin' | 'balanced' | 'sticky' | 'expiry';
+  /**
+   * Per-channel usage order, overriding `distribution` for that channel alone.
+   *
+   * A channel with no entry follows `distribution`, so an install that never opened the channel
+   * page behaves exactly as before.
+   */
+  channelDistribution?: Readonly<Record<string, 'priority' | 'round-robin' | 'balanced' | 'sticky' | 'expiry'>>;
   /**
    * Account ids switched off on the card. A disabled account is never picked
    * to serve a request, but it stays in the pool and on the card so it can be

@@ -1,0 +1,65 @@
+{!groupOpen ? null : (
+          <div
+            className="dsm-xdpool-groupinline"
+            role="dialog"
+            aria-modal="false"
+            aria-label={t?.('shell.groupTitle') ?? 'XD 交流群'}
+          >
+            <div className="dsm-xdpool-groupcard">
+              <div className="dsm-xdpool-groupcardhead">
+                <b>{t?.('shell.groupTitle') ?? 'XD 交流群'}</b>
+                <button
+                  type="button"
+                  className="dsm-xdpool-groupclose"
+                  aria-label={t?.('shell.groupClose') ?? '关闭'}
+                  onClick={() => { setGroupOpen(false) }}
+                >
+                  ×
+                </button>
+              </div>
+              {/*
+                Two codes, because they are joined in two different ways and one caption cannot
+                describe both. WeChat is a BOT's code: scanning only adds the bot, and the user
+                must then send XD before being pulled in — a reader who scans and waits sees
+                nothing happen, so the step is printed under that code. QQ is the group's own
+                code: scanning IS joining.
+              */}
+              <div className="dsm-xdpool-groupcodes">
+                <div className="dsm-xdpool-groupcode">
+                  <img
+                    className="dsm-xdpool-groupqr"
+                    src={COMMUNITY_QR_WECHAT}
+                    alt={t?.('shell.groupWechatAlt') ?? '微信机器人二维码：扫码添加后发送 XD，即可被拉进群'}
+                    width={220}
+                    height={220}
+                  />
+                  <span className="dsm-xdpool-groupcode-label">
+                    {t?.('shell.groupWechat') ?? '微信（机器人）'}
+                  </span>
+                  <span className="dsm-xdpool-groupcode-step">
+                    {t?.('shell.groupWechatStep') ?? '扫码添加机器人后，发送「XD」拉你进群'}
+                  </span>
+                </div>
+                <div className="dsm-xdpool-groupcode">
+                  <img
+                    className="dsm-xdpool-groupqr"
+                    src={COMMUNITY_QR_QQ}
+                    alt={t?.('shell.groupQqAlt') ?? 'QQ 群二维码：直接扫码加入 XD 交流群'}
+                    width={220}
+                    height={220}
+                  />
+                  <span className="dsm-xdpool-groupcode-label">
+                    {t?.('shell.groupQq') ?? 'QQ 群'}
+                  </span>
+                  <span className="dsm-xdpool-groupcode-step">
+                    {t?.('shell.groupQqStep') ?? '直接扫码即可加入'}
+                  </span>
+                </div>
+              </div>
+              <p className="dsm-xdpool-groupnote">
+                {t?.('shell.groupNote')
+                  ?? '两个群都在；哪个方便用哪个。二维码失效了在 GitHub 提 issue 说一声，会更新。'}
+              </p>
+            </div>
+          </div>
+        )}
