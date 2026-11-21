@@ -361,7 +361,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
   const state = status?.state ?? 'pending'
   const channels = status?.channels ?? []
   return (
-    <div className="dsm-xdpool-channels">
+    <div className="groups">
       <style>{CHANNEL_CARD_CSS}</style>
       <PageHero
         title={t?.('chan.title') ?? 'Login channels'}
@@ -479,15 +479,15 @@ function ChannelRow({
   const tileMark = icon === undefined ? { initials: channelInitials(channel.name) } : { icon }
   return (
     <div
-      className="dsm-xdpool-channel"
+      className="card-ch"
       style={{ '--dsm-xdpool-channel-accent': channel.accent } as Record<string, string>}
     >
-      <div className="dsm-xdpool-channel-head">
+      <div className="ch-head">
         <BrandTile accent={channel.accent} glyph="login" {...tileMark} />
-        <span className="dsm-xdpool-channel-name">{channel.name}</span>
-        <span className="dsm-xdpool-channel-org">{channel.org}</span>
+        <span className="ch-title">{channel.name}</span>
+        <span className="ch-org">{channel.org}</span>
         {connectedCount > 0 && (
-          <span className="dsm-xdpool-channel-tag">
+          <span className="ch-state">
             {t?.('chan.connected', { count: connectedCount }) ?? 'Connected'}
           </span>
         )}
@@ -496,12 +496,12 @@ function ChannelRow({
           user standing on this page has not seen that card, and the answer to
           "is signing in here worth it" is this line and nothing else. */}
       {channel.note !== '' && (
-        <p className="dsm-xdpool-channel-note">{channel.note}</p>
+        <p className="ch-note">{channel.note}</p>
       )}
-      <div className="dsm-xdpool-channel-actions">
+      <div className="ch-foot">
         {busy ? (
           <>
-            <span className="dsm-xdpool-channel-waiting">
+            <span className="ch-note">
               {ui.message ?? t?.('chan.signingIn') ?? 'Waiting for sign-in…'}
             </span>
             {ui.loginUrl !== undefined && (
@@ -526,7 +526,7 @@ function ChannelRow({
                shape) left a channel with no way to add a second account and no
                way to see what the click had done. */}
             {ownedElsewhere === true ? (
-              <span className="dsm-xdpool-channel-hint">
+              <span className="ch-note">
                 {t?.('chan.ownedElsewhereRow') ?? '在「我们的免费模型」里登录'}
               </span>
             ) : (
@@ -540,11 +540,11 @@ function ChannelRow({
                 the pack drives that page — so the advice has to sit next to the
                 button instead. */}
             {channel.smsHint === true && (
-              <span className="dsm-xdpool-channel-hint">{t?.('chan.loginSmsHint') ?? ''}</span>
+              <span className="ch-note">{t?.('chan.loginSmsHint') ?? ''}</span>
             )}
             {/* What the button will actually do, before it is pressed. */}
             {channel.loginHint === 'doubao' && (
-              <span className="dsm-xdpool-channel-hint">{t?.('chan.doubaoHint') ?? ''}</span>
+              <span className="ch-note">{t?.('chan.doubaoHint') ?? ''}</span>
             )}
             {ui.phase === 'done' && (
               <span className="dsm-xdpool-channel-ok">{t?.('chan.done') ?? 'Account added'}</span>
