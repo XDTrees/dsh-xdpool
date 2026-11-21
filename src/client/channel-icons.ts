@@ -60,7 +60,31 @@ export const CHANNEL_ICONS: Readonly<Record<string, string>> = Object.freeze({
  * A Chinese display name has no ASCII letters to take, so the rule below returns an empty
  * mark — a channel with a blank tile. Doubao is the first such name.
  */
-const INITIALS_BY_NAME: Readonly<Record<string, string>> = { 豆包: 'DB' }
+/**
+ * 纯中文名的渠道，标识要手工给。
+ *
+ * `channelInitials` 抽的是拉丁字母，中文名抽出来是空串 —— 界面上就是一个空白方块。
+ * 这里逐个补齐；重复的也不行（两个渠道都叫 AC 的话，读者分不出是哪个）。
+ */
+const INITIALS_BY_NAME: Readonly<Record<string, string>> = {
+  '豆包': 'DB',
+  '百智云': 'BZ',
+  '腾讯 Marvis': 'MV',
+  '智谱 GLM (CN)': 'GL',
+  '阿里云': 'AL',
+  'WorkBuddy 国内版': 'WB',
+  'WorkBuddy 国际版': 'WI',
+  'Qoder 国内版': 'QD',
+  'Qoder 国际版': 'QI',
+  'MonkeyCode 国际': 'MK',
+  'MonkeyCode': 'MC',
+  'AutoClaw 国际': 'AI',
+  'AutoClaw 国内': 'AW',
+  'Accio': 'AO',
+  'AStudio': 'AS',
+  'AutoClaw 国际版': 'AI',
+  'AutoClaw 国内版': 'AC',
+}
 
 export function channelInitials(name: string): string {
   const fixed = INITIALS_BY_NAME[name.trim()]
