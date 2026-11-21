@@ -223,7 +223,25 @@ export function BackupPanel({ t }: { readonly t?: Translate | undefined }): Reac
   }, [chooseFile, password, picked, tooShort, t])
 
   return (
-    <div className="card">
+    <div className="main mbody">
+      {/*
+        警告横幅：这份文件里有凭据。
+
+        设计稿把它放在最上面一条 —— 不是装饰，是「你要导出的东西能登录所有账号」
+        这个事实必须先说，再让读者输入密码。
+      */}
+      <div className="banner">
+        <span className="banner-icon" aria-hidden="true">!</span>
+        <div className="banner-body">
+          <span className="banner-t">
+            {t?.('backup.warnTitle') ?? '备份包含凭据，请妥善保管'}
+          </span>
+          <span className="banner-d">
+            {t?.('backup.warnBody') ?? '没有密码打不开；它包含的东西足以登录这些账号。'}
+          </span>
+        </div>
+      </div>
+      <div className="card">
       {/* Own stylesheet. The `display:none` that hid the raw file input used to live in a
           page block this component never loads, so the browser's own picker rendered
           beside the buttons — three "choose file" controls for one action. */}
@@ -306,6 +324,7 @@ export function BackupPanel({ t }: { readonly t?: Translate | undefined }): Reac
 
       {notice === undefined ? null : <p className="note">{notice}</p>}
       {error === undefined ? null : <p className="hint">{error}</p>}
+    </div>
     </div>
   )
 }

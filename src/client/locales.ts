@@ -481,6 +481,8 @@ export const en = {
   'strip.gatewayExcluded': '{count} more came through the gateway (other devices) and are not counted here.',
   /** Credential backup: export/import, encrypted. */
   'backup.title': 'Account backup',
+  'backup.warnTitle': 'The backup carries credentials — keep it safe',
+  'backup.warnBody': 'It cannot be opened without the password; what is inside can sign in to these accounts.',
   'backup.encrypted': 'Encrypted',
   'backup.passwordPlaceholder': 'at least {min} characters',
   'backup.exportHint': 'Export an encrypted file',
@@ -1137,6 +1139,8 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   'strip.gatewayExcluded': '另有 {count} 次来自网关（其他设备），未计入。',
   /** 凭据备份：导出 / 导入，加密。 */
   'backup.title': '账号备份',
+  'backup.warnTitle': '备份包含凭据，请妥善保管',
+  'backup.warnBody': '没有密码打不开；它包含的东西足以登录这些账号。',
   'backup.encrypted': '加密',
   'backup.passwordPlaceholder': '至少 {min} 位',
   'backup.exportHint': '导出为加密文件',
