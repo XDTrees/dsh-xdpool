@@ -1759,7 +1759,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 </p>
               )}
               {fold === 'accounts' && (
-                <ul className="dsm-xdpool-cpool-acctlist">
+                <ul className="facts">
                   {accounts.map(account => {
                     const balance = balanceOf(account.id)
                     const amount1 = balance === undefined ? undefined : balanceAmount(balance.balance)
@@ -1767,9 +1767,9 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     const buckets = balance === undefined ? [] : balancePackages(balance.balance)
                     const disabled = account.enabled === false
                     return (
-                      <li key={account.id} className="dsm-xdpool-cpool-acct" data-off={disabled}>
+                      <li key={account.id} className="ch" data-off={disabled}>
                         <span className="dsm-xdpool-cpool-acctname">{account.nickname ?? account.id}</span>
-                        <span className="dsm-xdpool-cpool-acctmeta">
+                        <span className="ch-org">
                           {disabled
                             ? (t?.('channelpool.disableAccount') ?? 'disabled')
                             : (t?.('channelpool.enableAccount') ?? 'enabled')}
@@ -1793,7 +1793,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                               </span>
                             )
                             : null}
-                        <span className="dsm-xdpool-cpool-acctacts">
+                        <span className="sec-actions">
                           {/* Collecting Doubao's campaign credits, beside the other row actions. */}
                           {channel.id === 'doubao' && (
                             <button
