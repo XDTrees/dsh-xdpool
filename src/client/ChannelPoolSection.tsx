@@ -290,7 +290,16 @@ const MODEL_SEARCH_THRESHOLD = 8
  */
 const CONTEXT_BUDGET_DEFAULT = 200_000
 
-const REGION_OWNED_CHANNELS: ReadonlySet<string> = new Set(['buddy', 'workbuddy'])
+/**
+ * 由区域卡管理的渠道。
+ *
+ * 曾经这个集合把 buddy / workbuddy 排除在外，因为它们的两张汇总卡
+ * （WorkBuddy 国内版 / 国际版）由 PoolCard 单独渲染。
+ *
+ * 那两张卡已经不渲染了 —— 它们和渠道详情各占一格，把三列挤成一坨。
+ * 所以这两家必须回到中栏，否则读者根本看不到自己能登什么。
+ */
+const REGION_OWNED_CHANNELS: ReadonlySet<string> = new Set()
 
 interface ChannelEntry {
   channel: PoolWebChannel
@@ -957,12 +966,31 @@ export function ChannelPoolSection({ t, active }: {
         ] as const
       }))
       const byProvider = new Map(perProvider)
+      /*
+        全部渠道都保留，不只是「有账号」的那些。
+
+        原来这里 filter 了 byProvider —— 只有拿到账号的渠道才进 next。
+        结果：一个账号都没登录时 next = []，中栏被清空成一片空白，
+        连「未登录」的二十家都不显示，而设计稿的中栏始终是完整名册
+        分两组。读者第一次进来根本看不到自己能登什么。
+
+        byProvider 缺的渠道仍然要出现，只是 accounts 为空 —— 渲染层
+        会把它归到「未登录」组。
+      */
+      const EMPTY_ENTRY = {
+        accounts: [] as readonly ChannelAccount[],
+        models: [] as readonly PoolWebChannelModel[],
+        facts: new Map<string, PoolWebChannelModel>(),
+        balances: [] as readonly ChannelBalance[],
+        statuses: [] as readonly ChannelCreditStatus[],
+        balancePending: false,
+        balanceError: undefined as string | undefined,
+        modelError: undefined as string | undefined,
+      }
       const next = channels
-        .filter(channel => byProvider.has(channel.id))
         .map(channel => ({
           channel,
-          ...byProvider.get(channel.id)!,
-          facts: new Map<string, PoolWebChannelModel>(),
+          ...(byProvider.get(channel.id) ?? EMPTY_ENTRY),
           status: statuses.get(channel.id),
         }))
       // Wave 1 lands here. The store is written FIRST and unconditionally: this
