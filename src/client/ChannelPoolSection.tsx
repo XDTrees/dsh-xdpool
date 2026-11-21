@@ -590,6 +590,21 @@ function creditUnitLabel(channel: PoolWebChannel, t: Translate | undefined): str
 }
 
 /** Trim a decimal to something a card can print without lying about it. */
+
+/**
+ * 账号显示名。
+ *
+ * `nickname` 声明是字符串，但后端可以给对象/数字/null —— React 直接渲染
+ * 对象会抛「Objects are not valid as a React child」，整张账号卡消失。
+ * 宁可显示 id 或一个占位，也不让卡片不见。
+ */
+function accountLabel(account: { id?: unknown; nickname?: unknown }): string {
+  if (typeof account.nickname === 'string' && account.nickname !== '') return account.nickname
+  if (typeof account.id === 'string' && account.id !== '') return account.id
+  if (typeof account.id === 'number') return String(account.id)
+  return '（未命名账号）'
+}
+
 function amount(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2)
 }
@@ -1960,12 +1975,12 @@ export function ChannelPoolSection({ t, active }: {
                       <li key={account.id} className="acct" data-off={disabled}>
                         <div className="acct-head">
                           <span className="acct-dot" data-on={checkin?.todayCheckedIn === true ? 'true' : 'false'} aria-hidden="true" />
-                          <span className="acct-name">{account.nickname ?? account.id}</span>
+                          <span className="acct-name">{accountLabel(account)}</span>
                           <button
                             type="button"
                             role="switch"
                             aria-checked={!disabled}
-                            aria-label={account.nickname ?? account.id}
+                            aria-label={accountLabel(account)}
                             className={`sw${disabled ? '' : ' is-on'}`}
                             disabled={isBusy}
                             onClick={() => { void accountAction(channel.id, account.id, 'toggle') }}
