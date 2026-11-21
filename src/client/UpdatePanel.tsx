@@ -130,8 +130,8 @@ export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): Reac
   const checked = agoText(status?.checkedAt)
   const published = dayText(status?.publishedAt)
   return (
-    <div className="dsm-xdpool-update">
-      <div className="dsm-xdpool-update-head">
+    <div className="sec">
+      <div className="sec-head">
         <span className="dsm-xdpool-update-title">
           {t?.('update.title') ?? '检查更新'}
         </span>
@@ -148,7 +148,7 @@ export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): Reac
         )}
         <button
           type="button"
-          className="dsm-xdpool-btn"
+          className="btn"
           disabled={busy}
           onClick={() => { void check(true) }}
         >
@@ -157,7 +157,7 @@ export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): Reac
       </div>
 
       {status?.error === undefined ? null : (
-        <p className="dsm-xdpool-update-error">
+        <p className="hint">
           {t?.('update.failed') ?? '没能检查更新'}：{status.error}
         </p>
       )}
@@ -168,10 +168,10 @@ export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): Reac
             {t?.('update.available', { version: status.latest ?? '' }) ?? `有新版本 ${status.latest ?? ''}`}
             {published === undefined ? '' : `（发布于 ${published}）`}
           </p>
-          <div className="dsm-xdpool-update-acts">
+          <div className="sec-actions">
             <button
               type="button"
-              className="dsm-xdpool-btn"
+              className="btn"
               data-tone="primary"
               disabled={installing}
               onClick={() => { void install() }}
@@ -180,13 +180,13 @@ export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): Reac
                 ? (t?.('update.installing') ?? '安装中…')
                 : (t?.('update.install', { version: status.latest ?? '' }) ?? `安装 ${status.latest ?? ''}`)}
             </button>
-            <span className="dsm-xdpool-update-hint">
+            <span className="hint">
               {t?.('update.installHint') ?? '下载到本机并写入插件配置，重启 DSH 后生效；数据和账号不受影响。'}
             </span>
           </div>
         </>
       ) : (
-        <p className="dsm-xdpool-update-current">
+        <p className="hint">
           {t?.('update.upToDate') ?? '已是最新版本'}
           {checked === undefined ? '' : `（${checked}检查）`}
         </p>
