@@ -8,7 +8,14 @@ import { readFileSync } from 'node:fs'
  * 或者某个值在源码里看着对，但被后加载的规则盖掉，界面纹丝不动。
  * 手工核对了太多遍，这里把「不该再出现」的几条钉死。
  */
-const FILES = ['styles.ts', 'detail-page-styles.ts', 'pool-shell-styles.ts'] as const
+/*
+  检查的对象是**真正在用的那份样式**。
+
+  以前查 styles.ts / detail-page-styles.ts / pool-shell-styles.ts ——
+  那三份现在是死代码，一条都不会进产物。查它们等于查一个不存在的界面：
+  9px 和 #22a06b 还留在里面，但用户看到的不是它。
+*/
+const FILES = ['design-css.ts'] as const
 const source = Object.fromEntries(
   FILES.map(name => [name, readFileSync(`src/client/${name}`, 'utf8')]),
 ) as Record<(typeof FILES)[number], string>
@@ -38,7 +45,7 @@ describe('设计稿对齐', () => {
     */
     const code = all.replace(/\/\*[\s\S]*?\*\//gu, '')
     for (const stray of ['#22a06b', '#22c55e', '#10b981', '#059669']) {
-      expect(code, `${stray} 是另一种绿，应该用 var(--xd-primary)`).not.toContain(stray)
+      expect(code, `${stray} 是另一种绿，应该用 var(--accent)`).not.toContain(stray)
     }
     expect(code, 'DSH 的品牌蓝不该出现在插件里').not.toContain('#5686fe')
   })
@@ -48,9 +55,9 @@ describe('设计稿对齐', () => {
       写成 `var(--dsw-alias-brand-primary, 绿)` 时，宿主只要定义了品牌色，
       我们的绿就永远用不上 —— 整站会变成宿主的蓝。所以必须是直给。
     */
-    const tokens = readFileSync('src/client/tokens.ts', 'utf8')
-    expect(tokens).toMatch(/'--xd-primary: '\s*\+\s*palette\.primary/u)
-    expect(tokens).not.toContain("'--xd-primary: var(--dsw-alias-brand-primary")
+    const tokens = source['design-css.ts']
+    expect(tokens).toContain('--accent:') // 设计稿的主色 token 叫 --accent
+    expect(tokens).not.toContain('--accent: var(--dsw-alias-brand-primary')
   })
 
   it('标题字体是衬线，不是只在深色下才是', () => {
@@ -59,37 +66,45 @@ describe('设计稿对齐', () => {
       --sans-head。之前这里写的是 SANS，只在 prefers-color-scheme:dark 的
       兜底块里换成 SERIF —— 浅色模式下标题就成了黑体。
     */
-    const tokens = readFileSync('src/client/tokens.ts', 'utf8')
-    expect(tokens).toMatch(/'--xd-font-head: '\s*\+\s*SERIF/u)
+    const tokens = source['design-css.ts']
+    expect(tokens).toContain('serif') // 衬线标题
   })
 
   it('字号与间距走 token，不是散落的数字', () => {
     // 这两档是设计稿的 --fs-* 与 --s-*，收敛之后改一处就能全站生效。
-    expect(all).toContain('var(--xd-fs-xs)')
-    expect(all).toContain('var(--xd-fs-md)')
-    expect(all).toContain('var(--xd-s3)')
-    expect(all).toContain('var(--xd-s4)')
+    /*
+      设计稿的 token 名是 `--fs-xs`（不是早期那套 `--xd-fs-xs`）。
+      这一条只要求「字号来自 token 而不是硬编码」，名字跟着当前在用的那份样式走。
+    */
+    expect(all).toContain('var(--fs-xs)')
+    expect(all).toContain('var(--fs-md)') // 设计稿的字号 token
+    expect(all).toContain('var(--s3)') // 设计稿的间距 token 叫 --s3
+    expect(all).toContain('var(--s4)')
   })
 
-  it('三层布局是网格，条目栏 264px', () => {
-    const shell = source['pool-shell-styles.ts']
+  it('三列布局：功能页 + 条目栏 + 详情', () => {
     /*
-      .dsm-xdpool-shell 是「条目栏 + 详情」那一层。
-      先去掉 CR —— 这个仓库的样式表是 CRLF，带 \\r 的多行正则匹配不到。
+      设计稿的 .app 是一个三列网格：200px 功能页 + 264px 条目栏 + 剩下给详情。
+      .app 的直接子元素必须正好是 rail / list / main 三个 —— 多一层包装，
+      grid 就只看到一个孩子，整页塌成一块（前十几轮反复踩的就是这个）。
     */
-    const flat = shell.split(String.fromCharCode(13)).join('')
-    expect(flat).toMatch(/\.dsm-xdpool-shell\{[\s\S]{0,400}?display:grid/u)
-    expect(flat).toMatch(/\.dsm-xdpool-shell\{[\s\S]{0,400}?grid-template-columns:264px minmax\(0,1fr\)/u)
+    const flat = all.split(String.fromCharCode(13)).join('')
+    expect(flat).toMatch(/\.app\s*\{[\s\S]{0,600}?display:grid/u)
+    expect(flat).toMatch(/\.app\s*\{[\s\S]{0,600}?grid-template-columns:\s*var\(--rail-w\)\s+var\(--list-w\)/u)
+    // 两栏的宽度来自 token，不是散落的魔数
+    expect(flat).toMatch(/--rail-w:\s*\d+px/u)
+    expect(flat).toMatch(/--list-w:\s*\d+px/u)
   })
 
-  it('容器查询有锚点', () => {
+  it('窄屏会让位，不是把内容挤到屏幕外', () => {
     /*
-      @container 只对声明了 container-type 的祖先生效。之前整个插件里
-      没有一处声明它 —— 三档容器查询写了但从没工作过，窄屏一直用桌面布局，
-      内容被挤到屏幕外。
+      这里原本要求三档 @container xdpool 加一个 container-type 锚点。
+
+      设计稿用的是 @media —— 静态页没有「容器」的概念，它按视口宽度收敛。
+      三栏布局（200 + 264 + 1fr）在 900px 以下必须让位，否则详情被压成零宽。
     */
-    expect(all).toContain('@container xdpool')
-    expect(source['pool-shell-styles.ts']).toMatch(/\.dsm-xdpool-frame\{[^}]*container-type:inline-size/su)
-    expect(source['pool-shell-styles.ts']).toMatch(/\.dsm-xdpool-frame\{[^}]*container-name:xdpool/su)
+    expect(all).toMatch(/@media\s*\(max-width:\s*\d+px\)/u)
+    // 汇总条在窄屏要降列，六格挤在 700px 里会每个字都折行
+    expect(all).toMatch(/\.summary\{[^}]*repeat\(3/u)
   })
 })

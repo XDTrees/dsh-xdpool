@@ -95,7 +95,7 @@ const bridge = `
    尺寸和圆角与图标版一致，看起来是同一个控件而不是缺图。
    ============================================================ */
 
-.ch-logo-letters{display:grid;place-items:center;font-size:11px;font-weight:800;letter-spacing:-.02em;color:#fff;text-transform:uppercase}
+.ch-logo-letters{display:grid;place-items:center;font-size:12px;font-weight:800;letter-spacing:-.02em;color:#fff;text-transform:uppercase}
 .ch-logo-letters::after{content:none}
 /* 设计稿的 .ch-logo 用伪元素叠图形；字母版要把它关掉。 */
 .ch-logo::after{content:none}
@@ -117,6 +117,13 @@ const bridge = `
 .strip-caret[data-open="true"]{transform:rotate(180deg)}
 `
 
+/*
+  设计稿里有几处 10px 的小字（.badge 一类）。10px 在 1080p 上已经要凑近看，
+  这里统一提到 12px —— 做法是把生成结果里的 font-size:10px 换掉，
+  而不是改设计稿源文件：源文件要保持原样，便于以后重新提取时对照。
+*/
+const MIN_FONT_FIX = (css) => css.replace(/font-size:1[01]px/gu, 'font-size:12px')
+
 const out = `/**
  * 设计稿样式，原样接管。
  *
@@ -125,7 +132,7 @@ const out = `/**
  */
 export const DESIGN_TOKENS_CSS = \`${tokens}\n${colors}\`
 
-export const DESIGN_DETAIL_CSS = \`${scoped}\n${pageCss()}\n${bridge}\`
+export const DESIGN_DETAIL_CSS = \`${MIN_FONT_FIX(scoped)}\n${MIN_FONT_FIX(pageCss())}\n${bridge}\`
 `
 
 writeFileSync('D:/dsh-home/_xdpool-src/src/client/design-css.ts', out, 'utf8')

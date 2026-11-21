@@ -1070,7 +1070,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 
 /* 登录方式标签（Marvis 令牌 / 微信扫码这类） */
 .login-kind{
-  font-size:10px;line-height:15px;padding:0 5px;border-radius:var(--r-pill);
+  font-size:12px;line-height:15px;padding:0 5px;border-radius:var(--r-pill);
   border:1px solid var(--line-2);color:var(--faint);white-space:nowrap;
 }
 .model[data-off="true"] .ctx-select{opacity:.45;pointer-events:none}
@@ -1865,7 +1865,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 
 /* 登录方式标签（Marvis 令牌 / 微信扫码这类） */
 .login-kind{
-  font-size:10px;line-height:15px;padding:0 5px;border-radius:var(--r-pill);
+  font-size:12px;line-height:15px;padding:0 5px;border-radius:var(--r-pill);
   border:1px solid var(--line-2);color:var(--faint);white-space:nowrap;
 }
 .model[data-off="true"] .ctx-select{opacity:.45;pointer-events:none}
@@ -2724,7 +2724,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
    尺寸和圆角与图标版一致，看起来是同一个控件而不是缺图。
    ============================================================ */
 
-.ch-logo-letters{display:grid;place-items:center;font-size:11px;font-weight:800;letter-spacing:-.02em;color:#fff;text-transform:uppercase}
+.ch-logo-letters{display:grid;place-items:center;font-size:12px;font-weight:800;letter-spacing:-.02em;color:#fff;text-transform:uppercase}
 .ch-logo-letters::after{content:none}
 /* 设计稿的 .ch-logo 用伪元素叠图形；字母版要把它关掉。 */
 .ch-logo::after{content:none}
