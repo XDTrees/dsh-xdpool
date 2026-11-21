@@ -1147,25 +1147,25 @@ function ProviderRow({
                   const on = chosen.has(id)
                   const recuse = isFreeLane(id) ? recommendUse(factsOf(id)) : undefined
                   return (
-                    <div key={id} className="mp-row">
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={on}
-                          onChange={event => { onToggleModel(id, event.target.checked) }}
-                        />
-                        <span className="mp-main">
-                          <span className="mp-name">{id}</span>
-                          <span className="mp-id mono">{id}</span>
-                        </span>
-                        <span className="mp-tags">
-                          {isFreeLane(id) && (
-                            <span className="lane" data-tone="free">
-                              {t?.('agg.modelFreeTag') ?? 'free'}
-                            </span>
-                          )}
-                        </span>
-                      </label>
+                    <div key={id} className="mp-item">
+                    <label className="mp-row">
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={event => { onToggleModel(id, event.target.checked) }}
+                      />
+                      <span className="mp-main">
+                        <span className="mp-name">{id}</span>
+                        <span className="mp-id mono">{id}</span>
+                      </span>
+                      <span className="mp-tags">
+                        {isFreeLane(id) && (
+                          <span className="lane" data-tone="free">
+                            {t?.('agg.modelFreeTag') ?? 'free'}
+                          </span>
+                        )}
+                      </span>
+                    </label>
                       {/* The capabilities a registry row does know, when this
                           vendor is actually serving the model right now. For an
                           id that is not exposed there is no row to join on, and
