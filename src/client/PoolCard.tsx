@@ -1543,12 +1543,6 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                 它们的数据（账号数、模型数、积分）已经在中栏的渠道行和详情里，
                 这里不需要第二份。
               */}
-              <ChannelPoolSection t={t} active={selectedChannel} />
-              {/*
-                侧栏入口开关：它是设置项，不属于渠道详情。
-                放进第三列（详情列）的末尾 —— 挂在 .app 层会让它自己占一格，
-                把三列挤成四块（用户说的「一坨」就是这个）。
-              */}
               <div className="dsm-xdpool-settingslot" /*
                   绝对定位钉在详情列底部，不参与网格排布 ——
                   它是第四个网格项时会把 main 挤到第二行（三列塌成一坨的最后一环）。
@@ -1574,6 +1568,13 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                 </p>
               </section>
               </div>
+              <ChannelPoolSection t={t} active={selectedChannel} />
+              {/*
+                侧栏入口开关：它是设置项，不属于渠道详情。
+                放进第三列（详情列）的末尾 —— 挂在 .app 层会让它自己占一格，
+                把三列挤成四块（用户说的「一坨」就是这个）。
+              */}
+
               </div>
               {/* Backup moved to its own page. It operates on the whole credential set
                   rather than on one pool card, and sitting it under the accounts implied a
