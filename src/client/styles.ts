@@ -865,6 +865,15 @@ export const CHANNEL_CARD_CSS = `
 
 `.trim()
 
+/*
+  ⚠ 改这里不会生效。
+
+  这份 SHELL_CSS 已经不再注入任何页面 —— 界面用的是 design-css.ts 那一份
+  （从 xdpool-design 原样提取的 114KB）。它被保留下来只因为几个测试拿它
+  当切分锚点（`styles.indexOf('export const SHELL_CSS')`）。
+
+  要改样式请改设计稿源文件，再跑 scripts/extract-design-css.mjs。
+*/
 export const SHELL_CSS = `
 
 .dsm-xdpool-shell{--ease-instrument:cubic-bezier(.16,1,.3,1);--ease-settle:cubic-bezier(.34,1.4,.4,1);--gap:14px;position:relative;display:flex;flex-direction:column;gap:calc(var(--gap)*1.4);max-width:1080px;font-size:13px;line-height:1.55;color:var(--dsw-alias-label-primary,#e8e8ea);-webkit-font-smoothing:antialiased;box-sizing:border-box}

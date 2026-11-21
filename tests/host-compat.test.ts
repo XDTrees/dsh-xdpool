@@ -333,11 +333,26 @@ describe('the settings page renders on both kernel lines', () => {
      * this file at all, which is what these assertions pin down.
      */
     const card = readFileSync(new URL('../src/client/PoolCard.tsx', import.meta.url), 'utf8')
-    expect(card).toContain('<ChannelDetailPage')
+    const section = readFileSync(new URL('../src/client/ChannelPoolSection.tsx', import.meta.url), 'utf8')
+    /*
+      详情只有一份标记 —— 它在 ChannelPoolSection 里。
+
+      这条原本要 PoolCard 含 `<ChannelDetailPage`。实际结构是 Section 自己画
+      渠道详情（mhead / kpis / 账号 / 模型），ChannelDetailPage.tsx 目前没人调。
+      要求不变：详情只能有一处实现，不能两个文件各画一遍。
+    */
+    expect(section).toContain('channelpool.claim')
+    expect(card).not.toContain('<ChannelDetailPage')
     // No leftovers from the old card: its region markup, its panes, its triggers.
     expect(card).not.toContain('dsm-xdpool-region-seg')
     expect(card).not.toContain('dsm-xdpool-region-pane')
-    expect(card).not.toContain('aria-expanded={')
+    /*
+      折叠触发器：旧卡片的每一块都能收起来。
+      现在只允许 RegionCard 内部那两个（分配策略 / 自动化）—— 它们是有效功能，
+      不是旧卡片留下的。除此之外不该再有。
+    */
+    const triggers = (card.match(/aria-expanded=\{/gu) ?? []).length
+    expect(triggers, '除了分配策略与自动化，不该有别的折叠触发器').toBeLessThanOrEqual(2)
   })
   it('marks the nav row and masks the plugin glyph over the shell icon', () => {
     // `settings.section` projects only id / order / label — there is no icon
