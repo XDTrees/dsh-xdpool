@@ -1600,14 +1600,9 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                     aria-checked={sidebarRow}
                     disabled={!settingsWritable || sidebarRowBusy}
                     className={`sw${sidebarRow ? ' is-on' : ''}`}
+                    aria-label={sidebarRow ? (t?.('row.autoOn') ?? 'On') : (t?.('row.autoOff') ?? 'Off')}
                     onClick={() => { void setSidebarRow(!sidebarRow) }}
-                  >
-                    {sidebarRowBusy
-                      ? (t?.('row.autoBusy') ?? 'Saving…')
-                      : sidebarRow
-                        ? (t?.('row.autoOn') ?? 'On')
-                        : (t?.('row.autoOff') ?? 'Off')}
-                  </button>
+                  />
                 </div>
                 <p className="hint">
                   {sidebarRow

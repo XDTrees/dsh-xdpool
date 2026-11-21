@@ -2730,6 +2730,9 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
   font-size:var(--fs-xs);font-weight:800;letter-spacing:-.02em;
   line-height:1;color:#fff;text-transform:uppercase;
   background-color:var(--ch-logo-accent, var(--surface-3));
+  /* 厂商色多为浅亮（橙、绿），纯白字在上面只有 2.3:1。
+     加一层暗影把字压出来，不改品牌色。 */
+  text-shadow:0 1px 2px rgba(0,0,0,.55);
 }
 .ch-logo-letters::after{content:none}
 /* 设计稿的 .ch-logo 用伪元素叠图形；字母版要把它关掉。 */
