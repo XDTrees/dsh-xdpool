@@ -1625,6 +1625,26 @@ export function ChannelPoolSection({ t, active }: {
         </button>
       </div>
       {/*
+        页头 —— 设计稿每页的 main 都是 mhead + mbody。
+        这里显示选中的那个渠道的名字与厂商，中栏切换时它跟着变。
+      */}
+      <header className="mhead">
+        <div className="mhead-title">
+          <span className="mhead-name">
+            {entries.find(e => e.channel.id === chosen)?.channel.name ?? (t?.('channelpool.title') ?? '渠道')}
+          </span>
+          <span className="mhead-org">
+            {entries.find(e => e.channel.id === chosen)?.channel.org ?? ''}
+          </span>
+        </div>
+      </header>
+      {/*
+        正文容器 —— 设计稿每页的 main 都是 mhead + mbody。
+
+        少了这一层，区块之间没有 gap、没有内边距，内容会贴在页头下面。
+      */}
+      <div className="mbody">
+      {/*
         只画选中的那一个渠道。
 
         设计稿的右栏是一个渠道的详情（mhead + kpis + 账号 + 模型），
@@ -2182,6 +2202,7 @@ export function ChannelPoolSection({ t, active }: {
             {t?.('channelpool.retry') ?? 'Reload'}
           </button>
         </div>
+      </div>
       </div>
     </main>
     </>
