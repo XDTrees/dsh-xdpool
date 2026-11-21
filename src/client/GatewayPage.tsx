@@ -58,8 +58,10 @@ const POLL_MS = 15_000
  * is just not pre-rendered.
  */
 function maskOf(key: string): string {
-  if (key.length <= 8) return '•'.repeat(Math.max(4, key.length))
-  return `${key.slice(0, 4)}${'•'.repeat(8)}${key.slice(-4)}`
+  /* 后端把 key 写成对象时 .length/.slice 都会抛错，整页白掉。这里先确认它是字符串。 */
+  const text = typeof key === 'string' ? key : ''
+  if (text.length <= 8) return '•'.repeat(Math.max(4, text.length))
+  return `${text.slice(0, 4)}${'•'.repeat(8)}${text.slice(-4)}`
 }
 export function GatewayPage({ t }: GatewayPageProps) {
   const [status, setStatus] = useState<PoolWebRelayStatus | undefined>(undefined)
@@ -254,7 +256,8 @@ export function GatewayPage({ t }: GatewayPageProps) {
    * There is no single right answer, so the panel offers both and labels each with
    * the client behaviour it suits. Silently picking one is what produced the report.
    */
-  const origin = endpoint.replace(/\/+$/u, '')
+  // endpoint 若不是字符串，.replace 会抛错 —— 类型声明是 string，运行时不一定
+  const origin = (typeof endpoint === 'string' ? endpoint : '').replace(/\/+$/u, '')
   const baseUrl = origin === '' ? '' : `${origin}/v1`
   /**
    * Base URL and key together, in the shape every OpenAI client asks for.

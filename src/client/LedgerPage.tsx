@@ -81,7 +81,7 @@ function fmtClock(at: number): string {
 function cacheHitRate(summary: UsageSummary): number | null {
   let input = 0
   let cached = 0
-  for (const row of summary.rows) {
+  for (const row of Array.isArray(summary.rows) ? summary.rows : []) {
     input += row.inputTokens
     cached += row.cachedTokens
   }
@@ -128,8 +128,41 @@ function tokenCells(call: UsageCall): readonly [string, string, string] {
   if (call.usage === undefined) return ['—', '—', '—']
   return [fmtInt(call.usage.inputTokens), fmtInt(call.usage.outputTokens), fmtInt(call.usage.cachedTokens)]
 }
+
+/**
+ * 把任何形状的用量应答整理成组件能直接用的样子。
+ *
+ * 为什么在这一层做：后端的类型声明说这些是数组、是数字，
+ * 但运行时可以给任何东西（应答被中间层改过、版本不匹配、
+ * 鄲测器返回了别的格式）。一个 `.reduce is not a function` 就能让整页白掉，
+ * 而读者看到的是「插件坏了」，不是「数据不对」。
+ *
+ * 宁可少显示一个数字，不能整页空白。
+ */
+function normalizeSummary(raw: unknown): UsageSummary | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const v = raw as Record<string, unknown>
+  const num = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0)
+  const arr = <T,>(x: unknown): T[] => (Array.isArray(x) ? (x as T[]) : [])
+  /* 数组里的 null 也要掉：后端说「有一条记录」但内容是 null 时，
+     读它的 .inputTokens 会直接抛错。 */
+  const rows = <T,>(x: unknown): T[] => arr<T>(x).filter((r): r is T => r !== null && typeof r === 'object')
+  return {
+    samples: num(v.samples),
+    turns: num(v.turns),
+    failedTurns: num(v.failedTurns),
+    recoveredTurns: num(v.recoveredTurns),
+    calls: num(v.calls),
+    usageReported: v.usageReported === true,
+    entries: rows(v.entries),
+    rows: rows(v.rows),
+    accounts: rows(v.accounts),
+    days: rows(v.days),
+  }
+}
+
 export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
-  const [own, setOwn] = useState<UsageSummary | undefined>(shared)
+  const [own, setOwn] = useState<UsageSummary | undefined>(() => normalizeSummary(shared))
   const [clearing, setClearing] = useState(false)
 
   /**
@@ -171,7 +204,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
     try {
       await fetch(POOL_USAGE_PATH, { method: 'DELETE', credentials: 'same-origin' })
       const res = await fetch(POOL_USAGE_PATH, { headers: { accept: 'application/json' }, credentials: 'same-origin' })
-      if (res.ok) setOwn(await res.json() as UsageSummary)
+      if (res.ok) setOwn(normalizeSummary(await res.json()))
     } catch { /* 失败时保留原有数字，读者能看出没清掉 */ }
     finally { setClearing(false) }
   }, [])
@@ -185,7 +218,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
   // Adopt the parent's copy whenever it arrives, so opening this page shows the
   // numbers that already exist instead of a skeleton for one poll interval.
   useEffect(() => {
-    if (shared !== undefined) setOwn(shared)
+    if (shared !== undefined) setOwn(normalizeSummary(shared))
   }, [shared])
   useEffect(() => {
     mounted.current = true
@@ -212,7 +245,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
       }
       const value = await response.json().catch(() => undefined)
       if (mounted.current && signal?.aborted !== true) {
-        setOwn(value as UsageSummary)
+        setOwn(normalizeSummary(value))
         setFailed(false)
       }
     } catch {
@@ -246,7 +279,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
     let tpsWeight = 0
     let ttftWeighted = 0
     let ttftWeight = 0
-    for (const row of summary.rows) {
+    for (const row of Array.isArray(summary.rows) ? summary.rows : []) {
       input += row.inputTokens
       output += row.outputTokens
       reasoning += row.reasoningTokens
@@ -271,7 +304,14 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
       avgTtftMs: ttftWeight === 0 ? null : Math.round(ttftWeighted / ttftWeight),
     }
   }, [summary])
-  const details = useMemo(() => summary?.entries.slice(0, DETAIL_ROWS) ?? [], [summary])
+  /*
+    entries 后端说数组、实际给了对象时 `.slice is not a function` ——
+    整页空白。数组守卫比 `?.` 硬一档。
+  */
+  const details = useMemo(() => {
+    const rows = summary?.entries
+    return Array.isArray(rows) ? rows.slice(0, DETAIL_ROWS) : []
+  }, [summary])
   const accounts: readonly UsageAccountRow[] = summary?.accounts ?? []
   return (
     /*

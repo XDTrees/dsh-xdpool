@@ -27,7 +27,8 @@ describe('the gateway copy buttons', () => {
     expect(page).toContain("copy('base', origin)")
     // Derived from the bound endpoint, trailing slashes trimmed so a double slash
     // cannot appear before `/v1`.
-    expect(page).toContain("endpoint.replace(/\\/+$/u, '')")
+    // 现在先确认 endpoint 是字符串再 .replace —— 后端把它写成对象时不会白屏
+    expect(page).toContain("typeof endpoint === 'string' ? endpoint : ''")
     expect(page).toContain('/v1`')
   })
 

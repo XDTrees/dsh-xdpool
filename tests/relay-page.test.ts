@@ -83,8 +83,10 @@ describe('gateway panel', () => {
     expect(cardCode).toContain('revealed ? key : maskOf(key)')
     expect(cardCode).toContain('function maskOf')
     const mask = card.match(/function maskOf[\s\S]*?\n\}/u)?.[0] ?? ''
-    expect(mask).toContain('key.slice(0, 4)')
-    expect(mask).toContain('key.slice(-4)')
+    // 先确认 key 是字符串（后端写成对象时 .slice 会抛错、整页白掉），再截取
+    expect(mask).toContain("typeof key === 'string' ? key : ''")
+    expect(mask).toContain('text.slice(0, 4)')
+    expect(mask).toContain('text.slice(-4)')
   })
   it('keeps "on" and "listening" as two separate visible facts', () => {
     // Collapsing them would tell a user whose bind failed to switch on something

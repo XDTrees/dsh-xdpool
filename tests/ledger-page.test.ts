@@ -129,7 +129,8 @@ describe('ledger page: honesty about what the recorder is', () => {
     // for no benefit; the page adopts the parent's copy when it has one.
     expect(card).toContain('POOL_USAGE_PATH')
     expect(page).toMatch(/if \(shared !== undefined\) return/)
-    expect(page).toMatch(/setOwn\(shared\)/)
+    // 共享的 usage 进来时也走一遍归一化 —— 后端字段类型不对时整页会白掉
+    expect(page).toMatch(/setOwn\(normalizeSummary\(shared\)\)/)
   })
 })
 describe('ledger page: wiring', () => {

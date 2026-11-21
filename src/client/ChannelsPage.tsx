@@ -450,7 +450,10 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
   }
 
   const state = status?.state ?? 'pending'
-  const channels = status?.channels ?? []
+  // `?? []` 挡不住「后端把数组写成对象」，那时 .filter 会抛错、整页空白
+  // 数组里也可能塞了 null —— 读它的 .id 会抛错，整页白掉
+  const channels = (Array.isArray(status?.channels) ? status.channels : [])
+    .filter(c => c !== null && typeof c === 'object')
   return (
     <div className="main">
       <PageHero

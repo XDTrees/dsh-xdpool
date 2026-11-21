@@ -346,7 +346,14 @@ export function AggregatePage({ t }: AggregatePageProps) {
     [modelDrafts],
   )
   const laneBusy = busyIds.has('lane')
-  const providers = status?.providers ?? []
+  /*
+    `?? []` 只挡 null/undefined —— 后端把数组写成对象时它是 `is not iterable`，
+    整页空白。类型系统抓不到（接口声明就是数组），只有运行时才发现。
+    数组守卫更硬一点。
+  */
+  const providers: readonly PoolWebAggregateProvider[] = (Array.isArray(status?.providers)
+    ? status.providers as readonly PoolWebAggregateProvider[]
+    : []).filter((p): p is PoolWebAggregateProvider => p !== null && typeof p === 'object')
   const laneEnabled = status?.enabled !== false
   /**
    * How many vendors each filter would show.
@@ -377,7 +384,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
   /** Model ids contributed right now, so a row can say what it is worth. */
   const contributionByProvider = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const row of status?.models ?? []) {
+    for (const row of Array.isArray(status?.models) ? status.models : []) {
       counts.set(row.providerId, (counts.get(row.providerId) ?? 0) + 1)
     }
     return counts
@@ -393,7 +400,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
    */
   const modelRowsByProvider = useMemo(() => {
     const grouped = new Map<string, PoolWebAggregateStatus['models'][number][]>()
-    for (const row of status?.models ?? []) {
+    for (const row of Array.isArray(status?.models) ? status.models : []) {
       const bucket = grouped.get(row.providerId)
       if (bucket === undefined) grouped.set(row.providerId, [row])
       else bucket.push(row)
