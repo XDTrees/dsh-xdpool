@@ -89,9 +89,14 @@ export function rememberedShellTab(): string | undefined {
   return window.localStorage.getItem(SHELL_TAB_KEY) ?? undefined
 }
 
-export function initialShellTab<T extends string>(tabs: readonly { id: T }[]): T | undefined {
-  const remembered = rememberedShellTab()
-  return tabs.find(tab => tab.id === remembered)?.id ?? tabs[0]?.id
+export function initialShellTab<T extends string>(
+  remembered: string | undefined,
+  tabs: readonly { id: T }[],
+): T | undefined {
+  // 记住的那个 id 必须真的在这份列表里 —— 换过版本之后它可能已经不存在，
+  // 那时回到第一个，而不是渲染一个空页。
+  const known = tabs.some(tab => tab.id === remembered)
+  return known ? (remembered as T) : tabs[0]?.id === undefined ? '' : tabs[0].id
 }
 
 function rememberTab(id: string): void {
@@ -294,14 +299,18 @@ export function PoolShell({
           </div>
           <div className="qr-grid">
             <div className="qr-item">
-              <div className="qr" />
-              <span className="qr-label">{'微信群'}</span>
-              <span className="qr-step">{'扫码添加机器人后发送「XD」拉你进群'}</span>
+              <img className="qr" src={COMMUNITY_QR_WECHAT}
+                alt="微信机器人二维码：扫码添加后发送 XD，即可被拉进群"
+                width={220} height={220} />
+              <span className="qr-label">微信（机器人）</span>
+              <span className="qr-step">扫码添加机器人后，发送「XD」拉你进群</span>
             </div>
             <div className="qr-item">
-              <div className="qr" />
-              <span className="qr-label">{t?.('shell.groupQq') ?? 'QQ 群'}</span>
-              <span className="qr-step">{t?.('shell.groupQqStep') ?? '直接扫码即可加入'}</span>
+              <img className="qr" src={COMMUNITY_QR_QQ}
+                alt="QQ 群二维码：直接扫码加入 XD 交流群"
+                width={220} height={220} />
+              <span className="qr-label">QQ 群</span>
+              <span className="qr-step">直接扫码即可加入</span>
             </div>
           </div>
           <p className="note">

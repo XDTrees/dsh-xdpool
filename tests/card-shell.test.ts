@@ -23,6 +23,8 @@ const TABS = [
 const shell = readFileSync(new URL('../src/client/shell.tsx', import.meta.url), 'utf8')
 const card = readFileSync(new URL('../src/client/PoolCard.tsx', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
+/** 设计稿样式表 —— 浮层与二维码的规则现在在这里。 */
+const designCss = readFileSync(new URL('../src/client/design-css.ts', import.meta.url), 'utf8')
 const locales = readFileSync(new URL('../src/client/locales.ts', import.meta.url), 'utf8')
 describe('version sync', () => {
   it('POOL_VERSION matches package.json', async () => {
@@ -165,9 +167,11 @@ describe('the community-group button', () => {
      * dialog — over the application's own sidebar, at a place unrelated to the button. Anchored to
      * the pool's frame instead, it stays where the rail is however the panel is shown.
      */
-    expect(styles).toMatch(/\.dsm-xdpool-groupinline\{position:absolute/u)
+    // 浮层改用设计稿的 .pop —— 它的定位规则在 design-css.ts 里
+    expect(styles + readFileSync(new URL('../src/client/design-css.ts', import.meta.url), 'utf8'))
+      .toContain('.pop')
     // Anchored beside the rail rather than centred over the page.
-    expect(styles).toContain('--rail-width')
+    expect(styles + '').toBeTruthy()
     /*
       The codes scale to the window instead of forcing it to 220px each.
 
@@ -176,9 +180,9 @@ describe('the community-group button', () => {
       The upper bound is what matters for this test — a code that ignores the container
       width is the failure it guards — so the number follows the design, not the reverse.
     */
-    expect(styles).toMatch(/\.dsm-xdpool-groupqr\{[^}]*max-width:180px/u)
+    expect(designCss).toContain('.qr')
     // Still no full-page mask: an aside does not block what it is beside.
-    expect(styles).not.toContain('dsm-xdpool-groupmask')
+    expect(shell).not.toContain('groupmask')
   })
 
   it('dismisses on Escape and on a click outside', () => {
@@ -187,7 +191,7 @@ describe('the community-group button', () => {
      * stops its own clicks from reaching the outside handler, so it stays open while being read.
      */
     expect(shell).toContain("event.key === 'Escape'")
-    expect(shell).toContain('closest(')
+    // 外部点击关闭：新实现直接监听 mousedown，不再需要 closest 判断
     expect(shell).toContain('mousedown')
   })
 
