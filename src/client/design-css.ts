@@ -2792,6 +2792,27 @@ button:disabled { cursor: not-allowed }
 .accts > .card:first-child { grid-column: 1 / -1 }
 .accts > .sec-actions { grid-column: 1 / -1 }
 
+
+/* ============================================================
+   开关里的真实 checkbox 要藏起来
+   ------------------------------------------------------------
+   设计稿的 .sw 是一个按钮（40×24，用 ::after 画滑块）。
+   插件有三处把它套在 <label> 上，里面放真的 <input type="checkbox">，
+   为的是让键盘和读屏能操作。
+
+   于是浏览器的原生复选框就画在滑块旁边 —— 聚合页那个勾选框跑出
+   开关右边，就是这么来的。藏掉 input，滑块照旧由 .sw 的伪元素画。
+   ============================================================ */
+label.sw > input[type="checkbox"] {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+label.sw { cursor: pointer }
+label.sw:has(input:checked)::after { transform: translateX(16px) }
+label.sw:has(input:disabled) { opacity: .5; cursor: not-allowed }
+
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}
 `

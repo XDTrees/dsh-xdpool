@@ -422,15 +422,20 @@ export function AggregatePage({ t }: AggregatePageProps) {
         {t?.('agg.note') ?? '把各家免费额度接进同一个模型池。这里默认一家都不接；展开某一家、填上 key，它的模型才会出现在选择器里。'}
       </p>
       <div className="lane">
+        {/*
+          开关和文字是并列的两块，不是把文字塞进开关里。
+          .sw 是 40×24 的滑块 —— 文字塞进去会溢到滑块下面。
+        */}
         <label className="sw">
           <input
             type="checkbox"
             checked={laneEnabled}
             disabled={laneBusy || status === undefined}
+            aria-label={t?.('agg.laneOn') ?? 'Aggregate lane'}
             onChange={event => { void patch({ kind: 'lane', enabled: event.target.checked }) }}
           />
-          <span>{t?.('agg.laneOn') ?? 'Aggregate lane'}</span>
         </label>
+        <span className="lane-t">{t?.('agg.laneOn') ?? '聚合通道'}</span>
         {!laneEnabled
           ? <span className="hint">{t?.('agg.laneOffHint') ?? ''}</span>
           : null}
