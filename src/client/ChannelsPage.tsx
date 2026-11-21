@@ -136,6 +136,13 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
   const [status, setStatus] = useState<PoolWebChannelsStatus | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const [ui, setUi] = useState<Record<string, ChannelUiState>>({})
+  /**
+   * 渠道搜索。
+
+   * 22 家渠道平铺时，找一家要滚很久 —— 设计稿的登录页有搜索框。
+   * 只过滤显示，不改数据。
+   */
+  const [query, setQuery] = useState('')
   const [connected, setConnected] = useState<readonly ChannelAccount[]>([])
   const mounted = useRef(true)
   /** Timers for in-flight logins, keyed by channel id. */
@@ -454,6 +461,19 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
   // 数组里也可能塞了 null —— 读它的 .id 会抛错，整页白掉
   const channels = (Array.isArray(status?.channels) ? status.channels : [])
     .filter(c => c !== null && typeof c === 'object')
+
+  /* 搜索过滤：名字、厂商、备注任一命中 */
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (needle === '') return channels
+    return channels.filter(c => {
+      const name = typeof c.name === 'string' ? c.name.toLowerCase() : ''
+      const org = typeof c.org === 'string' ? c.org.toLowerCase() : ''
+      const note = typeof c.note === 'string' ? c.note.toLowerCase() : ''
+      return name.includes(needle) || org.includes(needle) || note.includes(needle)
+    })
+  }, [channels, query])
+
   return (
     <div className="main">
       <PageHero
@@ -485,6 +505,25 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
       <p className="note">
         {t?.('chan.note') ?? '每个渠道点「登录」都会打开一个浏览器窗口，登录完成后自动接上。凭据只存在本机，不会上传。'}
       </p>
+      {/*
+        搜索框 —— 设计稿的 login 页有。
+        22 家渠道时它省掉的是滚动，不是点击。
+      */}
+      <div className="search-wrap">
+        <input
+          type="search"
+          className="search"
+          value={query}
+          placeholder={t?.('chan.search') ?? '搜索渠道'}
+          aria-label={t?.('chan.search') ?? '搜索渠道'}
+          onChange={event => { setQuery(event.target.value) }}
+        />
+        {query === '' ? null : (
+          <span className="hint" role="status">
+            {String(filtered.length)} / {String(channels.length)}
+          </span>
+        )}
+      </div>
       <div className="groups">
       {autoCheckin !== undefined && (
         <div className="hint">
@@ -535,8 +574,8 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
         平铺成一张长表时，读者要逐行看右侧的「已登录」才知道哪些能用，
         而这两个组的答案本来是不同的（一个"能用"，一个"还得登"）。
       */}
-      {([[t?.('chan.groupBound') ?? '已连接', channels.filter(c => connectedFor(c).length > 0)],
-        [t?.('chan.groupUnbound') ?? '未连接', channels.filter(c => connectedFor(c).length === 0)]] as const)
+      {([[t?.('chan.groupBound') ?? '已连接', filtered.filter(c => connectedFor(c).length > 0)],
+        [t?.('chan.groupUnbound') ?? '未连接', filtered.filter(c => connectedFor(c).length === 0)]] as const)
         .filter(([, list]) => list.length > 0)
         .map(([label, list]) => (
           <section key={label}>
