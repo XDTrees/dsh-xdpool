@@ -1137,24 +1137,35 @@ function ProviderRow({
                     onChange={event => { onModelQuery(event.target.value) }}
                   />
                 : null}
-              <ul className="models">
+              {/*
+                模型行 —— 设计稿的 .pick-list + .mp-row。
+                .mp-main 里名字在上、id 在下，.mp-tags 放标签。
+                原来是一个 <ul><li> 把 id 和一个 free 标签塞在一行，
+                长 id 会把标签挤出去，也看不出哪个是名字哪个是 id。
+              */}
+              <div className="pick-list">
                 {listedModels.map(id => {
                   const on = chosen.has(id)
                   const recuse = isFreeLane(id) ? recommendUse(factsOf(id)) : undefined
                   return (
-                    <li key={id} className="model">
+                    <div key={id} className="mp-row">
                       <label>
                         <input
                           type="checkbox"
                           checked={on}
                           onChange={event => { onToggleModel(id, event.target.checked) }}
                         />
-                        <span className="mono">{id}</span>
-                        {isFreeLane(id) && (
-                          <span className="lane" data-tone="free">
-                            {t?.('agg.modelFreeTag') ?? 'free'}
-                          </span>
-                        )}
+                        <span className="mp-main">
+                          <span className="mp-name">{id}</span>
+                          <span className="mp-id mono">{id}</span>
+                        </span>
+                        <span className="mp-tags">
+                          {isFreeLane(id) && (
+                            <span className="lane" data-tone="free">
+                              {t?.('agg.modelFreeTag') ?? 'free'}
+                            </span>
+                          )}
+                        </span>
                       </label>
                       {/* The capabilities a registry row does know, when this
                           vendor is actually serving the model right now. For an
@@ -1169,10 +1180,10 @@ function ProviderRow({
                           {recuse}
                         </p>
                       )}
-                    </li>
+                    </div>
                   )
                 })}
-              </ul>
+              </div>
               {listedModels.length === 0
                 ? <p className="hint">
                     {rosterSize === 0

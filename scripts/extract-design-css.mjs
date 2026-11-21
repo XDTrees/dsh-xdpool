@@ -43,12 +43,23 @@ function pageCss() {
       if (body.includes('{') && body.includes('.') && !body.includes('import ')) out.push(body)
     }
   }
-  // 每个 html 的 <style> 块
-  for (const file of ['pool', 'login', 'aggregate', 'ledger', 'routing', 'gateway',
-                      'backup', 'account', 'group', 'login-start', 'update-run', 'backup-done']) {
+  /*
+    每个 html 的 <style> 块 —— 扫目录，不写死清单。
+
+    写死清单漏过 aggregate-models.html，于是 .mp-row / .mp-name / .mp-id
+    这些规则从来没被提取出来：插件用了类名，但没有任何样式命中它们。
+    以后设计稿再加页面也不用回来改这里。
+  */
+  let htmls = []
+  try {
+    htmls = readdirSync(DESIGN).filter(f => f.endsWith('.html'))
+  } catch {
+    htmls = []
+  }
+  for (const file of htmls) {
     let src = ''
     try {
-      src = readFileSync(`${DESIGN}/${file}.html`, 'utf8')
+      src = readFileSync(`${DESIGN}/${file}`, 'utf8')
     } catch {
       continue
     }
