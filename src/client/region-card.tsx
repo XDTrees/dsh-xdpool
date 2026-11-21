@@ -158,7 +158,7 @@ export interface RegionCardPaneProps {
  */
 export function RegionCardPane({ id, open, children }: RegionCardPaneProps): ReactElement {
   return (
-    <div className="dsm-xdpool-region-pane" id={id} role="group" hidden={!open}>
+    <div className="card" id={id} role="group" hidden={!open}>
       {children}
     </div>
   )
