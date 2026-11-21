@@ -77,7 +77,6 @@ export function GatewayPage({ t }: GatewayPageProps) {
   const [copiedField, setCopiedField] = useState<string | undefined>(undefined)
   const copyTimer = useRef<number | undefined>(undefined)
   const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [revealed, setRevealed] = useState(false)
   const [host, setHost] = useState<string>('127.0.0.1')
   const [port, setPort] = useState<string>('8326')
@@ -286,24 +285,6 @@ export function GatewayPage({ t }: GatewayPageProps) {
     }
   }, [write])
 
-  /** 复制端点地址。clipboard 在非安全上下文会失败，退回 execCommand。 */
-  const copyEndpoint = useCallback(async (): Promise<void> => {
-    const url = status?.endpoint
-    if (url === undefined || url === '') return
-    try {
-      await navigator.clipboard.writeText(url)
-    } catch {
-      const el = document.createElement('input')
-      el.value = url
-      document.body.appendChild(el)
-      el.select()
-      document.execCommand('copy')
-      el.remove()
-    }
-    setCopied(true)
-    setTimeout(() => { setCopied(false) }, 1600)
-  }, [status?.endpoint])
-
   return (
     <div className="main">
       <PageHero
@@ -333,14 +314,6 @@ export function GatewayPage({ t }: GatewayPageProps) {
               onClick={() => { void restart() }}
             >
               {t?.('gw.restart') ?? '重启'}
-            </button>
-            <button
-              type="button"
-              className="btn"
-              disabled={status?.endpoint === undefined || status.endpoint === ''}
-              onClick={() => { void copyEndpoint() }}
-            >
-              {copied ? (t?.('gw.copied') ?? '已复制') : (t?.('gw.copyAddress') ?? '复制地址')}
             </button>
           </>
         )}
