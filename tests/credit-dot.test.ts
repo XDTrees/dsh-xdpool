@@ -38,7 +38,7 @@ describe('the credit dot', () => {
   it('is the pool glyph, not a plain circle', () => {
     // A circle says "some status"; the plugin's own glyph says whose number it is.
     expect(dot).toContain('POOL_NAV_ICON_MASK_URL')
-    expect(dot).toContain('dot-glyph')
+    expect(dot).toContain('ch-mark')
     // The colour comes from `currentColor` so one state attribute drives both the dot
     // and the icon, with no second asset.
     expect(styles).toContain('-webkit-mask-image')
@@ -86,7 +86,7 @@ describe('the credit dot', () => {
 
   it('draws a bar whose fill is the share SPENT', () => {
     // A fuller bar means more used — it drains toward the right like a fuel gauge.
-    expect(dot).toContain('dotbar-fill')
+    expect(dot).toContain('bar-fill')
     expect(dot).toContain('baseline')
     // Amber past 90%: the point at which a long task becomes a gamble.
     expect(styles).toContain("[data-full='true']")
@@ -169,7 +169,7 @@ describe('the credit dot', () => {
     // "还有积分" was a chip restating what the green dot already says, and it pushed the
     // one fact worth reading — which pool, how much — onto a separate row. The header
     // now carries it, so the rows below are only today's spend and the model.
-    expect(dot).toContain('dot-ch')
+    expect(dot).toContain('ch')
     expect(dot).toContain('dot.channelUnknown')
     // The restated chip is gone...
     expect(dot).not.toContain('dsm-xdpool-dotpanel-chip')

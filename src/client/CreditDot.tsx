@@ -39,7 +39,6 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactEl
 import { createPortal } from 'react-dom'
 import { POOL_CREDITS_SPEND_PATH, POOL_STATUS_PATH } from '../status-paths.ts'
 import { POOL_NAV_ICON_MASK_URL } from './nav-icon.ts'
-import { CREDIT_DOT_CSS } from './styles.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
 
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
@@ -444,17 +443,14 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
 
   return (
     <span
-      className="dsm-xdpool-dotwrap"
+      className="strip"
       style={{ ['--xdpool-dot-mask' as string]: `url("${POOL_NAV_ICON_MASK_URL}")` }}
     >
-      {/* The stylesheet travels WITH the component. The dot renders in the composer,
-          which no settings page's <style> reaches, so a style block parked in a page's
-          CSS constant never applied — the panel showed up as bare text. */}
-      <style>{CREDIT_DOT_CSS}</style>
+      {/* 样式由 installDesignCss() 在 apply 时统一挂一次（114KB，不是每人一份）。 */}
       <button
         ref={anchorRef}
         type="button"
-        className="dsm-xdpool-dot"
+        className="ch-dot"
         data-state={alive ? 'alive' : 'empty'}
         aria-label={label}
         aria-expanded={open}
@@ -464,7 +460,7 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
         {/* The plugin's own pool glyph in a mask, not a plain circle: it says WHICH
             number this is, and it takes its colour from `currentColor` so the same
             green/grey state drives the icon without a second asset. */}
-        <span className="dsm-xdpool-dot-glyph" aria-hidden="true" />
+        <span className="ch-mark" aria-hidden="true" />
       </button>
       {/*
         The panel is PORTALLED to `document.body`.
@@ -528,7 +524,7 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
           ) : null}
           {!ready ? null : (
             <>
-          <div className="dsm-xdpool-dotpanel-head">
+          <div className="pop-head">
             <span className="ch">
               {snapshot.all.length === 0
                 ? (t?.('dot.channelUnknown') ?? '未连接渠道')
@@ -539,9 +535,9 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
               edge" without reading any number, which is what makes it worth the space.
               The width is the SPENT share, so a fuller bar means more has been used. */}
           {snapshot.baseline <= 0 ? null : (
-            <div className="dsm-xdpool-dotbar" role="img" aria-label={t?.('dot.barLabel') ?? '今日已用占比'}>
+            <div className="bar-track" role="img" aria-label={t?.('dot.barLabel') ?? '今日已用占比'}>
               <div
-                className="dsm-xdpool-dotbar-fill"
+                className="bar-fill"
                 data-full={snapshot.spentToday !== undefined && snapshot.baseline > 0
                   && (snapshot.spentToday / snapshot.baseline) >= 0.9 ? 'true' : 'false'}
                 style={{ width: `${String(Math.min(100, Math.max(0, snapshot.baseline > 0 ? (snapshot.spentToday ?? 0) / snapshot.baseline * 100 : 0)))}%` }}

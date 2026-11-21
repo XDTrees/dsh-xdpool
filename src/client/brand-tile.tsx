@@ -119,11 +119,16 @@ export function BrandTile({ accent, glyph, icon, initials, className }: BrandTil
   return (
     <span
       aria-hidden="true"
-      className={`dsm-xdpool-tile${icon === undefined ? '' : ' dsm-xdpool-tile-art'}${letters === undefined ? '' : ' dsm-xdpool-tile-letters'}${className === undefined ? '' : ` ${className}`}`}
+      className={`ch-logo${icon === undefined ? ' ch-logo-letters' : ' ch-logo-art'}${className === undefined ? '' : ` ${className}`}`}
+      /*
+        有图标时才挂 ch-logo-art —— 只挂字母版会把图标的位置留空。
+        这个判断和上面那个是两件事：上面决定「字母还是图标」，这里决定「图标层要不要」。
+      */
+      data-logo={icon === undefined ? '' : ' ch-logo-art'}
       style={{
-        '--dsm-xdpool-tile-accent': accent,
-        '--dsm-xdpool-tile-glyph': letters === undefined ? BRAND_TILE_GLYPHS[glyph] : 'none',
-        '--dsm-xdpool-tile-icon': icon === undefined ? 'none' : `url("${icon}")`,
+        '--ch-logo-accent': accent,
+        '--ch-logo-glyph': letters === undefined ? BRAND_TILE_GLYPHS[glyph] : 'none',
+        '--ch-logo-icon': icon === undefined ? 'none' : `url("${icon}")`,
       } as Record<string, string>}
     >
       {letters}
