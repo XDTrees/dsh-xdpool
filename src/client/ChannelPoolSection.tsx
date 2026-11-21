@@ -756,8 +756,13 @@ export function ChannelPoolSection({ t, active }: {
     没传就自己管 —— 这样这一栏可以独立渲染成「列表 + 详情」。
   */
   const [ownActive, setOwnActive] = useState<string>('')
-  const chosen = active ?? ownActive
-  void setOwnActive
+  /*
+    外部没传（或传了空串）时用自己那份。
+
+    原来是 `active ?? ownActive` —— 但 `active` 的默认值是 `''`，
+    而 `??` 只对 null/undefined 回退，空串算「有值」。于是点了中栏
+    什么都不会变：chosen 永远是 `''`，右栏永远显示不了选中的那家。
+  */
   // Seeded from the cross-mount snapshot: a remount paints the last good cards
   // on its very first frame, then revalidates. Only a genuinely cold start
   // begins empty — and that one says so, instead of rendering air.
@@ -778,6 +783,14 @@ export function ChannelPoolSection({ t, active }: {
     if (snapshot !== undefined && snapshot.length > 0) return snapshot
     return placeholderEntries()
   })
+  const wanted = active === undefined || active === '' ? ownActive : active
+  /*
+    还没选过就默认第一家。
+    右栏一进来就该是「某一家渠道的详情」，而不是一个标题加一片空白 ——
+    读者看不出这个页面是干什么的。
+  */
+  const chosen = wanted !== '' ? wanted : (entries[0]?.channel.id ?? '')
+
   const [error, setError] = useState<string | undefined>(() => poolSnapshot?.error)
   /**
    * True until the first wave has answered once.
