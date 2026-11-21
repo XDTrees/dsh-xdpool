@@ -2021,9 +2021,23 @@ export function ChannelPoolSection({ t, active }: {
                             {buckets.map((b, i) => (
                               <div className="fact" key={`${b.name}-${String(i)}`}>
                                 <dt>{b.name}</dt>
+                                {/*
+                                  设计稿写的是「398 / 500」—— 已用 / 总量。
+                                  原来显示「92% / 500」，把百分比和总量混在一起，
+                                  读者算不出还剩多少。
+                                */}
                                 <dd>
-                                  {typeof b.remaining === 'number' ? `${String(Math.round(b.remaining))}%` : '—'}
-                                  {typeof b.total === 'number' ? ` / ${amount(b.total)}` : ''}
+                                  {typeof b.total === 'number'
+                                    ? <>
+                                        {typeof b.remaining === 'number'
+                                          ? amount(Math.round(b.total * (100 - b.remaining) / 100))
+                                          : (typeof b.amount === 'number' ? amount(b.amount) : '—')}
+                                        {' / '}
+                                        {amount(b.total)}
+                                      </>
+                                    : typeof b.remaining === 'number'
+                                      ? `${String(Math.round(b.remaining))}% 剩余`
+                                      : '—'}
                                 </dd>
                               </div>
                             ))}
