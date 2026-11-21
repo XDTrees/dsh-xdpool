@@ -114,7 +114,7 @@ export function DoubaoAutomationPane({ t }: { readonly t?: Translate | undefined
         <div className="dsm-xdpool-cpool-autorow">
           <button
             type="button"
-            className="dsm-xdpool-btn"
+            className="btn"
             data-tone={enabled ? undefined : 'primary'}
             disabled={busy}
             onClick={() => { void send({ enabled: !enabled }) }}
@@ -125,7 +125,7 @@ export function DoubaoAutomationPane({ t }: { readonly t?: Translate | undefined
           </button>
           <button
             type="button"
-            className="dsm-xdpool-btn"
+            className="btn"
             disabled={busy}
             onClick={() => { void send({}) }}
           >
