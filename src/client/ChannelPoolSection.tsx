@@ -1421,19 +1421,19 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 which list it happened to be in, and the reason the model picker carried a
                 duplicate group: two renderers owned one account pool.
               */}
-              <div className="dsm-xdpool-region-head">
+              <div className="sec-head">
                 <BrandTile accent={channel.accent} glyph="login" {...tileMark} />
                 <div className="mhead-title">
                   <h3 className="mhead-name">{channel.name}</h3>
                   <p className="mhead-org">{channel.org}</p>
                 </div>
-                <span className="dsm-xdpool-region-state" data-on={accounts.length > 0}>
+                <span className="pill" data-on={accounts.length > 0}>
                   {accounts.length > 0
                     ? (t?.('channelpool.stateReady') ?? '已接入')
                     : (t?.('channelpool.stateNone') ?? '未接入')}
                 </span>
               </div>
-              <p className="dsm-xdpool-region-note">{channel.note}</p>
+              <p className="hint">{channel.note}</p>
               <div className="kpis">
                 <span className="fact">
                   <span className="td-name">
@@ -1551,7 +1551,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                   read as a caption rather than as a control, and it sat at the far edge where
                   the other cards put nothing.
                 */}
-                <div className="dsm-xdpool-region-seg">
+                <div className="seg">
                   <button
                     type="button"
                     className="seg"
@@ -1853,7 +1853,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                             )}
                             {capped && (
                               <fieldset
-                                className="dsm-xdpool-model-budget dsm-xdpool-cpool-budget"
+                                className="badge dsm-xdpool-cpool-budget"
                                 aria-label={t?.('channelpool.modelBudget') ?? 'Context window'}
                               >
                                 <label>
