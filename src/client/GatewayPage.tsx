@@ -289,6 +289,42 @@ export function GatewayPage({ t }: GatewayPageProps) {
           </span>
         </>}
       />
+
+      {/*
+        网关转过什么：四格。
+
+        「今日请求 / 多少失败 / 平均延迟 / 输入输出」——
+        没有这四格，读者看不出网关是不是在工作。
+      */}
+      <div className="summary">
+        <div className="sum-cell">
+          <span className="sum-k">今日请求</span>
+          <span className="sum-v">{String(status?.stats?.requests ?? 0)}</span>
+          <span className="sum-sub">
+            {(status?.stats?.failed ?? 0) === 0 ? '没有失败' : `失败 ${String(status?.stats?.failed ?? 0)}`}
+          </span>
+        </div>
+        <div className="sum-cell">
+          <span className="sum-k">平均延迟</span>
+          <span className="sum-v">
+            {status?.stats?.avgLatencyMs === undefined
+              ? '—'
+              : `${String(Math.round(status.stats.avgLatencyMs))}ms`}
+          </span>
+          <span className="sum-sub">首 token</span>
+        </div>
+        <div className="sum-cell">
+          <span className="sum-k">输入</span>
+          <span className="sum-v">{String(status?.stats?.inputTokens ?? 0)}</span>
+          <span className="sum-sub">tokens</span>
+        </div>
+        <div className="sum-cell">
+          <span className="sum-k">输出</span>
+          <span className="sum-v">{String(status?.stats?.outputTokens ?? 0)}</span>
+          <span className="sum-sub">tokens</span>
+        </div>
+      </div>
+
       {error !== undefined
         ? <p className="hint">{error}</p>
         : null}
