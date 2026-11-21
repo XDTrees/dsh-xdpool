@@ -2764,6 +2764,20 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 .fact > .td-num{flex:1 1 auto;min-width:0;color:var(--text);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fact > .td-num[data-tone="quiet"]{color:var(--faint)}
 
+
+/* ============================================================
+   按下反馈
+   ------------------------------------------------------------
+   设计稿是静态稿，没有 :active。但真实界面里，按下去没有任何变化
+   会让人不确定「点到了没有」——尤其是慢操作（重新获取模型要几秒）。
+   这里只加一点点下沉，不动配色。
+   ============================================================ */
+.btn:active:not(:disabled),
+.tiny:active:not(:disabled),
+.rail-item:active { transform: translateY(1px) }
+.sw:active:not(:disabled) { filter: brightness(.94) }
+button:disabled { cursor: not-allowed }
+
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}
 `
