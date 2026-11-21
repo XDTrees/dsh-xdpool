@@ -230,9 +230,9 @@ export function BackupPanel({ t }: { readonly t?: Translate | undefined }): Reac
       {/* Both are maintenance done occasionally rather than part of running the pool, which is
           why they share a page and the tab is now 「更新与备份」. */}
       <UpdatePanel t={t} />
-      <div className="dsm-xdpool-bak-head">
-        <span className="dsm-xdpool-bak-title">{t?.('backup.title') ?? '账号备份'}</span>
-        <span className="dsm-xdpool-bak-warn">{t?.('backup.encrypted') ?? '加密'}</span>
+      <div className="sec-head">
+        <span className="sec-title">{t?.('backup.title') ?? '账号备份'}</span>
+        <span className="pill">{t?.('backup.encrypted') ?? '加密'}</span>
       </div>
       <p className="hint">{t?.('backup.hint') ?? ''}</p>
 
