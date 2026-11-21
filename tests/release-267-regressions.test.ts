@@ -37,19 +37,22 @@ describe('outbound fetch is bound once (#140)', () => {
   })
 })
 
-describe('an explicitly named model resolves even when unticked (#143)', () => {
-  it('serves the union of visible and all, not the filtered list alone', () => {
-    // The card's tick-boxes decide what the picker LISTS. They must not decide what the
-    // provider can serve: `kimi-k3.1-pro` was on the roster and servable, and the refusal
-    // came from a display filter.
-    expect(adapter).toContain('catalog.current()')
-    expect(adapter).toContain('const withSelection')
-    // Ticked rows keep their per-model overrides (image support, context budget).
-    expect(adapter).toContain('catalog.visible()')
+describe('the picker lists the ticked models, and only those (#143, corrected)', () => {
+  /**
+   * #143 was real but the fix over-corrected.
+   *
+   * A model switched off could not be reached by typing its id, because `dsh-llm-pi-ai`
+   * resolves an id against this provider's model array. Appending every unticked model kept
+   * that working — and made the picker list models the user had deliberately switched off,
+   * which is the complaint that came back. The tick boxes exist to narrow the list.
+   */
+  it('builds the list from the selection alone', () => {
+    expect(adapter).toContain('catalog.visible().map')
   })
 
-  it('puts the ticked models first, so the default choice does not change', () => {
-    expect(adapter).toMatch(/return \[\.\.\.shown, \.\.\.rest\]/u)
+  it('does not append the unticked rows back in', () => {
+    // The exact expression that caused the regression.
+    expect(adapter).not.toMatch(/return \[\.\.\.shown, \.\.\.rest\]/u)
   })
 })
 

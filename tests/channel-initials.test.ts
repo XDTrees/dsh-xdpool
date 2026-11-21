@@ -4,6 +4,8 @@ import { channelIcon, channelInitials } from '../src/client/channel-icons.ts'
 import { REGISTERED_CHANNELS } from '../src/channels.ts'
 
 const styles = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
+/** 设计稿样式表 —— 图标的规则现在在这里（插件旧样式表已停用）。 */
+const designCss = readFileSync(new URL('../src/client/design-css.ts', import.meta.url), 'utf8')
 const tile = readFileSync(new URL('../src/client/brand-tile.tsx', import.meta.url), 'utf8')
 const channels = readFileSync(new URL('../src/client/ChannelsPage.tsx', import.meta.url), 'utf8')
 const shell = readFileSync(new URL('../src/client/shell.tsx', import.meta.url), 'utf8')
@@ -15,7 +17,7 @@ const shell = readFileSync(new URL('../src/client/shell.tsx', import.meta.url), 
  * drawing an unstyled tile.
  */
 function sharedCss(): string {
-  return styles.slice(styles.indexOf('export const SHARED_CARD_CSS'))
+  return designCss
 }
 
 /**
@@ -33,7 +35,13 @@ describe('a channel with no logo wears its own letters', () => {
     // vendor's artwork lands or a channel is added, and a stale list is exactly
     // how five identical tiles got shipped in the first place.
     const noArtwork = REGISTERED_CHANNELS.filter((channel) => channelIcon(channel.id) === undefined)
-    expect(noArtwork.length).toBeGreaterThanOrEqual(5)
+    /**
+     * No minimum count.
+     *
+     * This used to require five, which was true when most channels shipped without artwork. The
+     * point of the case is that whatever IS artwork-less must wear distinct letters — asserting a
+     * floor made adding a vendor's real logo look like a regression.
+     */
     const marks = noArtwork.map((channel) => channelInitials(channel.name))
     for (const [index, mark] of marks.entries()) {
       expect(mark, `${noArtwork[index]?.id ?? ''} must wear letters, not a glyph`).toMatch(/^[0-9A-Z]{1,2}$/u)
@@ -43,10 +51,16 @@ describe('a channel with no logo wears its own letters', () => {
   })
 
   it('separates vendors whose names start with the same letters', () => {
-    // LobsterAI and Loomy both begin "Lo"; taking a plain first-two-letters
-    // would draw them identically. Both of these are on the channel page.
+    /**
+     * LobsterAI and Loomy both begin "Lo", and a product with a domestic and an international
+     * channel produces the same two letters twice. Both were real collisions on the page.
+     *
+     * This case used to assert the OPPOSITE for the region pairs — that they share a mark —
+     * which is exactly what made two rows indistinguishable.
+     */
     expect(channelInitials('Loomy')).not.toBe(channelInitials('LobsterAI'))
-    expect(channelInitials('WorkBuddy 国内版')).toBe(channelInitials('WorkBuddy 国际版'))
+    expect(channelInitials('WorkBuddy 国内版')).not.toBe(channelInitials('WorkBuddy 国际版'))
+    expect(channelInitials('Qoder 国内版')).not.toBe(channelInitials('Qoder 国际版'))
   })
 
   it('never leaves a single letter alone in a 40px tile', () => {
@@ -57,10 +71,9 @@ describe('a channel with no logo wears its own letters', () => {
   })
 
   it('ignores non-Latin parts of a name', () => {
-    // The reader recognises "WorkBuddy", not "国内版". Taking the first Latin
-    // letter per word also keeps the mark stable if the CJK suffix is reworded.
-    expect(channelInitials('Qoder 国内版')).toBe('QO')
-    expect(channelInitials('Qoder 国际版')).toBe('QO')
+    // The reader recognises "Qoder", not "国内版" — so a name whose only Latin part is the
+    // vendor takes its letters from that part alone.
+    expect(channelInitials('Qoder')).toBe('QO')
     expect(channelInitials('')).toBe('')
   })
 
@@ -68,16 +81,16 @@ describe('a channel with no logo wears its own letters', () => {
     expect(tile).toContain("letters === undefined ? BRAND_TILE_GLYPHS[glyph] : 'none'")
     expect(tile).toContain('icon === undefined ? tileInitials(initials) : undefined')
     // Artwork still wins: a channel that has a logo must never get letters too.
-    expect(tile).toContain('icon === undefined ? \'\' : \' dsm-xdpool-tile-art\'')
+    expect(tile).toContain('icon === undefined ? \'\' : \' ch-logo-art\'')
   })
 
   it('centres the letters on the gradient and sizes them for 40px', () => {
     const block = sharedCss()
-    expect(block).toMatch(/\.dsm-xdpool-tile-letters\{[^}]*display:grid[^}]*place-items:center/u)
-    expect(block).toMatch(/\.dsm-xdpool-tile-letters\{[^}]*font-weight:800/u)
+    expect(block).toMatch(/\.ch-logo-letters\{[^}]*display:grid[^}]*place-items:center/u)
+    expect(block).toMatch(/\.ch-logo-letters\{[^}]*font-weight:800/u)
     // The gradient tile's mask would otherwise paint a key glyph on top of the
     // letters; the letters variant has to switch it off.
-    expect(block).toMatch(/\.dsm-xdpool-tile-letters::after\{content:none\}/u)
+    expect(block).toMatch(/\.ch-logo-letters::after\{content:none\}/u)
   })
 
   it('styles the tile for every page that renders one, not just the login page', () => {
@@ -86,10 +99,10 @@ describe('a channel with no logo wears its own letters', () => {
     // that declared the tile, so their logos came out as blank 40px boxes. The
     // rule belongs in the shared sheet the shell injects once for every page.
     for (const selector of [
-      '.dsm-xdpool-tile',
-      '.dsm-xdpool-tile::after',
-      '.dsm-xdpool-tile-art',
-      '.dsm-xdpool-tile-letters',
+      '.ch-logo',
+      '.ch-logo::after',
+      '.ch-logo-art',
+      '.ch-logo-letters',
     ]) {
       expect(sharedCss(), `${selector} must be styled in the shared sheet`).toContain(`${selector}{`)
     }

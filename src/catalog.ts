@@ -64,19 +64,30 @@ export interface WorkBuddyModelInfo {
  */
 export const FALLBACK_WORKBUDDY_MODELS: readonly WorkBuddyModelInfo[] = [
   { id: 'auto', name: 'Auto', contextWindow: 256_000, maxOutputTokens: 32_000, supportsImages: true, tags: ['craft'] },
+  /**
+   * Hy4 and Hy4 flash, read off the live catalog.
+   *
+   * `hy4std` is the flagship (0.29x) and `hy4flash` its cheap sibling (0.03x); `hy4flash-free`
+   * costs nothing and is what the `hy3` / `hy3-x` ids alias to — the same relationship the live
+   * payload reports in its `aliases` field. The previous table carried only `hy4-preview`, an id
+   * the gateway no longer lists, so a refresh dropped the whole family.
+   */
+  { id: 'hy4std', name: 'Hy4', contextWindow: 960_000, maxOutputTokens: 64_000, supportsImages: true, tags: ['craft'] },
+  { id: 'hy4flash', name: 'Hy4 flash', contextWindow: 960_000, maxOutputTokens: 64_000, supportsImages: true, supportedEfforts: ['high'] },
+  { id: 'hy4flash-free', name: 'Hy4 flash', contextWindow: 960_000, maxOutputTokens: 64_000, supportsImages: true, supportedEfforts: ['high'] },
   { id: 'hy4-preview', name: 'Hy4 preview', contextWindow: 960_000, maxOutputTokens: 64_000, supportsImages: true, tags: ['craft'] },
   { id: 'hy3', name: 'Hy3', contextWindow: 192_000, maxOutputTokens: 64_000, supportsImages: true, tags: ['craft'] },
   { id: 'hy3-x', name: 'Hy3', contextWindow: 192_000, maxOutputTokens: 64_000, supportsImages: true },
-  { id: 'space-bunny', name: 'Space-Bunny', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
-  { id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash', contextWindow: 1_000_000, maxOutputTokens: 128_000, supportsImages: true },
+  { id: 'space-bunny', name: 'Space-Bunny', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true, supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash', contextWindow: 1_000_000, maxOutputTokens: 128_000, supportsImages: true, supportedEfforts: ['low', 'high', 'max'] },
   { id: 'deepseek-v4-pro', name: 'Deepseek-V4-Pro', contextWindow: 1_000_000, maxOutputTokens: 128_000, supportsImages: true },
   { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', contextWindow: 1_000_000, maxOutputTokens: 128_000, supportsImages: true },
-  { id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
-  { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxOutputTokens: 131_072, supportsImages: true },
+  { id: 'glm-5.3', name: 'GLM-5.3', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true, supportedEfforts: ['low', 'high', 'max'] },
+  { id: 'glm-5.3-flash', name: 'GLM-5.3-Flash', contextWindow: 1_000_000, maxOutputTokens: 131_072, supportsImages: true, supportedEfforts: ['low', 'high', 'max'] },
   { id: 'glm-5.2', name: 'GLM-5.2', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true, tags: ['craft'] },
   { id: 'glm-5.1', name: 'GLM-5.1', contextWindow: 200_000, maxOutputTokens: 48_000, supportsImages: false },
   { id: 'glm-5v-turbo', name: 'GLM-5v-Turbo', contextWindow: 200_000, maxOutputTokens: 64_000, supportsImages: true },
-  { id: 'kimi-k3-1', name: 'Kimi-K3', contextWindow: 1_000_000, maxOutputTokens: 32_000, supportsImages: true },
+  { id: 'kimi-k3-1', name: 'Kimi-K3', contextWindow: 1_000_000, maxOutputTokens: 32_000, supportsImages: true, supportedEfforts: ['low', 'high', 'max'] },
   { id: 'kimi-k2.8-preview', name: 'Kimi-K2.8-Preview', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
   { id: 'kimi-k2.7', name: 'Kimi-K2.7-Code', contextWindow: 256_000, maxOutputTokens: 32_000, supportsImages: true },
   { id: 'kimi-k2.6', name: 'Kimi-K2.6', contextWindow: 256_000, maxOutputTokens: 32_000, supportsImages: true },
@@ -107,13 +118,42 @@ export type CatalogRegion = 'cn' | 'global'
  * `maxOutputTokens` / `supportsImages` for 25 rows would put fabricated fields in
  * front of the user — strictly worse than the shared list it replaces.
  */
-const FALLBACK_WORKBUDDY_MODELS_GLOBAL: readonly WorkBuddyModelInfo[] = FALLBACK_WORKBUDDY_MODELS.map(
-  model => {
+/**
+ * The models only the international gateway serves.
+ *
+ * Read off the live `/v3/config` payload. The table used to be the CN one with the promo badges
+ * stripped, which meant a failed refresh offered none of these — and half of them are the reason
+ * a user picks the international lane at all (GPT-6, Grok, Gemini 4).
+ */
+const GLOBAL_ONLY_MODELS: readonly WorkBuddyModelInfo[] = [
+  { id: 'default-model', name: 'Auto', contextWindow: 176_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'max-model', name: 'Max', contextWindow: 272_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'deepseek-v4.1-flash-sg', name: 'Deepseek-V4.1-Flash', contextWindow: 1_000_000, maxOutputTokens: 128_000, supportsImages: true },
+  { id: 'gpt-6-astra', name: 'GPT-6-Astra', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'gpt-6.1-sol', name: 'GPT-6.1-Sol', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'gpt-6-sol', name: 'GPT-6-Sol', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'gpt-6-luna', name: 'GPT-6-Luna', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'gpt-5.6-sol', name: 'GPT-5.6-Sol', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'gpt-5.6-terra', name: 'GPT-5.6-Terra', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'gpt-5.6-luna', name: 'GPT-5.6-Luna', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'grok-4.7', name: 'Grok-4.7', contextWindow: 500_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'gemini-3.8-flash', name: 'Gemini-3.8-Flash', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'gemini-4-carbon', name: 'Gemini-4-Carbon', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'gemini-4-argon', name: 'Gemini-4-Argon', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'kimi-k3.1-pro', name: 'Kimi-K3.1-Pro', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true, supportedEfforts: ['low', 'high', 'max'] },
+  { id: 'kimi-k3.1-pro-highspeed', name: 'Kimi-K3.1-Pro-Highspeed', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'kimi-k3', name: 'Kimi-K3', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true },
+  { id: 'minimax-m3.1-flash', name: 'MiniMax-M3.1-Flash', contextWindow: 1_000_000, maxOutputTokens: 64_000, supportsImages: true, supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] },
+]
+
+const FALLBACK_WORKBUDDY_MODELS_GLOBAL: readonly WorkBuddyModelInfo[] = [
+  ...FALLBACK_WORKBUDDY_MODELS.map(model => {
     const tags = (model.tags ?? []).filter(tag => !tag.startsWith(BADGE_TAG_PREFIX))
     if (tags.length === (model.tags?.length ?? 0)) return model
     return { ...model, ...(tags.length === 0 ? {} : { tags }) }
-  },
-)
+  }),
+  ...GLOBAL_ONLY_MODELS,
+]
 
 /** The static fallback table for one region. Defaults to `cn`. */
 export function fallbackModelsFor(region: CatalogRegion = 'cn'): readonly WorkBuddyModelInfo[] {
@@ -338,5 +378,31 @@ export function catalogFromUpstream(
   region: CatalogRegion = 'cn',
 ): readonly WorkBuddyModelInfo[] {
   if (models.length === 0) return fallbackModelsFor(region)
-  return models.map(toModelInfo)
+  const rows = models.map(toModelInfo)
+  /**
+   * Disambiguate display names the gateway repeats.
+   *
+   * `hy4flash` and `hy4flash-free` are both published as 「Hy4 flash」, so a picker showed two
+   * identical rows and a reader had no way to tell the paid one from the free one. The ids are
+   * distinct, which is what a request uses; only the LABEL needs the suffix.
+   */
+  const seen = new Map<string, number>()
+  for (const row of rows) seen.set(row.name, (seen.get(row.name) ?? 0) + 1)
+  const used = new Map<string, number>()
+  return rows.map(row => {
+    if ((seen.get(row.name) ?? 0) <= 1) return row
+    const at = (used.get(row.name) ?? 0) + 1
+    used.set(row.name, at)
+    // The -free id is the one that costs nothing; say so on the row that carries it.
+    /**
+ * Only the collision counter, not a free marker.
+ *
+ * The 「（免费）」 suffix used to be written into the NAME, so the one fact a reader scans for was
+ * grey text inside the title while the same fact was a green badge on every other card. The free
+ * state is already carried by the tag system (`freeBadgeKind`); the name only needs to
+ * disambiguate two rows that share a display name.
+ */
+    const suffix = row.id.endsWith('-free') ? '' : `（${String(at)}）`
+    return { ...row, name: `${row.name}${suffix}` }
+  })
 }

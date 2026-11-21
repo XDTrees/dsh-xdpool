@@ -91,6 +91,13 @@ export interface PoolRelayStatus {
   key: string
   /** Why nothing is bound; '' when there is nothing to explain. */
   error: string
+  /**
+   * 自从绑上以来转发过什么。
+   *
+   * 只统计真正转发出去的请求：被拒的（没开、密钥不对、路径不认）不计入 ——
+   * 它们不是「网关在服务」的证据，混进来会让「今日请求」虚高。
+   */
+  stats: RelayStats
 }
 export interface PoolRelay {
   /** Settles after the first bind attempt; never rejects. */
@@ -232,9 +239,35 @@ function explainBindFailure(raw: string, host: string, port: number): string {
  * status the card can display instead of an exception that takes plugin startup
  * down with it.
  */
+/**
+ * 一次成功转发的记账。
+ *
+ * 网关页顶部的四格（今日请求 / 平均延迟 / 输入 / 输出）都从这里来。
+ * 只记成功的转发：失败的请求在下面各自 return 掉了，它们不是「网关在服务」的证据。
+ */
+export interface RelayStats {
+  /** 今日已转发的请求数，进程启动时归零。 */
+  requests: number
+  /** 其中失败的次数。 */
+  failed: number
+  /** 平均延迟（毫秒）；没有样本时 undefined。 */
+  avgLatencyMs: number | undefined
+  /** 上游回报的输入 token 总量（请求体里读到的）。 */
+  inputTokens: number
+  /** 上游回报的输出 token 总量。 */
+  outputTokens: number
+}
+
 export function createPoolRelay(options: PoolRelayOptions): PoolRelay {
   const { shim, logger } = options
   let server: Server | undefined
+  /* 记账。整个进程一份，页面轮询时读它。 */
+  let requests = 0
+  let failed = 0
+  let latencyTotal = 0
+  let latencySamples = 0
+  let inputTokens = 0
+  let outputTokens = 0
   let listening = false
   let boundHost = ''
   let boundPort = 0
@@ -321,6 +354,7 @@ export function createPoolRelay(options: PoolRelayOptions): PoolRelay {
       writeJson(res, 404, 'relay_no_route', `${path} is not a path this relay forwards`)
       return
     }
+    const startedAt = Date.now()
     const target = new URL(`${shim.baseUrl()}${path}`)
     const send = target.protocol === 'https:' ? httpsRequest : httpRequest
     const upstream = send(
@@ -333,6 +367,27 @@ export function createPoolRelay(options: PoolRelayOptions): PoolRelay {
         headers: upstreamHeaders(req, shim.token()),
       },
       answer => {
+        /*
+          记账：这一条转发成功了。
+
+          延迟算「上游第一个字节到达」而不是「整个响应结束」—— 读者关心的是
+          「网关慢不慢」，而流式响应会跑几十秒，把那些算进去会让数字失去意义。
+        */
+        latencyTotal += Date.now() - startedAt
+        latencySamples += 1
+        if ((answer.statusCode ?? 200) >= 400) failed += 1
+        requests += 1
+        // 上游会在响应头里带 usage（非流式），有就读一下。
+        const usageHeader = answer.headers['x-xdpool-usage']
+        if (typeof usageHeader === 'string') {
+          try {
+            const usage = JSON.parse(usageHeader) as { input?: unknown; output?: unknown }
+            if (typeof usage.input === 'number') inputTokens += usage.input
+            if (typeof usage.output === 'number') outputTokens += usage.output
+          } catch {
+            // 头部格式不认就不记，数字少一点好过记错。
+          }
+        }
         res.writeHead(answer.statusCode ?? 502, answer.headers)
         answer.pipe(res)
       },
@@ -388,6 +443,14 @@ export function createPoolRelay(options: PoolRelayOptions): PoolRelay {
       endpoint: listening ? `http://${boundHost}:${boundPort}/v1` : '',
       key: settings.key,
       error: bindError,
+      stats: {
+        requests,
+        failed,
+        /* 没有样本时给 undefined，卡片印「—」而不是 0 —— 0ms 是个会误导人的平均值。 */
+        avgLatencyMs: latencySamples === 0 ? undefined : Math.round(latencyTotal / latencySamples),
+        inputTokens,
+        outputTokens,
+      },
     }
   }
   const ready = sync().then(() => undefined)

@@ -33,6 +33,7 @@
  * @module dsh-xdpool/doubao-auth
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { chromiumCandidates, defaultBrowser } from './default-browser.ts'
 import { existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -65,45 +66,18 @@ const DEBUG_PORT = 9333
  * The per-user entries matter most: a machine-wide install needs administrator rights, so the
  * browser a normal user actually has is often under `%LOCALAPPDATA%`.
  */
-const MACHINE_BROWSERS: readonly string[] = [
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
-  'C:\\Program Files\\Vivaldi\\Application\\vivaldi.exe',
-]
-
-/** Per-user install locations, which the machine-wide list above cannot know about. */
-const PER_USER_BROWSERS: readonly string[] = [
-  'Google\\Chrome\\Application\\chrome.exe',
-  'Microsoft\\Edge\\Application\\msedge.exe',
-  'BraveSoftware\\Brave-Browser\\Application\\brave.exe',
-  'Vivaldi\\Application\\vivaldi.exe',
-]
-
 /**
- * The first driveable browser, or undefined.
+ * The browser to drive: the user's own default first, then the shared candidate list.
  *
- * Machine-wide installs are tried first because that is the common case on a work machine;
- * per-user installs are the fallback, and they are what a user without administrator rights
- * will have.
+ * Both lists used to be local to this file, which meant a browser added for the Marvis channel
+ * was invisible here. See default-browser.ts.
  */
 function findBrowser(): string | undefined {
-  for (const candidate of MACHINE_BROWSERS) {
-    if (existsSync(candidate)) return candidate
-  }
-  const local = process.env['LOCALAPPDATA']
-  if (local !== undefined) {
-    for (const relative of PER_USER_BROWSERS) {
-      const path = join(local, relative)
-      if (existsSync(path)) return path
-    }
-  }
-  return undefined
+  const preferred = defaultBrowser()
+  if (preferred !== undefined) return preferred.path
+  return chromiumCandidates()[0]?.path
 }
 
-/** A session: the cookie pairs and the User-Agent they were taken under. */
 export interface DoubaoSession {
   /** `name → value`, ready to be joined into a Cookie header. */
   cookies: Record<string, string>

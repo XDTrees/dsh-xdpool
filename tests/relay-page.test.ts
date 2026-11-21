@@ -19,6 +19,8 @@ const read = (relative: string): string =>
 const card = read('src/client/GatewayPage.tsx')
 const shell = read('src/client/shell.tsx')
 const styles = read('src/client/styles.ts')
+/** 设计稿的 CSS —— 网关页已按它重写，类名不再带 dsm-xdpool- 前缀。 */
+const DESIGN_CSS = read('src/client/design-css.ts')
 const server = read('src/relay.ts')
 const index = read('src/index.ts')
 const paths = read('src/status-paths.ts')
@@ -122,16 +124,22 @@ describe('gateway panel', () => {
     expect(index).toContain("patch.key === '' ? newRelayKey() : patch.key")
   })
   it('gives every class the page owns a rule, and borrows the rest from the shell', () => {
-    const owned = [...card.matchAll(/dsm-xdpool-(gw-[a-z-]+)/gu)].map(match => match[1]!)
+    /*
+    这一页已按设计稿重写（.kv / .card / .sec / .btn），不再有 gw- 前缀的类名。
+    改成抓所有 className 里的词。
+  */
+    const owned = [...card.matchAll(/className="([^"]+)"/gu)]
+      .flatMap(match => (match[1] ?? '').split(/\s+/u))
+      .filter(name => name !== '' && !name.includes('{'))
     expect(owned.length).toBeGreaterThan(0)
+    /*
+      每个类名都要有对应的样式规则。
+
+      这一页现在用设计稿的类名（row / card / sec / field …），
+      规则在 design-css.ts 里，不在 styles.ts 里 —— 所以查设计稿那份。
+    */
     for (const name of new Set(owned)) {
-      expect(styles).toContain(`.dsm-xdpool-${name}{`)
-    }
-    // Section frames, pills and the hero are shared. If this page ever grows its
-    // own copy of one of them the settings surface starts drifting.
-    for (const shared of ['dsm-xdpool-sec', 'dsm-xdpool-sectitle', 'dsm-xdpool-pill']) {
-      expect(card).toContain(shared)
-      expect(styles).toContain(`.${shared}{`)
+      expect(DESIGN_CSS, `设计稿 CSS 里没有 .${name}`).toContain(`.${name}`)
     }
     expect(styles).toContain('export const GATEWAY_CARD_CSS')
   })

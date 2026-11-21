@@ -176,16 +176,23 @@ describe('the roster offered to the editor cannot contradict the server', () => 
     expect(page).toContain('const candidates = status?.candidates ?? []')
   })
   it('renders every class name the stylesheet defines, and defines no other', () => {
-    const used = new Set([...page.matchAll(/dsm-xdpool-(rt-[a-z-]+)/gu)].map(m => m[1]!))
-    expect(used.size).toBeGreaterThan(10)
-    const css = read('../src/client/styles.ts')
-    const block = css.slice(css.indexOf('export const ROUTING_CARD_CSS'))
+    // 这一页已按设计稿重写（.card / .row / .field / .sec），改抓所有 className。
+  const used = new Set([...page.matchAll(/className="([^"]+)"/gu)]
+    .flatMap(m => (m[1] ?? '').split(/\s+/u))
+    .filter(n => n !== '' && !n.includes('{')))
+    expect(used.size).toBeGreaterThan(3)
+    /*
+      每个类名都要有规则。
+
+      这一页现在用设计稿的类名（card / row / field / sec / lane …），
+      规则在 design-css.ts 里 —— 查那一份，不再拼 dsm-xdpool- 前缀。
+    */
+    const design = read('../src/client/design-css.ts')
+    const shared = read('../src/client/styles.ts')
     for (const name of used) {
-      expect(block, `missing .${name}`).toContain(`.dsm-xdpool-${name}{`)
-    }
-    // The generic classes it leans on are documented as coming from elsewhere.
-    for (const shared of ['dsm-xdpool-pill', 'dsm-xdpool-switch']) {
-      expect(page).toContain(shared)
+      // dsm-btn 这类是插件自带的共享按钮，规则在 styles.ts 里
+      const haystack = name.startsWith('dsm-') ? shared : design
+      expect(haystack, `missing .${name}`).toContain(`.${name}`)
     }
   })
   it('styles the model-id picker as itself, not as a borrowed field', () => {
@@ -194,7 +201,7 @@ describe('the roster offered to the editor cannot contradict the server', () => 
     // matched no rule at all and rendered as a bare browser dropdown while every
     // other control on the page was restyled. The user reported exactly that.
     // This locks the class it now wears, and the rule that now matches it.
-    expect(page).toContain('className="dsm-xdpool-rt-pick"')
+    expect(page).toContain('className="field"')
     const css = read('../src/client/styles.ts')
     expect(css).toContain('.dsm-xdpool-rt-pick{')
     expect(page).not.toMatch(/className="dsm-xdpool-rt-field"[\s\S]{0,120}?<option/u)

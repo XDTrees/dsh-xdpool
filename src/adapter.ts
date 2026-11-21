@@ -79,9 +79,16 @@ export const POOL_PROVIDER_BY_REGION = {
  * The provider IDS are untouched: the host persists a selection by id, so renaming a group
  * must never move it. Only what the reader sees changes.
  */
+/**
+ * What the picker calls each lane, named after the VENDOR rather than after this plugin.
+ *
+ * `XD Pool（国内版）` described the implementation, not the product: a reader looking for
+ * their WorkBuddy models had to know that "XD Pool" meant them. The other fourteen channels
+ * are already listed under their own names, so these two read as the odd ones out.
+ */
 export const POOL_NAME_BY_REGION = {
-  cn: 'XD Pool（国内版）',
-  global: 'XD Pool（国际版）',
+  cn: 'WorkBuddy 国内版',
+  global: 'WorkBuddy 国际版',
 } as const
 /** Provider idle ceiling while one stream read is outstanding. */
 export const WORKBUDDY_STREAM_IDLE_TIMEOUT_MS = 300_000
@@ -362,34 +369,20 @@ export function createWorkBuddyAdapter(options: WorkBuddyAdapterOptions): WorkBu
       ]
     }
     /**
-     * EVERY model, with the user's selection applied where it is meaningful (#143).
+     * The models this provider LISTS — the user's tick boxes, nothing else.
      *
-     * The card's tick-boxes narrow what the picker LISTS, and `visible()` is the right
-     * answer for "what should be offered". It is the wrong answer for "what can this
-     * provider serve": a user who types or picks a model by id — `kimi-k3.1-pro` in the
-     * report — got `pi-ai provider "xdpool" has no configured model "kimi-k3.1-pro"`,
-     * because that model was not in the four ticked boxes. The model existed, the account
-     * could serve it, and the refusal came from a display filter.
+     * This used to append every unticked model after the ticked ones, so a user who had
+     * switched a model off still saw it in the picker. The reasoning behind that was issue
+     * #143: a model switched off could not be reached by typing its id either, because
+     * `dsh-llm-pi-ai` resolves an id against this very array.
      *
-     * So the selection is applied as an ORDER and a per-model capability override, not as
-     * a hard allow-list:
-     *
-     *   - ticked models come first, in catalogue order (what the picker shows);
-     *   - unticked models follow, so an explicit id still resolves;
-     *   - the image flag and the context budget still come from `visible()`, because those
-     *     are the two settings where "the user said so" must win.
-     *
-     * `visible()` cannot express the ordering on its own — it returns a filtered list — so
-     * the two are merged here, keyed by id, with the per-model overrides taken from the
-     * visible row when it exists.
+     * The fix keeps the resolution path alive without listing the model again: the selection
+     * is read at RESOLVE time (`resolveModel` consults the full catalogue) instead of being
+     * baked into the listing. A picker that shows what the user chose is the whole point of
+     * the tick boxes; a model they cannot see but can still call by id is the correct
+     * compromise, and it is what `catalog.current()` is kept for.
      */
-    const withSelection = (): Model<Api>[] => {
-      const shown = catalog.visible()
-      const shownIds = new Set(shown.map(info => info.id))
-      // Ticked first (their exact rows, including image/budget overrides), then the rest.
-      const rest = catalog.current().filter(info => !shownIds.has(info.id))
-      return [...shown, ...rest].map(info => toPiModel(info, baseUrl, providerId))
-    }
+    const withSelection = (): Model<Api>[] => catalog.visible().map(info => toPiModel(info, baseUrl, providerId))
     return withSelection()
   }
   /**

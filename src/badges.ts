@@ -131,9 +131,17 @@ export function shouldSpellOutFree(model: { multiplier?: number; tags?: readonly
  * is why this returns a presentation rather than a boolean.
  */
 export function freeBadgeKind(
-  model: { multiplier?: number; tags?: readonly string[] },
+  model: { id?: string; multiplier?: number; tags?: readonly string[] },
 ): 'badge' | 'generic' | undefined {
   if (hasFreeBadge(model.tags)) return 'badge'
   if (model.multiplier === 0 || (model.tags ?? []).includes('free')) return 'generic'
+  /**
+   * An id ending in `-free` is the vendor's own way of saying so.
+   *
+   * `hy4flash-free` carries no `free` tag and no zero multiplier in the static table — the free
+   * fact lives in the ID. Without this the row that shares its name with a paid twin had no badge
+   * at all, so the免费 twin and the paid one looked identical.
+   */
+  if (typeof model.id === 'string' && /-free$/u.test(model.id)) return 'generic'
   return undefined
 }

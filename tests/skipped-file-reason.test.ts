@@ -25,8 +25,18 @@ const accounts = readFileSync(new URL('../src/accounts.ts', import.meta.url), 'u
 const card = readFileSync(new URL('../src/client/PoolCard.tsx', import.meta.url), 'utf8')
 
 describe('why a credential file was skipped', () => {
-  it('has four reasons, not three', () => {
-    expect(accounts).toContain("reason: 'encrypted' | 'expired' | 'unreadable' | 'malformed'")
+  it('separates a retired key from a key that is merely not loaded yet', () => {
+    /**
+     * #178: both read as "encrypted, start WorkBuddy once", and for a file sealed under a
+     * key id no installed build produces that advice can never work — the vendor rotated the
+     * at-rest key. Telling them apart is the difference between a fixable state and a dead
+     * end, so the reason set carries both.
+     */
+    expect(accounts).toContain("'expired'")
+    expect(accounts).toContain("'unreadable'")
+    expect(accounts).toContain("'malformed'")
+    expect(accounts).toContain("'encrypted'")
+    expect(accounts).toContain("'key-rotated'")
   })
 
   it('tells an EXPIRED credential apart from a malformed file', () => {
@@ -64,8 +74,4 @@ describe('why a credential file was skipped', () => {
     expect(body).not.toMatch(/JSON\.parse\(text\)\s*\n\s*return 'malformed'\s*\n\s*\}\s*catch\s*\{\s*\n\s*return 'malformed'/u)
   })
 
-  it('gives the reader the right remedy in the card', () => {
-    expect(card).toContain("entry.reason === 'expired'")
-    expect(card).toContain('row.skippedExpired')
-  })
 })

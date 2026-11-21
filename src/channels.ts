@@ -1,8 +1,10 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { ROUTE_OWNED_ELSEWHERE } from './status-paths.ts'
 import { REGISTERED_CHANNELS as ROSTER } from './channel-roster.ts'
+import { publishChannelUsage } from './channel-usage.ts'
 /**
  * Mount the vendored free-channel pack.
  *
@@ -169,6 +171,28 @@ export interface ChannelDescriptor {
  * the browser: importing them from here — a module that reads the filesystem to find the pack —
  * put `node:fs` in the client bundle, which does not load at all.
  */
+/**
+ * Whether this plugin's own account pool has anything in it.
+ *
+ * Read from the store rather than from a service, because this runs while the pack is being
+ * mounted — before the rest of the plugin graph is necessarily up — and the answer decides
+ * whether the pack's `buddy` / `workbuddy` lanes list themselves. An empty pool means they must:
+ * they are then the only lanes that can serve anything.
+ */
+function poolHoldsAccounts(): boolean {
+  try {
+    const store = join(process.env['DSH_HOME'] ?? join(homedir(), '.dsh'), '.xdpool', 'accounts.json')
+    if (!existsSync(store)) return false
+    const parsed = JSON.parse(readFileSync(store, 'utf8')) as unknown
+    const rows = Array.isArray(parsed)
+      ? parsed
+      : (parsed as { accounts?: unknown } | null)?.accounts
+    return Array.isArray(rows) && rows.length > 0
+  } catch {
+    return false
+  }
+}
+
 export const REGISTERED_CHANNELS: readonly ChannelDescriptor[] = ROSTER as readonly ChannelDescriptor[]
 /**
  * The two channels this plugin already serves from its own account pool.
@@ -261,6 +285,32 @@ export function mountChannelPack(ctx: unknown, logger?: ChannelPackLogger): Moun
       // would otherwise register an OpenCode account lane with no way to reach
       // it, and its `account.create` for that provider would fail at the point
       // where a user is waiting on a login.
+      /**
+       * Tell the pack which lanes this plugin serves (2.7.7).
+       *
+       * Both register adapters for the same two account pools: this plugin under `xdpool` /
+       * `xdpool-global` (its own pool, which is where a desktop-discovered account lives) and
+       * the pack under `buddy` / `workbuddy` (its own pool, empty in that case). Listing both is
+       * what produced four picker groups; dropping this plugin's two is what made those
+       * accounts' models disappear entirely.
+       *
+       * So the plugin keeps its registrations and the pack's lanes stand aside — decided HERE,
+       * at mount, because only this side knows whether it holds accounts.
+       *
+       * The decision is read from the pool rather than assumed: a machine where nobody signed
+       * into either lane must still get the pack's own listing, since that is the only one that
+       * can work there.
+       */
+      if (poolHoldsAccounts()) process.env['DSH_XDPOOL_OWNS_POOL_LANES'] = 'buddy,workbuddy'
+      else delete process.env['DSH_XDPOOL_OWNS_POOL_LANES']
+      /**
+       * The per-channel usage strategies, handed to the pack.
+       *
+       * The channel page's 「账号使用方式」 writes these; the pack's `getAvailableAccount` reads
+       * them when it picks an account. Passing them through the environment is what lets the
+       * pane work on the accounts the pack holds — which, for a scan login, is all of them.
+       */
+      publishChannelUsage()
       pack.apply(ctx, { disableOpencode: true })
       state = { state: 'ready', providers: REGISTERED_CHANNELS.length }
       logger?.info?.(`[xdpool] free-channel pack mounted (${REGISTERED_CHANNELS.length} login channels)`)

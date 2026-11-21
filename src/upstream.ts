@@ -1782,10 +1782,27 @@ export class WorkBuddyUpstreamClient {
       const parsed = parseUpstreamModel(model)
       if (parsed !== undefined) byId.set(parsed.id, parsed)
     }
-    const ids = cliIds !== undefined && cliIds.length > 0 ? cliIds : [...byId.keys()]
-    const models = ids
-      .map(id => byId.get(id))
-      .filter((model): model is WorkBuddyUpstreamModel => model !== undefined)
+    /**
+     * Every modelled entry, not just the CLI agent's whitelist.
+     *
+     * The payload carries 13 agents and one of them — `cli` — lists the 16 models IT offers.
+     * Applying that as a filter was inherited from a client that only ever served that agent,
+     * and it hid half the catalogue: models an account can call (`hunyuan-chat`, `glm-5.0`,
+     * `deepseek-v3-2-volc`, the `fast/balanced/deep` aliases) never reached the picker, which
+     * read as "the refresh found nothing new".
+     *
+     * The whitelist is still consulted, but only to ORDER: a model the CLI agent offers is one
+     * the vendor considers first-class, so it stays at the front. Nothing is dropped for being
+     * absent from it.
+     */
+    const whitelisted = new Set(cliIds ?? [])
+    const all = [...byId.values()]
+    const models = all.length === 0
+      ? []
+      : [
+        ...all.filter(model => whitelisted.has(model.id)),
+        ...all.filter(model => !whitelisted.has(model.id)),
+      ]
     if (models.length === 0) throw new Error('workbuddy model catalog resolved to an empty list')
     return models
   }

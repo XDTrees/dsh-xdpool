@@ -22,6 +22,7 @@ import {
   isEncryptedFieldWrapper,
   openEncryptedField,
   readAtRestKey,
+  readAtRestKeyById,
   atRestKeyFor,
 } from './at-rest.ts'
 
@@ -91,7 +92,16 @@ export const WORKBUDDY_AUTH_FILE_ENV = 'WORKBUDDY_AUTH_FILE'
  */
 export interface WorkBuddySkippedFile {
   path: string
-  reason: 'encrypted' | 'expired' | 'unreadable' | 'malformed'
+  /**
+   * `key-rotated` is separated from `encrypted` on purpose (#178).
+   *
+   * Both mean "this file is sealed and we cannot open it", but the FIX differs: an
+   * `encrypted` file opens once the desktop app has run and handed over its key, while a
+   * file sealed under a keyId no installed build produces will NEVER open that way — the
+   * vendor rotated the at-rest key and the old envelope is orphaned. Reporting both as
+   * 「启动一次 WorkBuddy」 sent the user to do something that could not work.
+   */
+  reason: 'encrypted' | 'key-rotated' | 'expired' | 'unreadable' | 'malformed'
 }
 
 export interface WorkBuddyCredential {
@@ -606,7 +616,21 @@ async function skipReasonFor(path: string): Promise<WorkBuddySkippedFile['reason
   } catch {
     return 'unreadable'
   }
-  if (text.includes('"$wbEncrypted"')) return 'encrypted'
+  if (text.includes('"$wbEncrypted"')) {
+    /**
+     * Distinguish "the key is not loaded yet" from "the key no longer exists".
+     *
+     * The envelope records the keyId it was sealed under; asking for that id answers
+     * whether an installed build can ever produce it. When it cannot, the desktop app is
+     * not the problem and starting it is wasted effort.
+     */
+    const sealedUnder = /"keyId"\s*:\s*"([0-9a-f]{16})"/u.exec(text)?.[1]
+    if (sealedUnder !== undefined) {
+      const key = await readAtRestKeyById(sealedUnder)
+      if (key === undefined) return 'key-rotated'
+    }
+    return 'encrypted'
+  }
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -844,6 +868,14 @@ function isCredentialDeadError(error: unknown): boolean {
 export class WorkBuddyAccountPool {
   private readonly logger: AccountPoolOptions['logger']
   private authDirs: readonly string[]
+  /**
+   * The directories the CALLER named, or undefined when the plugin guessed them.
+   *
+   * Only an explicit list is scanned now: the default pointed at the desktop app's credential
+   * store, which no account arrives from any more. Keeping the distinction means the import
+   * path and the tests can still point the pool at a directory.
+   */
+  private readonly explicitAuthDirs: readonly string[] | undefined
   private cooldownMs: number
   /**
    * How long an account stays out of rotation after the upstream reports its
@@ -1031,6 +1063,8 @@ export class WorkBuddyAccountPool {
   constructor(options: AccountPoolOptions = {}) {
     this.logger = options.logger
     this.authDirs = options.authDirs ?? candidateAuthDirs()
+    /** Whether the caller named the directories, rather than the plugin guessing them. */
+    this.explicitAuthDirs = options.authDirs
     this.cooldownMs = options.cooldownMs ?? 60_000
     this.exhaustCooldownMs = options.exhaustCooldownMs ?? EXHAUST_COOLDOWN_MS
     this.credentialDeadCooldownMs = options.credentialDeadCooldownMs ?? CREDENTIAL_DEAD_COOLDOWN_MS
@@ -1181,9 +1215,33 @@ export class WorkBuddyAccountPool {
     // `<md5prefix>.json` snapshots there, and every credential in it is an
     // account the user deliberately parked. Without this the snapshots were
     // written and never read back.
-    const scanDirs: readonly string[] = this.persistent
-      ? [...this.authDirs, snapshotDirPath()]
-      : this.authDirs
+    /**
+     * Only the plugin's own snapshot directory is scanned (2.7.7).
+     *
+     * `authDirs` pointed at the desktop app's credential store, which is how this plugin started:
+     * every account came from a file the WorkBuddy client had written. That is no longer how any
+     * account arrives — a scan login writes `channel-pack:buddy:BUDDY_ACCOUNT_*`, and the pack
+     * serves it — so reading the desktop store only produced DUPLICATE entries for accounts the
+     * user had already signed into, with a second credential to keep fresh.
+     *
+     * The snapshots directory stays: `import` writes deliberate copies there, and every file in
+     * it is an account the user parked on purpose.
+     *
+     * The UI is untouched: the pool still lists, names, measures and switches whatever accounts
+     * exist; only the ONE source that nothing uses any more is gone.
+     */
+    /**
+     * Scan the plugin's snapshots, plus any directory the caller EXPLICITLY supplied.
+     *
+     * `authDirs` is no longer discovered by default (see above), but the option is kept: it is
+     * how a caller points the pool at a directory of its own — the import path does, and so do
+     * the tests that prove one unreadable file cannot empty the pool. Removing the parameter
+     * would remove the only way to exercise that.
+     */
+    const explicit = this.explicitAuthDirs
+    const scanDirs: readonly string[] = explicit === undefined
+      ? [snapshotDirPath()]
+      : [snapshotDirPath(), ...explicit]
     for (const dir of scanDirs) {
       const files = dir === snapshotDirPath()
         ? await snapshotFilesIn(dir)

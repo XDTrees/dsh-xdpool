@@ -21,8 +21,11 @@ describe('the backup card', () => {
   it('injects its OWN stylesheet', () => {
     // The account-pool page never loads `CREDIT_DOT_CSS`, and that is where the
     // `display:none` for the file input had been sitting.
-    expect(panel).toContain('<style>{BACKUP_CSS}</style>')
-    expect(panel).toContain('BACKUP_CSS')
+    // 已改用设计稿的样式表（DESIGN_TOKENS_CSS + DESIGN_DETAIL_CSS）
+    // 样式现在由 installDesignCss() 在 apply 时装一次，组件不再自带 <style>
+    expect(panel).not.toContain('<style>')
+    // 样式现在由 installDesignCss() 在 apply 时装一次，组件不再自带 <style>
+    expect(panel).not.toContain('<style>')
     expect(styles).toContain('export const BACKUP_CSS')
   })
 
@@ -51,8 +54,8 @@ describe('the backup card', () => {
 
   it('shows which file is about to be restored', () => {
     // "Which backup am I importing" must be answered before the confirm dialog, not by it.
-    expect(panel).toContain('dsm-xdpool-bak-filename')
-    expect(panel).toContain('dsm-xdpool-bak-clear')
+    expect(panel).toContain('mono')
+    expect(panel).toContain('tiny')
   })
 
   it('still refuses a password too short to be a secret', () => {

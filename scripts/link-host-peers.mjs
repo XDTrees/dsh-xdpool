@@ -197,7 +197,7 @@ const HARNESS_BASES = [
    * Not a guess about this particular machine: it is derived from where the PROFILE lives.
    * A DSH profile sits at `<harness data dir>/profiles/<name>`, and on Windows the data
    * directory is often the harness's own folder — which is exactly the layout this repo
-   * was developed against (`D:\dsh-home\profiles\desktop` beside `D:\DeepSeek Harness`).
+   * was developed against (`<data>\profiles\desktop` beside `<install>`).
    * When they are siblings, the harness is one segment up with a different name, so the
    * sibling of the data dir is tried as a harness root too.
    *
@@ -209,14 +209,14 @@ const HARNESS_BASES = [
 /**
  * Harness roots that can be derived from where this profile lives.
  *
- * `D:\dsh-home\profiles\desktop\node_modules\dsh-xdpool` → walk up to the data directory,
+ * `<data>\profiles\desktop\node_modules\dsh-xdpool` → walk up to the data directory,
  * then try every plausible sibling. Cheap, and it is the only way to find a harness on a
  * non-default drive without asking the user to set an environment variable.
  *
  * Several levels are tried because the two layouts in the wild differ:
  *
  *   - `<dataDir>/profiles/<name>` — the data dir's PARENT holds the harness
- *     (`D:\dsh-home` beside `D:\DeepSeek Harness`)
+ *     (`<data>` beside `<install>`)
  *   - the harness IS the data dir's parent — some installs put profiles inside the app
  *
  * A miss costs nothing, which is why deriving beats hard-coding a drive letter.

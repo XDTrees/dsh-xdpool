@@ -99,8 +99,8 @@ describe('loading and failing are stated, not rendered as air', () => {
     expect(section).toContain("t?.('channelpool.loading')")
     expect(section).toMatch(/if \(!loading\) return <><\/>/u)
     expect(locales).toContain("'channelpool.loading'")
-    expect(locales).toMatch(/'channelpool\.loading': '正在读取扫码渠道…'/u)
-    expect(locales).toMatch(/'channelpool\.loading': 'Reading scan channels…'/u)
+    expect(locales).toMatch(/'channelpool\.loading': '正在读取渠道…'/u)
+    expect(locales).toMatch(/'channelpool\.loading': 'Reading channels…'/u)
   })
 
   it('reports a refused provider.status instead of an empty page', () => {

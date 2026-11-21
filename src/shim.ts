@@ -30,6 +30,7 @@ import {
   resolveComboMember,
   type ComboMember,
   type ComboModelRow,
+  type HostModelRow,
 } from './combos.ts'
 import type { AggregateStore } from './store.ts'
 import { paidAlternativeFor } from './siblings.ts'
@@ -199,6 +200,18 @@ export interface WorkBuddyShimOptions {
    * threading an argument nobody reads.
    */
   usageRecorder?: UsageRecorder
+  /**
+   * The scan-login channel rows, for chain members that name one — issue #177.
+   *
+   * A chain may mix pool models, aggregate models and channel models. Without this the channel
+   * half resolved to undefined and was silently dropped, so a chain of only channel members
+   * reached the executor with zero members and answered `combo_missing` — while the routing page
+   * showed the same chain as valid.
+   *
+   * Injected rather than imported: the lane is async and owns its own 60s cache, and this shim
+   * must not build one.
+   */
+  hostRows?: () => Promise<readonly HostModelRow[]>
   /**
    * The second lane: providers the user holds a key for.
    *
@@ -1085,6 +1098,11 @@ function withBareModelId(raw: string, modelId: string): string {
     const sources = {
       pool: catalog.current(),
       aggregate: aggregate === undefined ? [] : aggregate.catalog.providerRows(),
+      /**
+       * Resolved per call, not cached here: the lane already caches its rows for 60 seconds,
+       * and a second cache would make a just-signed-in channel invisible for a minute.
+       */
+      host: await (options.hostRows?.() ?? Promise.resolve([])),
     }
     const members = comboChain(row)
       .map(modelId => resolveComboMember(modelId, sources))

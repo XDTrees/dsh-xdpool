@@ -51,6 +51,16 @@ export interface UpdateStatus {
   error?: string
   /** When this answer was produced. */
   checkedAt: string
+  /**
+   * The release notes for `latest`, as a short list of headings.
+   *
+   * The registry publishes the package README, not a changelog. Rather than render 12KB of
+   * install instructions inside a settings dialog, the check extracts only the section that
+   * lists what changed — see `extractNotes`.
+   */
+  notes?: readonly string[]
+  /** The heading those notes were found under, so the panel can say where they came from. */
+  notesTitle?: string
 }
 
 let cached: { at: number; status: UpdateStatus } | undefined
@@ -85,13 +95,17 @@ export function compareVersions(left: string, right: string): number {
   return a.pre === b.pre ? 0 : (a.pre < b.pre ? -1 : 1)
 }
 
-/** Read `dist-tags.latest` and its publish time from a registry document. */
-function parseRegistry(body: unknown): { latest?: string; publishedAt?: string } {
+/** Read `dist-tags.latest`, its publish time and the README from a registry document. */
+function parseRegistry(body: unknown): { latest?: string; publishedAt?: string; readme?: string } {
   if (body === null || typeof body !== 'object') return {}
   const record = body as Record<string, unknown>
   // `/latest` answers the version document; the full document nests it under dist-tags.
+  const readmeRaw = record['readme']
+  const readme = typeof readmeRaw === 'string' ? readmeRaw : undefined
   const direct = record['version']
-  if (typeof direct === 'string' && direct !== '') return { latest: direct }
+  if (typeof direct === 'string' && direct !== '') {
+    return { latest: direct, ...(readme === undefined ? {} : { readme }) }
+  }
   const tags = record['dist-tags']
   if (tags !== null && typeof tags === 'object') {
     const latest = (tags as Record<string, unknown>)['latest']
@@ -100,7 +114,11 @@ function parseRegistry(body: unknown): { latest?: string; publishedAt?: string }
       const when = times !== null && typeof times === 'object'
         ? (times as Record<string, unknown>)[latest]
         : undefined
-      return { latest, ...(typeof when === 'string' ? { publishedAt: when } : {}) }
+      return {
+        latest,
+        ...(typeof when === 'string' ? { publishedAt: when } : {}),
+        ...(readme === undefined ? {} : { readme }),
+      }
     }
   }
   return {}
@@ -127,11 +145,14 @@ export async function checkForUpdate(options: { force?: boolean; now?: number } 
       if (!response.ok) continue
       const parsed = parseRegistry(await response.json())
       if (parsed.latest === undefined) continue
+      const extracted = extractNotes(parsed.readme)
       const status: UpdateStatus = {
         current: POOL_VERSION,
         latest: parsed.latest,
         newer: compareVersions(parsed.latest, POOL_VERSION) > 0,
         ...(parsed.publishedAt === undefined ? {} : { publishedAt: parsed.publishedAt }),
+        ...(extracted.title === undefined ? {} : { notesTitle: extracted.title }),
+        ...(extracted.notes === undefined ? {} : { notes: extracted.notes }),
         checkedAt,
       }
       cached = { at: now, status }
@@ -150,6 +171,48 @@ export async function checkForUpdate(options: { force?: boolean; now?: number } 
   // pin "could not check" for ten minutes.
   cached = { at: now - TTL_MS + 60_000, status }
   return status
+}
+
+
+/**
+ * Pull the "what changed" section out of a README.
+ *
+ * The registry only publishes the README, so the release notes live in a section of it. The
+ * search is by heading text rather than by position: the section moves every release, and a
+ * fixed slice would drift onto the install instructions the first time it did.
+ *
+ * Returns the bullet lines under the first matching heading, stopping at the next heading of
+ * the same or higher level. Bullets only, because prose paragraphs in a settings dialog read
+ * as marketing and the reader came here for a list.
+ */
+export function extractNotes(readme: string | undefined): { title?: string; notes?: readonly string[] } {
+  if (readme === undefined || readme === '') return {}
+  const HEADINGS = /更新公告|更新内容|更新日[志志]|变更记录|更新记录|what'?s\s+new|changelog|release\s+notes/iu
+  const lines = readme.split(/\r?\n/u)
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? ''
+    const heading = /^(#{1,6})\s+(.*)$/u.exec(line)
+    if (heading === null) continue
+    if (!HEADINGS.test(heading[2] ?? '')) continue
+    const level = (heading[1] ?? '#').length
+    const title = (heading[2] ?? '').trim()
+    const notes: string[] = []
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const next = lines[j] ?? ''
+      const nextHeading = /^(#{1,6})\s+/u.exec(next)
+      // A heading at the same or a higher level ends the section.
+      if (nextHeading !== null && (nextHeading[1] ?? '#').length <= level) break
+      // Bullets and numbered items only; blank lines and prose are skipped rather than kept.
+      const bullet = /^\s*(?:[-*+]|\d+\.)\s+(.+)$/u.exec(next)
+      if (bullet !== null) {
+        const text = (bullet[1] ?? '').replace(/\*\*/gu, '').replace(/`/gu, '').trim()
+        if (text !== '' && text.length <= 160) notes.push(text)
+      }
+      if (notes.length >= 12) break
+    }
+    if (notes.length > 0) return { title, notes }
+  }
+  return {}
 }
 
 /** Drop the cache, for a test. */

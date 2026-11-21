@@ -46,6 +46,7 @@ import {
   buildComboCatalog,
   pruneRotation,
   type ComboModelRow,
+  type HostModelRow,
 } from './combos.ts'
 import type { WorkBuddyCatalog, WorkBuddyModelInfo } from './catalog.ts'
 /** Registry `format` → the wire vocabulary this module speaks. */
@@ -427,6 +428,20 @@ export class AggregateCatalog {
   constructor(
     private readonly read: () => AggregateStore | Promise<AggregateStore>,
     private readonly poolRows: () => readonly WorkBuddyModelInfo[] = () => [],
+    /**
+     * The scan-login channel rows, when the caller has them — issue #177.
+     *
+     * A chain member may name a channel model (`trae:deepseek-v4.1-flash`), and resolving one
+     * needs this list. Without it `resolveComboMember` answered undefined for every channel
+     * member, so a chain made entirely of them resolved to zero members and was skipped
+     * outright: it never reached the picker, and the gateway answered `combo_missing` for a
+     * chain the routing page showed as valid.
+     *
+     * Injected rather than fetched because the lane is async and this constructor is not; a
+     * caller that has no channel lane passes nothing and gets the old behaviour.
+     */
+    private readonly hostRows: () => Promise<readonly HostModelRow[]> =
+      async () => [],
   ) {}
   /**
    * Every row this catalog offers: third-party rows first, then chain rows.
@@ -452,6 +467,8 @@ export class AggregateCatalog {
     const chains = buildComboCatalog(combosOf(store), {
       pool: this.poolRows(),
       aggregate: next,
+      // The channel half of a chain, without which a chain of channel members vanishes (#177).
+      host: await this.hostRows(),
     })
     pruneRotation(combosOf(store))
     const same = next.length === this.rows.length

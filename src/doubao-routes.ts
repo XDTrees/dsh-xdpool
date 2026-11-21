@@ -30,6 +30,7 @@ import {
   POOL_DOUBAO_SESSION_PATH,
 } from './status-paths.ts'
 import { claimTasks, fetchCampaign } from './doubao-campaign.ts'
+import { accountIdOf, readStoredAccounts } from './doubao-store.ts'
 import { fetchAccountName } from './doubao-upstream.ts'
 import { fetchLiveModels } from './doubao-catalog-live.ts'
 import { browserLogin, readExistingSession, sessionUsable, type DoubaoSession } from './doubao-auth.ts'
@@ -118,23 +119,55 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
             setDoubaoSession(live)
             return json(res, 200, { ok: true, signedIn: true, savedAt: live.savedAt })
           }
-          const stored = deps.session()
-          if (!sessionUsable(stored)) {
-            return json(res, 200, { ok: true, signedIn: false })
-          }
           /**
-           * The name travels with the session answer.
+           * EVERY stored account, not just the active one.
            *
-           * The card needs it to label the account, and it is the only place the two are known
-           * together — fetching it separately would double the card's round trips.
+           * The store has held a list since #171, but this answer still described a single
+           * session — so the card drew one row however many accounts were signed in, and a
+           * second sign-in looked like it had replaced the first.
            */
-          const name = await fetchAccountName(stored)
-          return json(res, 200, {
-            ok: true,
-            signedIn: true,
-            ...(name === undefined ? {} : { name }),
-            ...(stored.savedAt === undefined ? {} : { savedAt: stored.savedAt }),
-          })
+          const accounts = await readStoredAccounts()
+          const active = deps.session()
+          if (accounts.length === 0) {
+            if (!sessionUsable(active)) return json(res, 200, { ok: true, signedIn: false })
+            const name = await fetchAccountName(active)
+            return json(res, 200, {
+              ok: true,
+              signedIn: true,
+              accounts: [{
+                id: accountIdOf(active),
+                ...(name === undefined ? {} : { name }),
+                ...(active.savedAt === undefined ? {} : { savedAt: active.savedAt }),
+                active: true,
+              }],
+            })
+          }
+          const rows = []
+          for (const entry of accounts) {
+            const isActive = active !== undefined && accountIdOf(active) === entry.id
+            /**
+             * Ask the vendor for the name of an account that has none stored.
+             *
+             * Only the active session used to be asked, so the other rows arrived nameless and
+             * the card showed three identical "Doubao account" lines — no way to tell which was
+             * which when choosing one to remove.
+             */
+            let name = entry.nickname
+            if (name === undefined || name === '') {
+              try {
+                name = await fetchAccountName(entry.session)
+              } catch {
+                name = undefined
+              }
+            }
+            rows.push({
+              id: entry.id,
+              ...(name === undefined || name === '' ? {} : { name }),
+              savedAt: entry.savedAt,
+              active: isActive,
+            })
+          }
+          return json(res, 200, { ok: true, signedIn: true, accounts: rows })
         } catch (error: unknown) {
           return json(res, 500, { error: error instanceof Error ? error.message : String(error) })
         }

@@ -24,6 +24,7 @@
 import { cookieHeader, sessionUsable, type DoubaoSession } from './doubao-auth.ts'
 import { DOUBAO_MODELS, type DoubaoModelInfo } from './doubao-models.ts'
 import { modelsFromClientCache } from './doubao-client-cache.ts'
+import { fetchMenuModels } from './doubao-menu.ts'
 
 /** The endpoint that lists what the account may use. */
 const BRIEF_LIST_ENDPOINT = 'https://www.doubao.com/alice/slot/action_bar_v3/brief_list'
@@ -106,16 +107,27 @@ export async function fetchLiveModels(
   }
 
   /**
-   * The desktop client's cache is the only source of the `person-*` models.
+   * The page's server-side render is the PRIMARY source.
    *
-   * The web catalogue answers with feature entries and no model keys, so a session alone
-   * cannot reveal that the account may also call Kimi, GLM and friends. Those slugs are in the
-   * client's IndexedDB whenever it has been installed and run — measured on this machine as
-   * `person-kimi-k3-261111`, `person-glm-5-3-261111` and one more. Nothing breaks when the
-   * client is absent: the list simply stays at the measured six.
+   * Doubao has no frontend endpoint for the model menu: `brief_list` answers only the skill
+   * strip, and the roster is fetched by the page's own loader and inlined into the HTML it
+   * returns. `fetchMenuModels` reads that HTML with the account's cookie and gets the whole
+   * office roster — measured as eleven entries with real multipliers and per-model windows.
+   *
+   * This matters beyond convenience: the fallback below reads the DESKTOP CLIENT's IndexedDB,
+   * which only exists for someone who installed and ran the client. A user who signed in
+   * through this plugin's own browser window got the baseline six and nothing else.
    */
-  const fromCache = modelsFromClientCache()
-  const discovered = [...modelsFrom(raw), ...fromCache]
+  const fromMenu = await fetchMenuModels(session)
+  /**
+   * The client cache is still consulted, as a fallback.
+   *
+   * It costs nothing when absent, and it carries slugs a page render might have filtered —
+   * `need_upgrade` entries are dropped from the menu, and a paid model the user has since
+   * bought appears on the next page load rather than immediately.
+   */
+  const fromCache = fromMenu.length > 0 ? [] : modelsFromClientCache()
+  const discovered = [...fromMenu, ...modelsFrom(raw), ...fromCache]
   if (discovered.length === 0) return DOUBAO_MODELS
 
   /**

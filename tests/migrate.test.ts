@@ -11,7 +11,7 @@
  *
  * `adoptLegacyDataDir` is exercised against throwaway homes in `tmpdir()`, the
  * same discipline `provider-registration.test.ts` established — the real
- * `D:\dsh-home\.xdpool` must never be read or written by a test run.
+ * `<data>\.xdpool` must never be read or written by a test run.
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'

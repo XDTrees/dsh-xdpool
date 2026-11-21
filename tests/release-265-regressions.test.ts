@@ -66,7 +66,7 @@ describe('the credit dot always answers its own click (#133)', () => {
   it('explains a missing snapshot inside the panel', () => {
     expect(dot).toContain('dot.loading')
     expect(dot).toContain('dot.loadFailed')
-    expect(dot).toContain('dsm-xdpool-dotpanel-empty')
+    expect(dot).toContain('hint')
   })
 
   it('reads an unknown balance as grey, never as "you are fine"', () => {

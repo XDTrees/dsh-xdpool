@@ -34,6 +34,13 @@ export interface DoubaoModelInfo {
    * would state something the vendor did not.
    */
   rate?: string
+  /**
+   * The reasoning levels this model publishes, in the vendor's own order.
+   *
+   * Per model, not shared: GLM publishes 低/高/最高 while 2.1 Lite publishes 低/中/高, so one
+   * list for the whole channel would be wrong for at least one of them.
+   */
+  efforts?: readonly string[]
 }
 
 /**
@@ -44,11 +51,51 @@ export interface DoubaoModelInfo {
  * JSON strings either way and must be forwarded verbatim, never parsed to a number.
  */
 export const DOUBAO_MODELS: readonly DoubaoModelInfo[] = [
-  { id: '0', name: '豆包 快速', reasoning: false },
-  { id: '3', name: '豆包 2.1 Turbo', badge: '专家', reasoning: true },
-  { id: 'seed-lite-7b', name: '豆包 2.1 Lite', badge: '工作任务', reasoning: true },
-  { id: '5', name: '豆包 2.1 Pro', badge: '工作任务', reasoning: true },
-  { id: '9', name: '自动', badge: '工作任务', reasoning: true },
+  /**
+   * The baseline rows carry the same facts the live menu does.
+   *
+   * They are what a user sees when the page read fails or the account has none of the paid
+   * models, and a row with no window and no ladder reads as a broken channel rather than as a
+   * fallback. The figures below are the ones Doubao publishes for these ids on the office menu —
+   * measured, not estimated.
+   */
+  { id: '0', name: '豆包 快速', reasoning: false, contextWindow: 256_000, rate: '免费' },
+  {
+    id: '3',
+    name: '豆包 2.1 Turbo',
+    badge: '专家',
+    reasoning: true,
+    contextWindow: 256_000,
+    efforts: ['low', 'medium', 'high'],
+  },
+  {
+    id: 'seed-lite-7b',
+    name: '豆包 2.1 Lite',
+    badge: '工作任务',
+    reasoning: true,
+    contextWindow: 256_000,
+    rate: '限时优惠 0.01x',
+    efforts: ['low', 'medium', 'high'],
+  },
+  {
+    id: '5',
+    name: '豆包 2.1 Pro',
+    badge: '工作任务',
+    reasoning: true,
+    contextWindow: 256_000,
+    // Paid: the menu marks it `need_upgrade` for a free account, and shows this rate once bought.
+    rate: '0.65x',
+    efforts: ['low', 'medium', 'high'],
+  },
+  {
+    id: '9',
+    name: '自动',
+    badge: '工作任务',
+    reasoning: true,
+    contextWindow: 256_000,
+    rate: '小额免费',
+    efforts: ['low', 'high'],
+  },
   // Not a Doubao model_item_key — a capability alias: selecting it runs a chat turn under
   // `input_skill: imageGen`, and Doubao answers with real generated images.
   { id: 'image-gen', name: '豆包 生图', reasoning: true },

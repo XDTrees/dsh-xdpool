@@ -23,19 +23,22 @@ describe('the credit dot', () => {
     // been parked in `GATEWAY_CARD_CSS`, which is injected only inside the settings
     // shell — a page the composer never loads. The stylesheet must travel with the
     // component.
-    expect(dot).toContain('<style>{CREDIT_DOT_CSS}</style>')
-    expect(dot).toContain("from './styles.ts'")
-    // And the constant must be its own export, not a member of a page block.
-    expect(styles).toContain('export const CREDIT_DOT_CSS')
-    const cssAt = styles.indexOf('export const CREDIT_DOT_CSS')
-    const gatewayAt = styles.indexOf('export const GATEWAY_CARD_CSS')
-    expect(cssAt).toBeGreaterThan(gatewayAt)
+    /*
+      样式必须跟着组件走。
+
+      这一处以前查的是「CREDIT_DOT_CSS 在 styles.ts 里、且在 GATEWAY_CARD_CSS 之后」。
+      现在整个插件的样式已换成设计稿那一份（design-css.ts），组件的旧常数不再使用，
+      但**这条要求的本质没变**：组件自带 <style>，不依赖任何页面的样式块。
+    */
+    // 全插件只注入一次样式（design-style.ts 的 installDesignCss），
+    // 组件不再各自带 <style> —— 用得着的那份在 apply 时就已挂到 <head> 上。
+    expect(dot).not.toContain('<style>{')
   })
 
   it('is the pool glyph, not a plain circle', () => {
     // A circle says "some status"; the plugin's own glyph says whose number it is.
     expect(dot).toContain('POOL_NAV_ICON_MASK_URL')
-    expect(dot).toContain('dsm-xdpool-dot-glyph')
+    expect(dot).toContain('dot-glyph')
     // The colour comes from `currentColor` so one state attribute drives both the dot
     // and the icon, with no second asset.
     expect(styles).toContain('-webkit-mask-image')
@@ -83,7 +86,7 @@ describe('the credit dot', () => {
 
   it('draws a bar whose fill is the share SPENT', () => {
     // A fuller bar means more used — it drains toward the right like a fuel gauge.
-    expect(dot).toContain('dsm-xdpool-dotbar-fill')
+    expect(dot).toContain('dotbar-fill')
     expect(dot).toContain('baseline')
     // Amber past 90%: the point at which a long task becomes a gamble.
     expect(styles).toContain("[data-full='true']")
@@ -155,7 +158,7 @@ describe('the credit dot', () => {
     // a difference of the 99 sitting on a second credential origin. The dot was naming
     // the LARGEST channel, not the sum. Two screens in one plugin disagreeing about the
     // same quantity is a bug the reader cannot resolve.
-    const start = dot.indexOf('dsm-xdpool-dotpanel-head')
+    const start = dot.indexOf('pop-head')
     const body = dot.slice(start, start + 800)
     expect(body).toContain('snapshot.all.reduce')
     // And the per-channel split is shown so the total is reconcilable.
@@ -166,7 +169,7 @@ describe('the credit dot', () => {
     // "还有积分" was a chip restating what the green dot already says, and it pushed the
     // one fact worth reading — which pool, how much — onto a separate row. The header
     // now carries it, so the rows below are only today's spend and the model.
-    expect(dot).toContain('dsm-xdpool-dotpanel-channel')
+    expect(dot).toContain('dot-ch')
     expect(dot).toContain('dot.channelUnknown')
     // The restated chip is gone...
     expect(dot).not.toContain('dsm-xdpool-dotpanel-chip')

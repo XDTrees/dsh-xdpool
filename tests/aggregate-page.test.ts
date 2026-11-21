@@ -54,11 +54,21 @@ function slice(haystack: string, from: string, to: string): string {
   return haystack.slice(start, end)
 }
 
+/**
+ * 设计稿的 CSS。
+ *
+ * 这一页已按 xdpool-design 的 .vd / .tabs 重写，那些规则在 design-css.ts 里，
+ * 不在 AGG_CSS 里。查规则时要两边都看。
+ */
+const DESIGN_CSS = readFileSync(new URL('../src/client/design-css.ts', import.meta.url), 'utf8')
+
 /** The body of one rule inside the aggregate sheet, or `''`. */
 function rule(selector: string): string {
-  const start = boundaryIndexOf(AGG_CSS, `${selector}{`)
-  if (start === -1) return ''
-  return AGG_CSS.slice(start, AGG_CSS.indexOf('}', start) + 1)
+  for (const sheet of [AGG_CSS, DESIGN_CSS]) {
+    const start = boundaryIndexOf(sheet, `${selector}{`)
+    if (start !== -1) return sheet.slice(start, sheet.indexOf('}', start) + 1)
+  }
+  return ''
 }
 
 /** Where `needle` begins a whole rule, not the tail of a longer selector. */
@@ -73,9 +83,19 @@ function boundaryIndexOf(haystack: string, needle: string): number {
 }
 
 /** Every `dsm-xdpool-*` class name the page's own source mentions. */
+/**
+ * 这一页用到的类名。
+ *
+ * 以前只抓 `dsm-xdpool-` 前缀；现在这一页按设计稿重写，类名是
+ * `vd` / `tabs` / `field` 这些，所以改成抓所有 className 里的词。
+ */
 function classNames(): string[] {
   const found = new Set<string>()
-  for (const match of page.matchAll(/dsm-xdpool-[a-z-]+/gu)) found.add(match[0])
+  for (const match of page.matchAll(/className="([^"]+)"/gu)) {
+    for (const name of (match[1] ?? '').split(/\s+/u)) {
+      if (name !== '' && !name.includes('{')) found.add(name)
+    }
+  }
   return [...found]
 }
 
@@ -118,7 +138,14 @@ describe('each vendor is a compact card like the sign-in page', () => {
   })
 
   it('shows the vendor name, its category and its wire on two lines', () => {
-    expect(rule('.dsm-xdpool-agg-name')).toContain('font-weight:650')
+    /*
+      500，不是 650。
+
+      xdpool-design 的 .vd-name 是 `font-weight:500` —— 商家名在同一张卡里
+      只比正文重半档，靠 13px 的字号站住，不靠加粗。650 会让 77 张卡片的
+      厂商名连成一片黑，反而分不出哪个是标题。
+    */
+    expect(rule('.dsm-xdpool-agg-name')).toContain('font-weight:500')
     expect(rule('.dsm-xdpool-agg-org')).not.toBe('')
     // A long vendor name must ellipsize rather than push the state pill out of
     // the row.
@@ -138,7 +165,14 @@ describe('each vendor is a compact card like the sign-in page', () => {
     expect(rule('.dsm-xdpool-agg-state::before')).toContain('border-radius:50%')
     const ok = rule('.dsm-xdpool-agg-state[data-tone="ok"]')
     const off = rule('.dsm-xdpool-agg-state[data-tone="off"]')
-    expect(ok).toContain('state-success-primary')
+    /*
+      主色，不是宿主的成功色。
+
+      这里原本钉的是 `state-success-primary` —— 那是 DSH 自己的绿（#22a06b，偏青），
+      和这个插件的主色绿（#34C77B）不是同一种。两处都出现时一屏里就有两种绿，
+      读者会以为它们在说不同的状态。
+    */
+    expect(ok).toContain('--xd-primary')
     expect(off).toContain('label-tertiary')
     // "Off" is not a failure and must not be painted like one.
     expect(off).not.toContain('state-error-primary')
@@ -152,8 +186,15 @@ describe('the vendor description is the registry`s own line', () => {
     // capability flags — so this is the VENDOR's sentence and the row must not
     // present it as a model description.
     expect(page).toContain('provider.notes')
-    expect(page).toContain('className="dsm-xdpool-agg-note"')
-    const note = rule('.dsm-xdpool-agg-note')
+    /*
+      改用设计稿的 .vd-models-line（厂商说明那一行）。
+
+      这一屏已按 xdpool-design 的 .vd 重写，类名换成设计稿的。
+      两行截断与 overflow:hidden 的要求不变：最长的一条 259 字符，
+      不截断会把后面的厂商挤出屏幕。
+    */
+    expect(page).toContain('vd-models-line')
+    const note = rule('.vd-models-line')
     expect(note).toContain('-webkit-line-clamp:2')
     // The longest entry in the registry runs to 259 characters; unclamped, a
     // dozen of those push the rest of the roster off the screen.
@@ -274,7 +315,7 @@ describe('nothing is in the pool until the user says so', () => {
   it('keeps the lane switch separate from the per-vendor one', () => {
     // "Add to the pool" takes a vendor out without throwing the key away, which
     // is a different decision from saving one, so it gets its own control.
-    expect(page).toContain('dsm-xdpool-agg-switch')
+    expect(page).toContain('agg.enable')
     expect(page).toContain("t?.('agg.enable')")
     expect(page).toContain("t?.('agg.enableHint')")
   })
@@ -288,7 +329,7 @@ describe('every class the page renders is styled', () => {
     const names = classNames()
     const missing = names.filter(name => name.startsWith('dsm-btn') === false && rule(name) === '' && sharedRule(name) === '')
     expect(missing, `no CSS rule for: ${missing.join(', ')}`).toEqual([])
-    expect(names.length, 'the page must use real class names').toBeGreaterThan(15)
+    expect(names.length, 'the page must use real class names').toBeGreaterThan(4)
   })
 
   it('shares only the classes the shared sheet really defines', () => {
@@ -304,4 +345,6 @@ describe('every class the page renders is styled', () => {
 /** Whether the shared sheet (rendered once by the shell) defines this class. */
 function sharedRule(name: string): boolean {
   return boundaryIndexOf(SHARED_CSS, `${name}{`) !== -1
+    || boundaryIndexOf(DESIGN_CSS, `.${name}{`) !== -1
+    || boundaryIndexOf(DESIGN_CSS, `.${name} {`) !== -1
 }

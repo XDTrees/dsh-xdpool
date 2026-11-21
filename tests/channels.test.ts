@@ -17,9 +17,9 @@ import {
  * method allowlist cannot quietly drift from the pack's own HTTP surface.
  */
 describe('login channel roster', () => {
-  it('lists fourteen channels', () => {
+  it('lists twenty-two channels', () => {
     // Thirteen from the pack plus Doubao, whose lane this plugin serves itself.
-    expect(REGISTERED_CHANNELS).toHaveLength(14)
+    expect(REGISTERED_CHANNELS).toHaveLength(22)
   })
   it('gives every channel a unique id', () => {
     const ids = REGISTERED_CHANNELS.map((channel) => channel.id)
@@ -51,7 +51,25 @@ describe('login channel roster', () => {
     // code is offered — this card only ever opens the vendor's page. So there is
     // now exactly one login kind, and a channel that needs something else fails
     // to typecheck rather than inventing a button for it.
-    expect([...new Set(REGISTERED_CHANNELS.map((channel) => channel.login))]).toEqual(['browser'])
+    /**
+     * Two kinds, and only two.
+     *
+     * `browser` is the pack's own page — every scan-login channel opens it. `oauth` is Marvis,
+     * which signs in with QQ or WeChat through an authorization page whose callback is fixed on
+     * the vendor's side; the card cannot open that page and wait, so it says so and the plugin
+     * drives it.
+     */
+    /**
+     * Three kinds, each meaning a different thing the card can offer.
+     *
+     *   browser — the pack's own page, which every scan-login channel opens.
+     *   oauth   — Marvis's QQ/WeChat authorization, whose callback is fixed on the vendor side.
+     *   paste   — AStudio and MagiCrew, which take a credential the user copies because their
+     *             sign-in needs a captcha the plugin cannot answer.
+     *   apikey  — Qiniu, which has no sign-in at all: a console key IS the account.
+     */
+    expect([...new Set(REGISTERED_CHANNELS.map((channel) => channel.login))].sort())
+      .toEqual(['apikey', 'browser', 'oauth', 'paste'])
   })
   it('states the free allowance in Chinese on every card', () => {
     for (const channel of REGISTERED_CHANNELS) {
@@ -78,6 +96,8 @@ describe('channel route contract', () => {
       'account.delete',
       'account.list',
       'account.refresh',
+      // 「优先使用」 on a channel card: no preferred-account field exists, so priority is an order.
+      'account.reorder',
       'account.test',
       'account.update',
       // Whole-pool credential backup. `backup.import` REPLACES rather than merges, and

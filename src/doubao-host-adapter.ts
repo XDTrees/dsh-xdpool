@@ -56,6 +56,17 @@ export const DOUBAO_PROVIDER_NAME = '豆包'
  */
 const CONTEXT_WINDOW = 256_000
 
+/** The ladder's display names, in the vendor's own words for this language. */
+const EFFORT_LABELS: Readonly<Record<string, string>> = {
+  low: '低',
+  mid: '中',
+  medium: '中',
+  high: '高',
+  xhigh: '极高',
+  max: '最高',
+  auto: '自动',
+}
+
 /** The output ceiling the lane requests. */
 const MAX_OUTPUT_TOKENS = 65_536
 
@@ -114,6 +125,22 @@ export class DoubaoHostAdapter extends LlmAdapter {
 
   override async listModels(_provider: string): Promise<readonly LlmModelInfo[]> {
     const session = this.options.session()
+    /**
+     * No session, no models — issue #169.
+     *
+     * Every other channel passes through the pack's `providerCatalogVisible`, which answers
+     * "no catalogue" when nothing is signed in, so an empty group is filtered out of the picker.
+     * This adapter had no such gate: `fetchLiveModels` falls back to six baseline rows when the
+     * session is missing, so deleting the Doubao account left its group standing in the picker
+     * forever — offering models that cannot answer.
+     *
+     * The fallback itself is right for the CARD (a signed-in account whose menu read failed
+     * should still see its models); it is wrong for the PICKER, which has no account at all.
+     */
+    if (session === undefined || !sessionUsable(session)) {
+      this.cached = undefined
+      return []
+    }
     const models = await fetchLiveModels(session)
     this.cached = { at: Date.now(), models }
     return models.map(model => this.describe(model))
@@ -227,7 +254,7 @@ export class DoubaoHostAdapter extends LlmAdapter {
       // from refusing an attachment the model could have read.
       inputModalities: ['text', 'image'],
       defaultMaxTokens: MAX_OUTPUT_TOKENS,
-      context: { contextWindow: CONTEXT_WINDOW },
+      context: { contextWindow: model.contextWindow ?? CONTEXT_WINDOW },
       reasoning: {
         efforts: [
           { id: ReasoningEffortId('low'), name: '低' },

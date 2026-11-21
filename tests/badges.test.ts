@@ -174,11 +174,21 @@ describe('each region falls back to its OWN table', () => {
     }
   })
 
-  it('still names the same models on both sides', () => {
-    // Stripping the badges must not empty the picker: an unreachable gateway
-    // degrades the roster, it does not delete the user's models.
-    expect(fallbackModelsFor('global').map(m => m.id))
-      .toEqual(fallbackModelsFor('cn').map(m => m.id))
+  it('never degrades the international table below the domestic one', () => {
+    /**
+     * Stripping the badges must not empty the picker: an unreachable gateway degrades the
+     * roster, it does not delete the user's models.
+     *
+     * The two tables are NOT identical any more, and the equality this case used to assert was
+     * the bug: the international gateway serves models the domestic one does not (GPT-6, Grok,
+     * Gemini 4), and mirroring the domestic list dropped every one of them from the fallback.
+     * What must hold is that nothing is LOST — the global table is a superset.
+     */
+    const globalIds = new Set(fallbackModelsFor('global').map(model => model.id))
+    for (const model of fallbackModelsFor('cn')) {
+      expect(globalIds.has(model.id), model.id).toBe(true)
+    }
+    expect(globalIds.size).toBeGreaterThan(fallbackModelsFor('cn').length)
   })
 
   it('the catalog falls back per region, and reports the gap in the error only', () => {

@@ -314,7 +314,7 @@ describe('the settings page renders on both kernel lines', () => {
     const shell = readFileSync(new URL('../src/client/shell.tsx', import.meta.url), 'utf8')
     expect(shell).toContain('className="dsm-xdpool-body"')
     expect(card).toContain('</PoolShell>')
-    expect(card).toMatch(/dsm-xdpool-card dsm-xdpool-usage/)
+    expect(card).not.toContain('dsm-xdpool-usageline')
     expect(card).toMatch(/dsm-xdpool-regions/)
     expect(card).toMatch(/dsm-xdpool-region-grid/)
     // Both lanes render, always — the tab that only appeared after a sign-in
@@ -323,46 +323,21 @@ describe('the settings page renders on both kernel lines', () => {
     expect(card).toContain("const REGION_CARDS = ['cn', 'global'] as const")
   })
 
-  it('exposes the region disclosures as accessible controls', () => {
-    // The counterpart to the relaxation above: if `aria-expanded` is allowed,
-    // each one of them must name the pane it controls, or the attribute is
-    // decoration. Both the segmented triggers and the CN-only tool buttons
-    // have to agree.
+  it('draws every channel with one page, not a renderer apiece', () => {
+    /**
+     * The lanes used to carry their own card — four disclosure triggers, a summary line and a
+     * separate visual language — while every other channel had the shared page. That is why two
+     * rows looked like they came from another plugin: they did.
+     *
+     * A channel now contributes DATA to `ChannelDetailPage`; there is no second body of markup in
+     * this file at all, which is what these assertions pin down.
+     */
     const card = readFileSync(new URL('../src/client/PoolCard.tsx', import.meta.url), 'utf8')
-    const expanded = card.match(/aria-expanded=\{/g) ?? []
-    expect(expanded.length, 'the region card must carry explicit disclosures').toBeGreaterThanOrEqual(2)
-    // The segmented triggers pass the pane id as a prop; the shared component
-    // turns it into `aria-controls`. The two CN-only tool buttons write the
-    // attribute themselves.
-    expect(card).toContain('controls={accountsPaneId}')
-    expect(card).toContain('controls={modelsPaneId}')
-    expect(card).toContain('aria-controls={distPaneId}')
-    expect(card).toContain('aria-controls={autoPaneId}')
-    // Every pane it names has to exist with the same id, or the control points
-    // at nothing.
-    for (const suffix of ['accounts', 'models', 'dist', 'auto']) {
-      const id = `\`dsm-xdpool-\${region}-${suffix}\``
-      expect(card, `pane id ${suffix} must be declared`).toContain(id)
-      expect(card, `pane ${suffix} must be rendered`).toContain(`id={` + suffix + 'PaneId}')
-    }
-    // And the shared trigger must be the one that emits them, so the two
-    // disclosures cannot drift apart.
-    const regionCard = readFileSync(new URL('../src/client/region-card.tsx', import.meta.url), 'utf8')
-    expect(regionCard).toContain('aria-expanded={open}')
-    expect(regionCard).toContain('aria-controls={controls}')
-    expect(regionCard).toContain('hidden={!open}')
-  })
-
-  it('polls while the page is mounted instead of while it is expanded', () => {
-    // The old gate (`if (!open) return`) meant a collapsed page never fetched;
-    // with no page-level fold the effect must run on mount, and it must keep
-    // fetching for BOTH region cards — a fold inside a card is not a reason to
-    // stop watching a lane, and the user is expected to leave a card closed for
-    // minutes at a time.
-    const card = readFileSync(new URL('../src/client/PoolCard.tsx', import.meta.url), 'utf8')
-    expect(card).not.toMatch(/if \(!open\) return/)
-    expect(card).toContain('}, [refresh, activeRegion])')
-    expect(card).toContain('REGION_CARDS.filter(other => other !== activeRegion)')
+    expect(card).toContain('<ChannelDetailPage')
+    // No leftovers from the old card: its region markup, its panes, its triggers.
+    expect(card).not.toContain('dsm-xdpool-region-seg')
+    expect(card).not.toContain('dsm-xdpool-region-pane')
+    expect(card).not.toContain('aria-expanded={')
   })
   it('marks the nav row and masks the plugin glyph over the shell icon', () => {
     // `settings.section` projects only id / order / label — there is no icon

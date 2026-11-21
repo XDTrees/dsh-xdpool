@@ -268,6 +268,15 @@ export interface PoolStatusRouteOptions {
    */
   channelsDocument?: () => PoolWebChannelsStatus
   /**
+   * How each channel picks its account, and the pool-wide default.
+   *
+   * Read from the plugin's own file rather than the host's settings document: the host's write
+   * path for a plugin section accepts only its own toggle, so the per-channel overrides live where
+   * this plugin already keeps state.
+   */
+  channelUsage?: () => { pool: string; channels: Record<string, string> }
+  setChannelUsage?: (channel: string, strategy: string | undefined) => Promise<void>
+  /**
    * The chains plus the roster their members are drawn from, built host-side.
    *
    * One dep because the two halves are the same question asked twice — "what can
@@ -1033,6 +1042,22 @@ export async function poolWebStatus(
  */
 export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptions): void {
   ctx.effect(() => {
+    const disposeChannels = ctx.webServer.register({
+      kind: 'exact',
+      path: POOL_CHANNELS_PATH,
+      handler: (req: IncomingMessage, res: ServerResponse) => {
+        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+        if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
+        if (deps.channelsDocument === undefined) {
+          return json(res, 503, { error: 'the login channels are not available in this build' })
+        }
+        try {
+          json(res, 200, deps.channelsDocument())
+        } catch (error: unknown) {
+          json(res, 500, { error: safeMessage(error) })
+        }
+      },
+    })
     const disposeStatus = ctx.webServer.register({
       kind: 'exact',
       path: POOL_STATUS_PATH,
@@ -1524,22 +1549,6 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
     // The login-channel list. GET only, and answered even when the pack failed
     // to mount: an `unavailable` state plus its reason is far more actionable than
     // a 503, because the card can then say what went wrong instead of guessing.
-    const disposeChannels = ctx.webServer.register({
-      kind: 'exact',
-      path: POOL_CHANNELS_PATH,
-      handler: (req: IncomingMessage, res: ServerResponse) => {
-        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
-        if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
-        if (deps.channelsDocument === undefined) {
-          return json(res, 503, { error: 'the login channels are not available in this build' })
-        }
-        try {
-          json(res, 200, deps.channelsDocument())
-        } catch (error: unknown) {
-          json(res, 500, { error: safeMessage(error) })
-        }
-      },
-    })
     /**
      * The chain list plus the roster its members are drawn from.
      *
