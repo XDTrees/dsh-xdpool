@@ -1341,7 +1341,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     if (!loading) return <></>
     return (
       <section className="dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
-        <p className="dsm-xdpool-note" role="status">
+        <p className="note" role="status">
           {t?.('channelpool.loading') ?? 'Reading scan channels…'}
         </p>
       </section>
@@ -1351,12 +1351,12 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     <section className="dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
       {error === undefined ? null
         : <p className="dsm-xdpool-error">{t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}</p>}
-      {notice === undefined ? null : <p className="dsm-xdpool-note">{notice}</p>}
+      {notice === undefined ? null : <p className="note">{notice}</p>}
       {/* The switch that brings the unbound channels back, for adding another. */}
       <div className="dsm-xdpool-cpool-bar">
         <button
           type="button"
-          className="dsm-xdpool-btn"
+          className="btn"
           aria-pressed={showAll}
           onClick={() => { setShowAll(!showAll) }}
         >
@@ -1483,7 +1483,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 */}
                 <button
                   type="button"
-                  className="dsm-xdpool-btn"
+                  className="btn"
                   disabled={catalogBusy.has(channel.id)}
                   onClick={() => { void refreshChannelModels(channel.id) }}
                   title={t?.('channelpool.reloadModelsHint')
@@ -1503,7 +1503,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 {ONBOARDING_CHANNELS.has(channel.id) && (
                   <button
                     type="button"
-                    className="dsm-xdpool-btn"
+                    className="btn"
                     data-tone="primary"
                     disabled={isBusy}
                     onClick={() => { void claimOnboarding(channel.id, enabledAccounts) }}
@@ -1518,7 +1518,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 {channel.credits?.claim === true && (
                   <button
                     type="button"
-                    className="dsm-xdpool-btn"
+                    className="btn"
                     data-tone={allClaimedToday ? 'claimed' : 'primary'}
                     disabled={isBusy || allClaimedToday}
                     onClick={() => { void claim(channel.id) }}
@@ -1533,7 +1533,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 {channel.credits !== undefined && (
                   <button
                     type="button"
-                    className="dsm-xdpool-btn"
+                    className="btn"
                     data-tone="quiet"
                     disabled={isBusy}
                     onClick={() => { void refreshBalances(channel.id, true) }}
@@ -1908,7 +1908,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
         <div className="dsm-xdpool-cpool-acts">
           <button
             type="button"
-            className="dsm-xdpool-btn"
+            className="btn"
             onClick={() => { setEnabled(new Map()); void load() }}
           >
             {t?.('channelpool.retry') ?? 'Reload'}
