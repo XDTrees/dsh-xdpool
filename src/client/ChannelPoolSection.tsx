@@ -63,6 +63,12 @@ import {
   POOL_BAIZHI_WALLET_PATH,
   POOL_AUTOCLAW_INTL_WALLET_PATH,
   POOL_AUTOCLAW_CN_WALLET_PATH,
+  POOL_ASTUDIO_SESSION_PATH,
+  POOL_ACCIO_SESSION_PATH,
+  POOL_MONKEYCODE_CN_SESSION_PATH,
+  POOL_BAIZHI_SESSION_PATH,
+  POOL_AUTOCLAW_CN_SESSION_PATH,
+  POOL_AUTOCLAW_INTL_SESSION_PATH,
   POOL_ASTUDIO_CHECKIN_PATH,
   POOL_BAIZHI_CHECKIN_PATH,
   POOL_MAGICREW_CN_CHECKIN_PATH,
@@ -670,6 +676,51 @@ async function ownCheckin(channel: string): Promise<string | undefined> {
     return typeof body.credit === 'number' ? `已领 ${String(body.credit)} 积分` : '已签到'
   } catch {
     return '签到失败'
+  }
+}
+
+
+/**
+ * 走自己会话路由的渠道。
+ *
+ * 这五家的「登进来了没有」不走 pack 的 provider.status —— 那对它们答 unsupported，
+ * 卡片于是永远显示「未登录」，即使账号已经存好了。
+ *
+ * 每家一个路由，字段却是同一套（signedIn / accounts / name / savedAt），
+ * 所以一张表就够，不用写五份读取逻辑。
+ */
+const OWN_SESSION_ROUTES: Readonly<Record<string, string>> = {
+  'astudio': POOL_ASTUDIO_SESSION_PATH,
+  'accio': POOL_ACCIO_SESSION_PATH,
+  'monkeycode': POOL_MONKEYCODE_CN_SESSION_PATH,
+  'baizhi': POOL_BAIZHI_SESSION_PATH,
+  'autoclaw': POOL_AUTOCLAW_CN_SESSION_PATH,
+  'autoclaw-intl': POOL_AUTOCLAW_INTL_SESSION_PATH,
+}
+
+/**
+ * 读一家自己渠道的会话。
+ *
+ * 返回 undefined 表示「这个渠道没有自己的会话路由」或者「读不到」——
+ * 两种情况调用处都该退回 pack 的判断，而不是把卡片标成未登录。
+ */
+async function fetchOwnSession(channel: string): Promise<
+  { signedIn: boolean; accounts?: readonly { id?: string; name?: string; dailyClaimed?: boolean }[] | undefined; name?: string | undefined } | undefined
+> {
+  const route = OWN_SESSION_ROUTES[channel]
+  if (route === undefined) return undefined
+  try {
+    const response = await fetch(route, { headers: { accept: 'application/json' }, credentials: 'same-origin' })
+    if (!response.ok) return undefined
+    const body = await response.json() as {
+      signedIn?: boolean
+      accounts?: readonly { id?: string; name?: string; dailyClaimed?: boolean }[]
+      name?: string
+      dailyClaimed?: boolean
+    }
+    return { signedIn: body.signedIn === true, accounts: body.accounts, name: body.name }
+  } catch {
+    return undefined
   }
 }
 
