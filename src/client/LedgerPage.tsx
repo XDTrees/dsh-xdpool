@@ -248,7 +248,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
             {t?.('ledger.loading') ?? 'Reading the recorded calls…'}
           </p>
         : <>
-            <div className="dsm-xdpool-kpis">
+            <div className="kpis">
               <KpiCard
                 label={t?.('ledger.tokens') ?? 'Tokens'}
                 value={summary.usageReported ? fmtInt(totals?.input ?? 0) : (t?.('ledger.notReported') ?? 'not reported')}
