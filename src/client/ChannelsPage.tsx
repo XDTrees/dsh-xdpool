@@ -471,7 +471,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
         </span>}
       />
       {autoCheckin !== undefined && (
-        <div className="dsm-xdpool-autocheckin">
+        <div className="hint">
           <label className="sw">
             <input
               type="checkbox"
@@ -482,7 +482,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
             <span>{t?.('chan.autoCheckin') ?? 'Claim daily credits automatically'}</span>
           </label>
           {autoCheckin.lastResult !== undefined && (
-            <span className="dsm-xdpool-autocheckin-note">{autoCheckin.lastResult}</span>
+            <span className="hint">{autoCheckin.lastResult}</span>
           )}
         </div>
       )}
@@ -669,10 +669,10 @@ function ChannelRow({
               <span className="ch-note">{t?.('chan.doubaoHint') ?? ''}</span>
             )}
             {ui.phase === 'done' && (
-              <span className="dsm-xdpool-channel-ok">{t?.('chan.done') ?? 'Account added'}</span>
+              <span className="ch-count">{t?.('chan.done') ?? 'Account added'}</span>
             )}
             {ui.phase === 'failed' && (
-              <span className="dsm-xdpool-channel-error">
+              <span className="ch-note">
                 {ui.message ?? t?.('chan.failed') ?? 'Sign-in failed'}
               </span>
             )}
