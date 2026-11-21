@@ -360,7 +360,7 @@ export function RoutingPage({ t }: RoutingPageProps) {
         title={t?.('route.title') ?? 'Routing'}
         sub={t?.('route.sub') ?? ''}
         pills={<>
-          <span className="dsm-xdpool-pill" data-tone="ok">
+          <span className="pill" data-tone="ok">
             {t?.('route.memberCount', { count: combos.length }) ?? `${combos.length} chain(s)`}
           </span>
           {/* A COUNT, not the sentence that used to sit here. The user reported
@@ -368,7 +368,7 @@ export function RoutingPage({ t }: RoutingPageProps) {
               search placeholder two hundred pixels below, so the page stated
               one fact twice and showed neither's number. The pill is the
               summary; the box is the control that acts on it. */}
-          <span className="dsm-xdpool-pill" data-tone="off">
+          <span className="pill" data-tone="off">
             {t?.('route.rosterCount', { count: candidates.length }) ?? `${candidates.length} model(s)`}
           </span>
         </>}
@@ -387,10 +387,10 @@ export function RoutingPage({ t }: RoutingPageProps) {
           {t?.('route.newChain') ?? 'New chain'}
         </button>
       </div>
-      {error !== undefined ? <p className="dsm-xdpool-panel-error">{error}</p> : null}
+      {error !== undefined ? <p className="hint">{error}</p> : null}
       {flash !== undefined ? <p className="dsm-xdpool-rt-flash">{flash}</p> : null}
       {status === undefined && error === undefined
-        ? <p className="dsm-xdpool-panel-empty">{t?.('route.loading') ?? 'Reading…'}</p>
+        ? <p className="hint">{t?.('route.loading') ?? 'Reading…'}</p>
         : null}
       {current !== undefined
         ? <ChainEditor
@@ -405,7 +405,7 @@ export function RoutingPage({ t }: RoutingPageProps) {
       {status === undefined
         ? null
         : drafts.length === 0
-          ? <p className="dsm-xdpool-panel-empty">{t?.('route.empty') ?? 'No chain yet.'}</p>
+          ? <p className="hint">{t?.('route.empty') ?? 'No chain yet.'}</p>
           : <div className="dsm-xdpool-rt-list">
               {drafts.map(draft => (
                 <ChainRow
@@ -481,18 +481,18 @@ function ChainRow({
         {draft.id !== undefined
           ? <span className="dsm-xdpool-rt-cid">{draft.id}</span>
           : null}
-        <span className="dsm-xdpool-pill" data-tone={draft.enabled ? 'ok' : 'off'}>
+        <span className="pill" data-tone={draft.enabled ? 'ok' : 'off'}>
           {draft.enabled ? (t?.('route.enabled') ?? 'Enabled') : (t?.('route.chainDisabled') ?? 'Disabled')}
         </span>
         <span className="dsm-xdpool-pills">
-          <span className="dsm-xdpool-pill" data-tone="off">
+          <span className="pill" data-tone="off">
             {t?.('route.platformCount', { count: draft.platforms.length }) ?? `${draft.platforms.length} platform(s)`}
           </span>
-          <span className="dsm-xdpool-pill" data-tone="off">
+          <span className="pill" data-tone="off">
             {t?.('route.memberCount', { count: flat.length }) ?? `${flat.length} model(s)`}
           </span>
         </span>
-        <span className="dsm-xdpool-pageactions">
+        <span className="mhead-actions">
           {/* An outline button, not the aggregate filter chip this borrowed: the
               chip's rule is in the shared sheet, so it renders, but Edit sits in
               a pair of per-row actions and reading as one filter pill among
@@ -655,7 +655,7 @@ function ChainEditor({
         <span className="dsm-xdpool-rt-edname">
           {draft.name === '' ? (t?.('route.newChain') ?? 'New chain') : draft.name}
         </span>
-        <label className="dsm-xdpool-switch">
+        <label className="sw">
           <input
             type="checkbox"
             checked={draft.enabled}
