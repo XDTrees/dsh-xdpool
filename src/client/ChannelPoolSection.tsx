@@ -1946,20 +1946,75 @@ export function ChannelPoolSection({ t, active }: {
                     const buckets = balance === undefined ? [] : balancePackages(balance.balance)
                     const disabled = account.enabled === false
                     return (
-                      <li key={account.id} className="ch" data-off={disabled}>
-                        <span className="ch-name">{account.nickname ?? account.id}</span>
-                        <span className="ch-org">
-                          {disabled
-                            ? (t?.('channelpool.disableAccount') ?? 'disabled')
-                            : (t?.('channelpool.enableAccount') ?? 'enabled')}
-                          {expiryText(account.expiresAt, t) === undefined ? null : ` · ${expiryText(account.expiresAt, t)}`}
-                        </span>
-                        {checkin?.todayCheckedIn === true && (
-                          <span className="badge">
-                            {t?.('channelpool.claim') ?? 'claimed'}
-                            {typeof checkin.todayCredit === 'number' ? ` +${amount(checkin.todayCredit)}` : ''}
-                          </span>
+                      /*
+                        账号卡 —— 设计稿的 .acct。
+
+                        之前这里是一个 <li class="ch"> 加几段纯文本：
+                        名字、状态、余额挤在一行里。设计稿画的是卡片：
+                        在线点 + 名字 + 开关 / 大字余额 + 单位 + 重置时间 /
+                        进度条 / 可展开的明细。
+
+                        账号是整个账号池里读者最常看的东西（「我哪个号还有钱」），
+                        做成一行文本要逐行读；做成卡片一眼扫过去。
+                      */
+                      <li key={account.id} className="acct" data-off={disabled}>
+                        <div className="acct-head">
+                          <span className="acct-dot" data-on={checkin?.todayCheckedIn === true ? 'true' : 'false'} aria-hidden="true" />
+                          <span className="acct-name">{account.nickname ?? account.id}</span>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={!disabled}
+                            aria-label={account.nickname ?? account.id}
+                            className={`sw${disabled ? '' : ' is-on'}`}
+                            disabled={isBusy}
+                            onClick={() => { void accountAction(channel.id, account.id, 'toggle') }}
+                          />
+                        </div>
+                        <div className="acct-total">
+                          {balance?.error !== undefined
+                            ? <span className="acct-total-v" data-tone="err">{balance.error}</span>
+                            : amount1 !== undefined
+                              ? <>
+                                  <span className="acct-total-v num">{amount(amount1)}</span>
+                                  <span className="acct-total-u">{unit}</span>
+                                </>
+                              : <span className="acct-total-v">—</span>}
+                          {expiryText(account.expiresAt, t) === undefined ? null
+                            : <span className="acct-soon">{expiryText(account.expiresAt, t)}</span>}
+                        </div>
+                        {buckets.length > 0 && (
+                          <div className="acct-bar" title={buckets.map(b => `${b.name} ${String(Math.round(b.remaining ?? 0))}%`).join(' · ')}>
+                            <span style={{ width: `${String(Math.max(0, Math.min(100, Math.round(buckets[0]?.remaining ?? 0))))}%` }} />
+                          </div>
                         )}
+                        <details className="acct-detail">
+                          <summary>{t?.('channelpool.accountDetail') ?? '积分明细'}</summary>
+                          <dl className="facts">
+                            {checkin?.todayCheckedIn === true && (
+                              <div className="fact">
+                                <dt>{t?.('channelpool.todayClaimed') ?? '今日签到'}</dt>
+                                <dd style={{ color: 'var(--accent)' }}>
+                                  {t?.('channelpool.claim') ?? '已领'}
+                                  {typeof checkin.todayCredit === 'number' ? ` +${amount(checkin.todayCredit)}` : ''}
+                                </dd>
+                              </div>
+                            )}
+                            {buckets.map((b, i) => (
+                              <div className="fact" key={`${b.name}-${String(i)}`}>
+                                <dt>{b.name}</dt>
+                                <dd>
+                                  {typeof b.remaining === 'number' ? `${String(Math.round(b.remaining))}%` : '—'}
+                                  {typeof b.total === 'number' ? ` / ${amount(b.total)}` : ''}
+                                </dd>
+                              </div>
+                            ))}
+                            <div className="fact">
+                              <dt>{t?.('channelpool.accountState') ?? '状态'}</dt>
+                              <dd>{disabled ? (t?.('channelpool.disableAccount') ?? 'disabled') : (t?.('channelpool.enableAccount') ?? 'enabled')}</dd>
+                            </div>
+                          </dl>
+                        </details>
                         {/*
                           用量条 —— 设计稿的 .quota。
 
@@ -1989,18 +2044,6 @@ export function ChannelPoolSection({ t, active }: {
                             </span>
                           </div>
                         )}
-                        {balance?.error !== undefined
-                          ? <span className="td-num" data-tone="err">{balance.error}</span>
-                          : amount1 !== undefined
-                            ? (
-                              <span className="td-num">
-                                {amount(amount1)} {unit}
-                                {buckets.length > 0
-                                  ? ` · ${t?.('channelpool.balancePackages', { count: buckets.length }) ?? `${buckets.length} window(s)`}`
-                                  : ''}
-                              </span>
-                            )
-                            : null}
                         <span className="sec-actions">
                           {/* Collecting Doubao's campaign credits, beside the other row actions. */}
                           {channel.id === 'doubao' && (
