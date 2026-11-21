@@ -2724,12 +2724,25 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
    尺寸和圆角与图标版一致，看起来是同一个控件而不是缺图。
    ============================================================ */
 
-.ch-logo-letters{display:grid;place-items:center;font-size:12px;font-weight:800;letter-spacing:-.02em;color:#fff;text-transform:uppercase}
+/* 字母版：把首字母居中画在同一个方块里，底色用渠道自己的 accent */
+.ch-logo-letters{
+  display:grid;place-items:center;
+  font-size:var(--fs-xs);font-weight:800;letter-spacing:-.02em;
+  line-height:1;color:#fff;text-transform:uppercase;
+  background-color:var(--ch-logo-accent, var(--surface-3));
+}
 .ch-logo-letters::after{content:none}
 /* 设计稿的 .ch-logo 用伪元素叠图形；字母版要把它关掉。 */
 .ch-logo::after{content:none}
 /* 有图标的渠道：图标铺满，覆盖字母版留下的底色。 */
-.ch-logo-art{background-size:contain;background-repeat:no-repeat;background-position:center}
+/*
+  有图标的渠道：插件把图放在 --ch-logo-icon 里（data URI），
+  设计稿靠 background-image 上色 —— 这一条把它接起来。
+
+  之前这里只写了 size/repeat/position，没有 background-image，
+  于是所有有图标的渠道都画成一块空底色。
+*/
+.ch-logo-art{background-image:var(--ch-logo-icon, none);background-color:var(--ch-logo-accent, var(--surface-3));background-size:contain;background-repeat:no-repeat;background-position:center}
 
 /* ============================================================
    插件独有：加载骨架与折叠箭头
