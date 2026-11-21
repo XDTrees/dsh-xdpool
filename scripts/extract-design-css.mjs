@@ -17,6 +17,15 @@ const DESIGN = 'D:/dsh-home/xdpool-design'
 const tokens = readFileSync(`${DESIGN}/tokens.css`, 'utf8')
 const app = readFileSync(`${DESIGN}/app.css`, 'utf8')
 const colors = readFileSync(`${DESIGN}/channel-colors.css`, 'utf8')
+/*
+  mobile.css：窄屏适配的那批规则（.dock / .list-credit / 表格在窄屏下的折叠）。
+
+  之前没读它，于是 760px 窗口里手机的布局规则一条都没生效 ——
+  页面靠 app.css 的媒体查询勉强撑着，但那些是「缩小」，不是「重排」。
+  文件不存在时跳过，不打断构建。
+*/
+let mobile = ''
+try { mobile = readFileSync(`${DESIGN}/mobile.css`, 'utf8') } catch { mobile = '' }
 
 /** build-a.mjs 里的页面级 CSS（.kpi / .acct / .policy / .seg …）。 */
 function pageCss() {
@@ -223,6 +232,11 @@ label.sw:has(input:disabled) { opacity: .5; cursor: not-allowed }
 */
 const MIN_FONT_FIX = (css) => css.replace(/font-size:1[01]px/gu, 'font-size:12px')
 
+/**
+ * mobile.css —— 窄屏重排规则（自带 @media）。
+ */
+const scopedMobile = MIN_FONT_FIX(mobile)
+
 const out = `/**
  * 设计稿样式，原样接管。
  *
@@ -231,7 +245,7 @@ const out = `/**
  */
 export const DESIGN_TOKENS_CSS = \`${tokens}\n${colors}\`
 
-export const DESIGN_DETAIL_CSS = \`${MIN_FONT_FIX(scoped)}\n${MIN_FONT_FIX(pageCss())}\n${bridge}\`
+export const DESIGN_DETAIL_CSS = \`${MIN_FONT_FIX(scoped)}\n${MIN_FONT_FIX(pageCss())}\n${scopedMobile}\n${bridge}\`
 `
 
 writeFileSync('D:/dsh-home/_xdpool-src/src/client/design-css.ts', out, 'utf8')

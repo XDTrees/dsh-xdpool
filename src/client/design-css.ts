@@ -1718,6 +1718,270 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 .banner-t{font-size:var(--fs-md);font-weight:600}
 .banner-d{font-size:var(--fs-xs);color:var(--muted);line-height:1.6}
 
+/* ============================================================
+   窄屏适配（手机 / 侧边窄面板）
+   ------------------------------------------------------------
+   三栏（功能页 + 中间栏 + 主区）在 640px 以下放不下：
+   中间栏 268px + 功能页 196px = 464px，只剩不到 100px 给内容。
+
+   所以窄屏换成：
+     顶栏
+     渠道/条目：横滑条（原来的中间栏）
+     内容：单列
+     底部：功能页 dock（原来的第一层）
+   ============================================================ */
+
+/* 底部 dock 只在窄屏出现 */
+.dock{display:none}
+
+@media (max-width:640px){
+  /* ---- 整体：单列 + 给 dock 留位置 ---- */
+  /* 单列后必须两行：渠道横滑条一行，内容一行。
+     只写一行会让 .list 和 .main 落在同一格里互相盖住 ——
+     表现就是「看不到渠道，也点不了」。 */
+  .app{
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:auto minmax(0,1fr);
+    height:100vh;
+    padding-bottom:calc(52px + env(safe-area-inset-bottom,0px));
+    box-sizing:border-box;
+  }
+  /* 没有渠道栏的页面只有一行 */
+  .app-wide{
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:minmax(0,1fr);
+    height:100vh;
+    padding-bottom:calc(52px + env(safe-area-inset-bottom,0px));
+    box-sizing:border-box;
+  }
+
+  /* ---- 第一层功能页 → 底部 dock ---- */
+  .rail{
+    position:fixed;left:0;right:0;bottom:0;
+    z-index:50;
+    flex-direction:row;
+    align-items:center;
+    justify-content:space-around;
+    gap:0;
+    padding:0 4px calc(env(safe-area-inset-bottom,0px));
+    height:calc(52px + env(safe-area-inset-bottom,0px));
+    border-right:0;
+    border-top:1px solid var(--line);
+    background:color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter:blur(12px);
+  }
+  /* 手机版底部 dock：保留头像和版本号（它们分别是首页和检查更新的入口） */
+  .rail-brand{
+    flex-direction:column;align-items:center;justify-content:center;
+    gap:0;padding:4px 0;min-width:0;
+    flex:0 0 54px;   /* 固定宽度，不参与均分，否则版本号被挤出去 */
+    padding-bottom:calc(4px + env(safe-area-inset-bottom,0px));
+  }
+  .rail-brand .rail-name{display:none}
+  .rail-logo{width:20px;height:20px;border-radius:var(--r-sm)}
+  /* 版本号：字号不低于 12、对比度够、点击区 24 高 —— 它是检查更新入口 */
+  .rail-ver{
+    font-size:var(--fs-xs);min-height:24px;line-height:1;
+    color:var(--muted);gap:1px;margin-top:0;
+    padding:0 3px;white-space:nowrap;
+    display:inline-flex;align-items:center;
+  }
+  .rail-ver svg{width:8px;height:8px}
+  .rail-item{
+    flex:1 1 0;min-width:0;
+    flex-direction:column;gap:2px;
+    padding:6px 2px;
+    justify-content:center;
+    border-radius:var(--r-md);
+  }
+  .rail-item svg{width:17px;height:17px}
+  .rail-item span{font-size:12px;line-height:1.2;text-align:center}
+  /* 底栏只放 7 个功能页，Star / 群 / 侧栏入口收起 */
+  .rail-foot{display:none}
+
+  /* ---- 第二层：中间栏 → 顶部横滑条 ---- */
+  .list{
+    border-right:0;
+    border-bottom:1px solid var(--line);
+    background:var(--surface);
+  }
+  .list-head{
+    flex-direction:row;align-items:center;gap:var(--s2);
+    padding:var(--s2) var(--s3);
+    overflow-x:auto;
+  }
+  .list-title{font-size:var(--fs-md);white-space:nowrap}
+  .list-sum{font-size:var(--fs-xs);white-space:nowrap}
+  .list-credit{padding:0;border-top:0;margin-left:auto}
+  .list-credit-k,.list-credit-note{display:none}
+  .list-credit-v{font-size:var(--fs-md)}
+
+  .list-scroll{
+    display:flex;flex-direction:row;align-items:center;gap:6px;
+    padding:var(--s2) var(--s3);
+    overflow-x:auto;overflow-y:hidden;
+    scrollbar-width:none;
+  }
+  .list-scroll::-webkit-scrollbar{display:none}
+  .list-group{
+    display:none;   /* 分组标题在横滑条里没意义 */
+  }
+  .ch{
+    flex:0 0 auto;width:auto;
+    /* 160 起，够放下「WorkBuddy 国内版」+ 数字；不够就让名字省略 */
+    max-width:176px;
+    padding:5px 10px;min-height:30px;
+    border:1px solid var(--line-2);
+    border-radius:var(--r-pill);
+    background:var(--surface);
+    /* 图标 + 名字 + 数字，三个都不许重叠 */
+    display:inline-flex;align-items:center;gap:6px;
+  }
+  .ch[aria-current="true"]{
+    border-color:transparent;
+    background:var(--accent);
+    color:var(--accent-ink);
+  }
+  .ch[aria-current="true"] .ch-n{color:var(--accent-ink);opacity:.8}
+  .ch-mark{width:16px;height:16px;flex-basis:16px;flex-shrink:0}
+  .ch-name{
+    font-size:var(--fs-xs);
+    flex:1 1 auto;min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  /* 数字太小会被判不合规，也用 12；而且不许收缩，否则和名字重叠 */
+  .ch-n{font-size:var(--fs-xs);flex:0 0 auto;margin-left:2px}
+
+  /* ---- 主区 ---- */
+  .main{min-height:0}
+  .mhead{
+    padding:var(--s3);
+    gap:var(--s2);
+    flex-wrap:wrap;
+    flex-direction:column;
+    align-items:stretch;
+  }
+  .mhead-title{
+    flex-direction:column;
+    align-items:flex-start;
+    gap:2px;
+  }
+  .mhead-name{font-size:var(--fs-lg);line-height:1.25}
+  .mhead-org{font-size:var(--fs-xs);line-height:1.3}
+  .mhead-title .pill{align-self:flex-start;margin-top:2px}
+  .mhead-actions{width:100%;flex-wrap:wrap}
+  .mhead-actions .btn{flex:1 1 auto;justify-content:center;min-width:0}
+  .mbody{padding:var(--s3) var(--s3) var(--s5);gap:var(--s4)}
+
+  /* ---- 数字格：两列，副标题允许换行不截断 ---- */
+  .kpis,.summary{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
+  .sum-cell{padding:var(--s2) var(--s3)}
+  .sum-k{font-size:12px}
+  .sum-v{font-size:var(--fs-lg)}
+  .sum-sub{white-space:normal;overflow:visible;text-overflow:clip;font-size:12px}
+  .kpi{padding:var(--s2) var(--s3)}
+  .kpi-v{font-size:var(--fs-lg)}
+  .kpi-sub{font-size:12px}
+
+  /* ---- 账号卡：单列 ---- */
+  .accts,.acctcards{grid-template-columns:minmax(0,1fr) !important}
+
+  /* ---- 策略：单列 ---- */
+  .policies{grid-template-columns:minmax(0,1fr)}
+  .policy{padding:var(--s2) var(--s3)}
+  .seg{flex-wrap:wrap}
+
+  /* ---- 模型行：右侧档位收窄 ---- */
+  .model{padding:var(--s2)}
+  .model-side{gap:4px}
+  .ctx-select{padding:0 18px 0 6px;font-size:12px}
+  .badge{font-size:12px;line-height:14px}
+
+  /* ---- 表格：改成卡片堆叠 ----
+     375px 下五列放不下，每行变成一张小卡：
+     第一行是模型名（占满），下面数字横排换行。 */
+  .table{border:0;background:transparent}
+  .table-scroll{overflow:visible}
+  .table-scroll .tr{min-width:0}
+  /* 行内写了 grid-template-columns，必须 !important 才能改成 flex */
+  .tr{
+    display:flex !important;
+    flex-wrap:wrap !important;
+    align-items:baseline !important;
+    grid-template-columns:none !important;
+    gap:2px var(--s3);
+    padding:var(--s2) var(--s3);
+    border:1px solid var(--line);
+    border-radius:var(--r-sm);
+    background:var(--surface);
+    min-height:0;
+  }
+  .tr-head{display:none}
+  .td,.td-num,.td-dim{text-align:left !important;font-size:var(--fs-xs)}
+  .tr>.td:first-child{
+    flex:1 1 100%;
+    display:flex !important;align-items:center;gap:6px;
+    padding-bottom:2px;
+    white-space:nowrap;
+  }
+  .td-mono{font-size:var(--fs-xs);white-space:normal;word-break:break-all}
+
+  /* ---- 榜单 ---- */
+  .ranks{grid-template-columns:minmax(0,1fr)}
+  .rank-row{grid-template-columns:20px minmax(0,1fr) 64px 52px}
+
+  /* ---- 图表：轴标签隔一个显示一个 ---- */
+  .chart{height:100px;gap:2px}
+  /* 轴标签只留单数位，字号保持 12；容器允许横滑，别把字挤断 */
+  .axis{overflow-x:auto;scrollbar-width:none}
+  .axis::-webkit-scrollbar{display:none}
+  .axis span{
+    font-size:var(--fs-xs);white-space:nowrap;
+    min-width:36px;
+  }
+  .axis span:nth-child(even){display:none}
+
+  /* ---- 筛选条允许横滑 ---- */
+  .filters{
+    flex-wrap:nowrap;overflow-x:auto;gap:6px;
+    padding-bottom:2px;scrollbar-width:none;
+  }
+  .filters::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto}
+
+  /* ---- 浮层小窗：几乎全宽 ---- */
+  .pop,.pop-wrap>.pop{width:calc(100vw - 32px)}
+  .pop-wrap{padding:var(--s4) var(--s3);min-height:320px}
+
+  /* ---- 按钮最小 40px 高，好点 ---- */
+  .btn{padding:8px 12px;min-height:36px}
+  .tiny,a.tiny{min-height:30px;padding:0 12px}
+
+  /* ---- dock 本体 ---- */
+  .dock{
+    display:flex;
+    position:fixed;left:0;right:0;bottom:0;z-index:50;
+    height:calc(52px + env(safe-area-inset-bottom,0px));
+    padding:0 4px calc(env(safe-area-inset-bottom,0px));
+    background:color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter:blur(12px);
+    border-top:1px solid var(--line);
+    align-items:center;justify-content:space-around;
+  }
+}
+
+/* 更窄（<400px）：数字格仍是两列，第三个独占一行 —— 单列会把页面拉太长 */
+@media (max-width:400px){
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr)) !important}
+  .kpis .kpi:last-child:nth-child(odd){grid-column:1 / -1}
+  .mhead-actions .btn{flex:1 1 100%}
+}
+
+/* 减少动效 */
+@media (prefers-reduced-motion:reduce){
+  *{transition-duration:1ms !important;animation-duration:1ms !important}
+}
+
 
 /* ============================================================
    唯一的一条 bridge：把设计稿 body 上的排版落到 .app
