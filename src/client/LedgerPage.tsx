@@ -27,6 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { POOL_USAGE_PATH } from '../status-paths.ts'
 import type { UsageAccountRow, UsageCall, UsageSummary } from '../stats.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
+import { DayChart, RankList, byChannel, byModel } from './ledger-charts.tsx'
 import { KpiCard, PageHero } from './shell.tsx'
 /** The translator the settings section injects. */
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
@@ -248,7 +249,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
             {t?.('ledger.loading') ?? 'Reading the recorded calls…'}
           </p>
         : <>
-            <div className="kpis">
+            <div className="summary">
               <KpiCard
                 label={t?.('ledger.tokens') ?? 'Tokens'}
                 value={summary.usageReported ? fmtInt(totals?.input ?? 0) : (t?.('ledger.notReported') ?? 'not reported')}
@@ -295,6 +296,39 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
                   {t?.('ledger.empty') ?? 'No calls recorded yet. Start a conversation and this fills in.'}
                 </p>
               : <>
+            {/*
+              每天用量：一根柱子一天，输入在下、输出在上。
+
+              设计稿的 .trend 区块。合成一根看不出「这天是读得多还是写得多」，
+              两段色差把那个区别直接画出来。
+            */}
+            <DayChart
+              days={summary.days}
+              emptyLabel={t?.('ledger.noDays') ?? '还没有按天的记录'}
+            />
+
+            {/*
+              两个榜单：按渠道、按模型。
+
+              只列前五 —— 一份二十行的榜单没有人读到底，而「谁用得最多」
+              这个问题看前三行就有答案了。
+            */}
+            <div className="ranks">
+              <RankList
+                title={t?.('ledger.byChannel') ?? '按渠道'}
+                count={new Set(summary.rows.map(row => row.channel)).size}
+                items={byChannel(summary.rows)}
+                emptyLabel={t?.('ledger.none') ?? '还没有记录'}
+              />
+              <RankList
+                title={t?.('ledger.byModel') ?? '按模型'}
+                count={new Set(summary.rows.map(row => `${row.channel}/${row.model}`)).size}
+                items={byModel(summary.rows)}
+                emptyLabel={t?.('ledger.none') ?? '还没有记录'}
+              />
+            </div>
+
+
                   <section className="sec">
                     <h3 className="sec-title">{t?.('ledger.recent') ?? 'Recent calls'}</h3>
                     <div className="table-scroll">

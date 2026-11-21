@@ -2769,6 +2769,18 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 .vd-titles{display:flex;flex-direction:column;gap:1px;min-width:0}
 .vd-org{font-size:var(--fs-xs);color:var(--faint)}
 
+
+/* 插件独有的几个容器：设计稿是静态页，没有这些运行时才出现的层 */
+.page{display:flex;flex-direction:column;gap:var(--s3);min-height:0}
+.region{display:flex;flex-direction:column;gap:var(--s2);min-width:0}
+.region-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:var(--s3)}
+.models-actions{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}
+/* 按状态分色的事实行（fact-<status>，见 PoolCard 的模板拼接） */
+.fact-claimed{color:var(--accent)}
+.fact-already{color:var(--faint)}
+.fact-skipped{color:var(--faint)}
+.fact-failed{color:var(--danger)}
+
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}
 `
