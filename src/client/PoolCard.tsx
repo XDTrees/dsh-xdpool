@@ -1538,9 +1538,9 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
               <style>{POOL_CARD_CSS}</style>
               {usage === undefined
                 ? null
-                : <section className="dsm-xdpool-card dsm-xdpool-usage" aria-label={t?.('row.usageTitle') ?? 'Usage'}>
+                : <section className="dsm-xdpool-card sec" aria-label={t?.('row.usageTitle') ?? 'Usage'}>
                     <div className="dsm-xdpool-usage-head">
-                      <h3 className="dsm-xdpool-usage-title">
+                      <h3 className="sec-title">
                         {t?.('row.usageTitle') ?? 'Usage'}
                       </h3>
                       {/* Turns and calls are printed as two numbers, never as
@@ -1609,7 +1609,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                   serves. */}
               <section className="dsm-xdpool-card dsm-xdpool-sidebar-row" aria-label={t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}>
                 <div className="dsm-xdpool-sidebar-row-head">
-                  <h3 className="dsm-xdpool-usage-title">{t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}</h3>
+                  <h3 className="sec-title">{t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}</h3>
                   <button
                     type="button"
                     role="switch"
@@ -1669,9 +1669,9 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                     >
                       <div className="dsm-xdpool-region-head">
                         <RegionCardTile region={region} />
-                        <div className="dsm-xdpool-region-titles">
-                          <h3 className="dsm-xdpool-region-title">{card.brandName}</h3>
-                          <p className="dsm-xdpool-region-sub">{card.brandSub}</p>
+                        <div className="mhead-title">
+                          <h3 className="mhead-name">{card.brandName}</h3>
+                          <p className="mhead-org">{card.brandSub}</p>
                         </div>
                         <span className="dsm-xdpool-region-state">{card.stateLabel}</span>
                       </div>
@@ -1684,7 +1684,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                         * card taller than the thing it was describing, and the
                         * numbers were the smallest text on it.
                         */}
-                      <div className="dsm-xdpool-region-stats">
+                      <div className="kpis">
                         <span className="fact">
                           <span className="td-name">
                             {t?.('row.regionStatAccounts') ?? 'accounts'}
@@ -1706,11 +1706,11 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                           </b>
                         </span>
                       </div>
-                      <div className="dsm-xdpool-region-actions">
+                      <div className="sec-actions">
                         <div className="dsm-xdpool-region-btns">
                           <button
                             type="button"
-                            className="dsm-btn dsm-btn-outline dsm-xdpool-region-btn"
+                            className="dsm-btn dsm-btn-outline btn"
                             disabled={busyRegion !== undefined}
                             aria-busy={busyRegion === region}
                             onClick={() => { void rescan(region) }}
@@ -1721,7 +1721,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                           </button>
                           <button
                             type="button"
-                            className="dsm-btn dsm-btn-outline dsm-xdpool-region-btn"
+                            className="dsm-btn dsm-btn-outline btn"
                             disabled={catalogBusyRegion !== undefined}
                             aria-busy={catalogBusyRegion === region}
                             onClick={() => { void refreshCatalog(region) }}
@@ -1757,27 +1757,27 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                         ? <div className="dsm-xdpool-region-cntools">
                             <button
                               type="button"
-                              className="dsm-xdpool-region-tool"
+                              className="field"
                               aria-expanded={distOpen}
                               aria-controls={distPaneId}
                               onClick={() => { setPane(distPaneId, !distOpen) }}
                             >
-                              <span className="dsm-xdpool-region-tool-caret" aria-hidden="true">▸</span>
+                              <span className="strip-caret" aria-hidden="true">▸</span>
                               <span>{t?.('row.distTitle') ?? 'Account usage'}</span>
-                              <span className="dsm-xdpool-region-tool-value">
+                              <span className="td-num">
                                 {distLabel(card.status?.distribution ?? 'priority', t)}
                               </span>
                             </button>
                             <button
                               type="button"
-                              className="dsm-xdpool-region-tool"
+                              className="field"
                               aria-expanded={autoOpen}
                               aria-controls={autoPaneId}
                               onClick={() => { setPane(autoPaneId, !autoOpen) }}
                             >
-                              <span className="dsm-xdpool-region-tool-caret" aria-hidden="true">▸</span>
+                              <span className="strip-caret" aria-hidden="true">▸</span>
                               <span>{t?.('row.autoTitle') ?? 'Automation'}</span>
-                              <span className="dsm-xdpool-region-tool-value">
+                              <span className="td-num">
                                 {card.automation === undefined
                                   ? '–'
                                   : card.automation.enabled
@@ -1789,7 +1789,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                         : null}
                       <RegionCardPane id={accountsPaneId} open={accountsOpen}>
                         {card.accountCount === 0 && card.status !== undefined
-                          ? <div className="dsm-xdpool-region-empty">
+                          ? <div className="hint">
                               <p className="dsm-xdpool-empty-title">
                                 {t?.('row.regionEmptyTitle', { region: card.regionLabel })
                                   ?? t?.('row.regionEmpty') ?? 'No account yet'}
@@ -1888,7 +1888,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                       </RegionCardPane>
                       <RegionCardPane id={modelsPaneId} open={modelsOpen}>
                         {models.length === 0
-                          ? <p className="dsm-xdpool-region-empty">
+                          ? <p className="hint">
                               {t?.('row.regionNoModels') ?? 'No model published by this gateway yet.'}
                             </p>
                           : <>
@@ -1908,7 +1908,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                 */}
                                 {card.modelState.missing.length === 0 ? null : (
                                   <span
-                                    className="dsm-xdpool-region-pane-warn"
+                                    className="hint"
                                     title={card.modelState.missing.join(', ')}
                                   >
                                     {t?.('row.modelsMissingSaved', {
@@ -2052,7 +2052,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                       </RegionCardPane>
                       <RegionCardPane id={autoPaneId} open={autoOpen}>
                         {automation === undefined
-                          ? <p className="dsm-xdpool-region-empty">
+                          ? <p className="hint">
                               {t?.('row.autoUnavailable') ?? 'This lane has no daily-points system.'}
                             </p>
                           : here === undefined
@@ -2579,14 +2579,14 @@ function CreditReserveRow({
           : (t?.('row.reserveSave') ?? 'Save')}
       </button>
       {note === 'saved'
-        ? <span className="dsm-xdpool-reserve-note dsm-xdpool-reserve-note-ok">
+        ? <span className="hint dsm-xdpool-reserve-note-ok">
             {next > 0
               ? (t?.('row.reserveSaved', { credits: next }) ?? `Keeping ${next} credits`)
               : (t?.('row.reserveCleared') ?? 'Reserve cleared')}
           </span>
         : null}
       {note === 'failed'
-        ? <span className="dsm-xdpool-reserve-note dsm-xdpool-reserve-note-bad">
+        ? <span className="hint dsm-xdpool-reserve-note-bad">
             {t?.('row.reserveFailed') ?? 'Not saved — try again'}
           </span>
         : null}
