@@ -274,13 +274,13 @@ export function GatewayPage({ t }: GatewayPageProps) {
         title={t?.('gw.title') ?? 'Gateway'}
         sub={t?.('gw.sub') ?? ''}
         pills={<>
-          <span className="dsm-xdpool-pill" data-tone={enabled ? 'ok' : 'off'}>
+          <span className="pill" data-tone={enabled ? 'ok' : 'off'}>
             {enabled ? (t?.('gw.on') ?? 'On') : (t?.('gw.off') ?? 'Off')}
           </span>
           {/* Two different states, on purpose. "On but not listening" is a
               failure the user has to be able to see; collapsing it into "off"
               would tell them to switch on something that is already on. */}
-          <span className="dsm-xdpool-pill" data-tone={listening ? 'ok' : enabled ? 'warn' : 'off'}>
+          <span className="pill" data-tone={listening ? 'ok' : enabled ? 'warn' : 'off'}>
             {listening
               ? (t?.('gw.listening') ?? 'Listening')
               : enabled
@@ -290,19 +290,19 @@ export function GatewayPage({ t }: GatewayPageProps) {
         </>}
       />
       {error !== undefined
-        ? <p className="dsm-xdpool-panel-error">{error}</p>
+        ? <p className="hint">{error}</p>
         : null}
       {flash !== undefined
         ? <p className="dsm-xdpool-gw-flash">{flash}</p>
         : null}
       {status?.error !== undefined && status.error !== ''
-        ? <p className="dsm-xdpool-panel-error">{status.error}</p>
+        ? <p className="hint">{status.error}</p>
         : null}
       {status === undefined && error === undefined
-        ? <p className="dsm-xdpool-panel-empty">{t?.('gw.loading') ?? 'Reading…'}</p>
+        ? <p className="hint">{t?.('gw.loading') ?? 'Reading…'}</p>
         : null}
-      <div className="dsm-xdpool-sec">
-        <p className="dsm-xdpool-sectitle">{t?.('gw.switch') ?? 'Relay'}</p>
+      <div className="sec">
+        <p className="sec-title">{t?.('gw.switch') ?? 'Relay'}</p>
         <div>
           <button
             type="button"
@@ -316,8 +316,8 @@ export function GatewayPage({ t }: GatewayPageProps) {
         </div>
         <p className="dsm-xdpool-gw-note">{t?.('gw.switchHint') ?? ''}</p>
       </div>
-      <div className="dsm-xdpool-sec">
-        <p className="dsm-xdpool-sectitle">{t?.('gw.address') ?? 'Address'}</p>
+      <div className="sec">
+        <p className="sec-title">{t?.('gw.address') ?? 'Address'}</p>
         <label className="dsm-xdpool-gw-field">
           <span>{t?.('gw.host') ?? 'Bind address'}</span>
           <select value={host} disabled={busy} onChange={event => { setHost(event.target.value) }}>
@@ -406,8 +406,8 @@ export function GatewayPage({ t }: GatewayPageProps) {
           )
           : null}
       </div>
-      <div className="dsm-xdpool-sec">
-        <p className="dsm-xdpool-sectitle">{t?.('gw.key') ?? 'Key'}</p>
+      <div className="sec">
+        <p className="sec-title">{t?.('gw.key') ?? 'Key'}</p>
         <p className="dsm-xdpool-gw-key">
           {key === '' ? (t?.('gw.noKey') ?? 'No key yet') : revealed ? key : maskOf(key)}
         </p>
@@ -447,8 +447,8 @@ export function GatewayPage({ t }: GatewayPageProps) {
         </div>
         <p className="dsm-xdpool-gw-note">{t?.('gw.keyHint') ?? ''}</p>
       </div>
-      <div className="dsm-xdpool-sec">
-        <p className="dsm-xdpool-sectitle">{t?.('gw.share') ?? 'Shared models'}</p>
+      <div className="sec">
+        <p className="sec-title">{t?.('gw.share') ?? 'Shared models'}</p>
         <p className="dsm-xdpool-gw-note">{t?.('gw.shareHint') ?? ''}</p>
         {candidates.length === 0
           ? <p className="dsm-xdpool-gw-note">{t?.('gw.shareNone') ?? ''}</p>
@@ -545,8 +545,8 @@ export function GatewayPage({ t }: GatewayPageProps) {
             </>
           )}
       </div>
-      <div className="dsm-xdpool-sec">
-        <p className="dsm-xdpool-sectitle">{t?.('gw.usage') ?? 'Using it'}</p>
+      <div className="sec">
+        <p className="sec-title">{t?.('gw.usage') ?? 'Using it'}</p>
         <p className="dsm-xdpool-gw-note">{t?.('gw.usageHint') ?? ''}</p>
       </div>
     </div>
