@@ -106,6 +106,37 @@ describe('字段契约', () => {
   })
 })
 
+describe('每一页的 DOM 骨架都是 main > mhead + mbody', () => {
+  /*
+    设计稿七页的 main 形状完全一样：页头 + 正文。
+    少了 .mbody，正文会贴着 pagehead，而设计稿给 .mbody 的 padding
+    没有任何元素用得上 —— 规则在、样式对，只是没地方生效。
+
+    这几条是补真实事故：六个页面（看板/网关/路由/备份/聚合/登录）
+    曾经全都没有 mbody，那六页的正文一直贴着页面边缘。
+  */
+  const PAGES = {
+    'LedgerPage.tsx': ['main', 'mbody'],
+    'GatewayPage.tsx': ['main', 'mbody'],
+    'RoutingPage.tsx': ['main', 'mbody'],
+    'BackupPanel.tsx': ['main', 'mbody'],
+    'AggregatePage.tsx': ['main', 'mbody'],
+    'ChannelsPage.tsx': ['main', 'mbody'],
+  }
+
+  for (const [file, need] of Object.entries(PAGES)) {
+    it(`${file} 有 main 与 mbody`, () => {
+      const src = readFileSync(new URL(`../src/client/${file}`, import.meta.url), 'utf8')
+      for (const cls of need) {
+        expect(src, `${file} 缺少 className 含 ${cls}`).toContain(`className="main`)
+        // 类名可能出现在 className="a b c" 里，用分词式检查
+        const hasIt = [...src.matchAll(/className="([^"]+)"/g)].some(m => m[1].split(/\s+/).includes(cls))
+        expect(hasIt, `${file} 缺少 ${cls}`).toBe(true)
+      }
+    })
+  }
+})
+
 describe('缺失字段不会让界面消失', () => {
   it('图表在 days 缺失时显示空态', () => {
     const charts = readFileSync(new URL('../src/client/ledger-charts.tsx', import.meta.url), 'utf8')
