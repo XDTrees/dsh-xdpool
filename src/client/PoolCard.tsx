@@ -1539,7 +1539,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
               {usage === undefined
                 ? null
                 : <section className="card sec" aria-label={t?.('row.usageTitle') ?? 'Usage'}>
-                    <div className="dsm-xdpool-usage-head">
+                    <div className="sec-head">
                       <h3 className="sec-title">
                         {t?.('row.usageTitle') ?? 'Usage'}
                       </h3>
@@ -1607,8 +1607,8 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                   of reach), and the model pool is untouched: this is a question
                   about where the page is reachable from, not about what it
                   serves. */}
-              <section className="card dsm-xdpool-sidebar-row" aria-label={t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}>
-                <div className="dsm-xdpool-sidebar-row-head">
+              <section className="card row" aria-label={t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}>
+                <div className="sec-head">
                   <h3 className="sec-title">{t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}</h3>
                   <button
                     type="button"
@@ -1839,15 +1839,15 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                               </>}
                         {card.status?.skippedFiles === undefined || card.status.skippedFiles.length === 0
                           ? null
-                          : <div className="dsm-xdpool-skipped">
-                              <p className="dsm-xdpool-skipped-summary">
+                          : <div className="sec">
+                              <p className="sec-head">
                                 {t?.('row.skippedFiles', { count: card.status.skippedFiles.length })
                                   ?? `${card.status.skippedFiles.length} credential file(s) could not be read`}
                               </p>
                               {card.status.skippedFiles.slice(0, 4).map(entry => (
-                                <p key={entry.file} className="dsm-xdpool-skipped-row">
-                                  <span className="dsm-xdpool-skipped-file">{entry.file}</span>
-                                  <span className="dsm-xdpool-skipped-reason">
+                                <p key={entry.file} className="tr">
+                                  <span className="mono">{entry.file}</span>
+                                  <span className="hint">
                                     {entry.reason === 'encrypted'
                                       ? (t?.('row.skippedEncrypted') ?? 'encrypted — start WorkBuddy once')
                                       : entry.reason === 'expired'
@@ -1920,7 +1920,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                   {card.status?.catalogSource !== 'fallback'
                                     ? null
                                     : <span
-                                        className="dsm-xdpool-catalog-offline"
+                                        className="hint"
                                         title={card.status.catalogError ?? undefined}
                                       >
                                         {t?.('row.catalogOffline') ?? 'built-in list (offline)'}
@@ -2007,13 +2007,13 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                       </RegionCardPane>
                       <RegionCardPane id={distPaneId} open={distOpen}>
                         {card.status === undefined ? null
-                          : <div className="dsm-xdpool-dist" role="radiogroup"
+                          : <div className="seg" role="radiogroup"
                               aria-label={t?.('row.distTitle') ?? 'Account usage'}>
-                              <div className="dsm-xdpool-dist-head">
+                              <div className="sec-head">
                                 <span className="dsm-xdpool-dist-title">
                                   {t?.('row.distTitle') ?? 'Account usage'}
                                 </span>
-                                <span className="dsm-xdpool-dist-now">
+                                <span className="pill">
                                   {distLabel(card.status.distribution ?? 'priority', t)}
                                 </span>
                               </div>
@@ -2045,7 +2045,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                   )
                                 })}
                               </div>
-                              <p className="dsm-xdpool-dist-hint">
+                              <p className="hint">
                                 {distHint(card.status?.distribution ?? 'priority', t)}
                               </p>
                             </div>}
@@ -2057,9 +2057,9 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                             </p>
                           : here === undefined
                             ? null
-                            : <div className="dsm-xdpool-auto">
-                              <div className="dsm-xdpool-auto-head">
-                                <span className="dsm-xdpool-auto-title">
+                            : <div className="sec">
+                              <div className="sec-head">
+                                <span className="sec-title">
                                   {t?.('row.autoTitle') ?? 'Automation'}
                                 </span>
                                 {automation.enabled
@@ -2089,7 +2089,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                       : (t?.('row.autoOff') ?? 'Off')}
                                 </button>
                               </div>
-                              <p className="dsm-xdpool-auto-hint">
+                              <p className="hint">
                                 {automation.enabled
                                   ? (t?.('row.autoHintOn') ?? 'Reports activity, claims task rewards and checks in once a day.')
                                   : (t?.('row.autoHintOff') ?? 'Off: no background requests are made for you.')}
@@ -2099,10 +2099,10 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                 && card.automationTotals.compensationCredit === 0
                                 ? null
                                 : <div className="fact">
-                                    <span className="dsm-xdpool-auto-total-label">
+                                    <span className="td-name">
                                       {t?.('row.autoToday') ?? 'Today'}
                                     </span>
-                                    <span className="dsm-xdpool-auto-total-list">
+                                    <span className="facts">
                                       {card.automationTotals.credit > 0
                                         ? <span className="fact">
                                             {t?.('row.autoFromTasks', {
@@ -2139,30 +2139,30 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                     </span>
                                   </div>}
                               {automation.enabled
-                                ? <div className="dsm-xdpool-auto-jobs">
+                                ? <div className="table">
                                     {AUTOMATION_JOBS.map(kind => {
                                       const job = automationJob(here, kind)
                                       const hours = automationHours(here, kind)
                                       const label = t?.(`row.autoJob_${kind}`) ?? kind
                                       return (
-                                        <div key={kind} className="dsm-xdpool-auto-job">
-                                          <span className="dsm-xdpool-auto-job-name">{label}</span>
-                                          <span className="dsm-xdpool-auto-job-when">
+                                        <div key={kind} className="tr">
+                                          <span className="td-name">{label}</span>
+                                          <span className="hint">
                                             {hours.length === 0
                                               ? (t?.('row.autoHourNone') ?? 'not scheduled')
                                               : hours.map(hour => `${String(hour).padStart(2, '0')}:00`).join(' · ')}
                                           </span>
-                                          <span className="dsm-xdpool-auto-job-last">
+                                          <span className="mono">
                                             {job?.lastRunAtMs === undefined
                                               ? (t?.('row.autoNever') ?? 'not run yet')
                                               : `${formatTime(job.lastRunAtMs)} · ${job.ok}${job.failed > 0 ? `/${job.failed}` : ''}`}
                                           </span>
                                           {job?.progress === undefined
                                             ? null
-                                            : <span className="dsm-xdpool-auto-job-note">{job.progress}</span>}
+                                            : <span className="hint">{job.progress}</span>}
                                           {job?.detail === undefined || job.detail.length === 0
                                             ? null
-                                            : <span className="dsm-xdpool-auto-job-detail">
+                                            : <span className="hint">
                                                 {job.detail.join(' · ')}
                                               </span>}
                                           {/*
@@ -2180,7 +2180,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                           */}
                                           {job?.items === undefined || job.items.length === 0
                                             ? null
-                                            : <span className="dsm-xdpool-auto-job-items">
+                                            : <span className="facts">
                                                 {(['claimed', 'already', 'skipped', 'failed'] as const).map(status => {
                                                   const group = job.items?.filter(item => item.status === status) ?? []
                                                   if (group.length === 0) return null
@@ -2301,8 +2301,8 @@ function AccountBlock({
     <div className={isDisabled ? 'dsm-xdpool-account dsm-xdpool-account-off' : 'dsm-xdpool-account'}
          data-serving={serving === true ? 'true' : undefined}
     >
-      <div className="dsm-xdpool-account-head">
-        <span className="dsm-xdpool-account-label">{account.label}</span>
+      <div className="ch-head">
+        <span className="ch-title">{account.label}</span>
         {serving === true
           ? <span className="acct-head">
               <span className="acct-dot" />
@@ -2330,7 +2330,7 @@ function AccountBlock({
           disabled={accountBusyId === account.id || accountBusyId === 'none'}
           onClick={() => { onPreferAccount(isPreferred ? null : account.id) }}
         >
-          <span className="dsm-xdpool-account-prefer-star" aria-hidden="true">★</span>
+          <span className="tiny" aria-hidden="true">★</span>
           {isPreferred ? (t?.('row.accountPreferOn') ?? 'Preferred') : (t?.('row.accountPrefer') ?? 'Prefer')}
         </button>
         <button
@@ -2344,7 +2344,7 @@ function AccountBlock({
           disabled={accountBusyId === account.id}
           onClick={() => { onToggleDisabled(account.id, !isDisabled) }}
         >
-          <span className="dsm-xdpool-account-toggle-dot" />
+          <span className="acct-dot" />
           {isDisabled ? (t?.('row.accountOff') ?? 'Disabled') : (t?.('row.accountInRotation') ?? 'Enabled')}
         </button>
         {/* Throwing the account away for good. Deliberately a separate, plainly
@@ -2354,7 +2354,7 @@ function AccountBlock({
             user permanently drops an account by accident. */}
         <button
           type="button"
-          className="dsm-xdpool-account-ignore"
+          className="ch-count"
           title={t?.('row.accountIgnoreHint') ?? 'Remove this account from the pool for good'}
           disabled={accountBusyId === account.id}
           onClick={() => { onIgnoreAccount(account.id) }}
@@ -2362,8 +2362,8 @@ function AccountBlock({
           {t?.('row.accountIgnore') ?? 'Remove'}
         </button>
       </div>
-      <div className="dsm-xdpool-account-body">
-        <div className="dsm-xdpool-account-copy">
+      <div className="ch-titles">
+        <div className="ch-titles">
           {account.expiresAt !== undefined
             ? <span className="ch-org">
                 {t?.('row.tokenExpiry', { time: formatDateTime(account.expiresAt) })
@@ -2384,7 +2384,7 @@ function AccountBlock({
               </span>
             : null}
           {modelCooldowns.length > 0
-            ? <div className="dsm-xdpool-account-modelcool">
+            ? <div className="ch-note">
                 {modelCooldowns.map(mc => {
                   // Each row of a product line is rate-limited on its own, so a
                   // cooling free row usually has a paid twin that still serves.
@@ -2394,11 +2394,11 @@ function AccountBlock({
                     ? undefined
                     : paidAlternativeFor(coolingModel, models)
                   return (
-                    <span key={mc.modelId} className="dsm-xdpool-account-modelcool-chip">
+                    <span key={mc.modelId} className="badge">
                       {t?.('row.modelCooling', { model: mc.modelId, time: formatDateTime(mc.until) })
                         ?? `${mc.modelId} cooling to ${formatDateTime(mc.until)}`}
                       {twin === undefined ? null
-                        : <span className="dsm-xdpool-account-modelcool-twin" title={t?.('row.paidTwinHint') ?? 'Same model, paid row'}>
+                        : <span className="badge" title={t?.('row.paidTwinHint') ?? 'Same model, paid row'}>
                             {t?.('row.rateLimitedPaidTwin', { id: twin.id, rate: twin.multiplier.toFixed(2) })
                               ?? `→ ${twin.id} (${twin.multiplier.toFixed(2)}x) still works`}
                           </span>}
@@ -2579,14 +2579,14 @@ function CreditReserveRow({
           : (t?.('row.reserveSave') ?? 'Save')}
       </button>
       {note === 'saved'
-        ? <span className="hint dsm-xdpool-reserve-note-ok">
+        ? <span className="hint">
             {next > 0
               ? (t?.('row.reserveSaved', { credits: next }) ?? `Keeping ${next} credits`)
               : (t?.('row.reserveCleared') ?? 'Reserve cleared')}
           </span>
         : null}
       {note === 'failed'
-        ? <span className="hint dsm-xdpool-reserve-note-bad">
+        ? <span className="hint">
             {t?.('row.reserveFailed') ?? 'Not saved — try again'}
           </span>
         : null}
@@ -2631,12 +2631,12 @@ function AccountStats({
      * the balance, the action and the breakdown in reading order at any width,
      * and stops a routine balance from being set in 28px type.
      */
-    <div className="dsm-xdpool-stats">
+    <div className="kpis">
       <span className="sec kpi-v">
         <span className="sec-title">
           {t?.('row.creditsTotal') ?? 'Total'}
         </span>
-        <span className="dsm-xdpool-total-value">
+        <span className="kpi-v">
           {formatNumber(credits?.total)}
         </span>
       </span>
@@ -2653,7 +2653,7 @@ function AccountStats({
                 ? null
                 : <>
                     <div className="hint">
-                      <span className="dsm-xdpool-checkin-streak">
+                      <span className="pill">
                         {t?.('row.checkinStreak', { days: checkin.streakDays })
                           ?? `${checkin.streakDays}-day streak`}
                       </span>
