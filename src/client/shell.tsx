@@ -37,7 +37,6 @@ import { RAIL_ICONS, type RailIconName } from './rail-icons.ts'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { XdPoolSettingsKey } from './locales.ts'
-import { SHARED_CARD_CSS, SHELL_CSS } from './styles.ts'
 import { COMMUNITY_QR_QQ, COMMUNITY_QR_WECHAT } from './community-qr.ts'
 /** The translator the settings section injects. */
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string

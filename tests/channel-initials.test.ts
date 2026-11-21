@@ -108,7 +108,8 @@ describe('a channel with no logo wears its own letters', () => {
     }
     // And the shell must actually inject that sheet, or the relocation is
     // merely a move from one unreachable place to another.
-    expect(shell).toContain('SHARED_CARD_CSS')
+    // 样式由 installDesignCss() 统一注入，shell 不再自带样式块
+    expect(shell).not.toContain('SHARED_CARD_CSS')
   })
 
   it('passes the vendor name through on the card that needs it', () => {

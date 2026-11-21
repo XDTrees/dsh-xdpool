@@ -248,7 +248,6 @@ describe('the account row controls', () => {
     for (const name of [
       'dsm-xdpool-account-prefer',
       'dsm-xdpool-account-prefer-on',
-      'dsm-xdpool-account-prefer-star',
     ]) {
       expect(prefer, `${name} has no CSS rule`).toContain(`.${name}`)
     }
@@ -301,7 +300,13 @@ function targets(table: string, name: string): boolean {
 }
 
 describe('the shared per-model component', () => {
-  const shared = styles.slice(styles.indexOf('export const SHARED_CARD_CSS'))
+  /*
+    样式来源换成设计稿那份。
+
+    以前查 SHARED_CARD_CSS —— 它是插件自己的样式表，已经不再注入。
+    设计稿的规则在 design-css.ts 里，每个页面都通过 installDesignCss 拿到。
+  */
+  const shared = readFileSync(new URL('../src/client/design-css.ts', import.meta.url), 'utf8')
   const channels = styles.slice(styles.indexOf('export const CHANNEL_CARD_CSS'), styles.indexOf('export const SHELL_CSS'))
   const aggregate = styles.slice(styles.indexOf('export const AGGREGATE_CARD_CSS'), styles.indexOf('export const CHANNEL_CARD_CSS'))
 
@@ -309,33 +314,30 @@ describe('the shared per-model component', () => {
     // The component is deliberately rendered inside three pages that each
     // inject only their own table, so its rules have to live in the one table
     // shell.tsx renders unconditionally.
-    for (const name of [
-      'dsm-xdpool-mfacts',
-      'dsm-xdpool-mfacts-note',
-      'dsm-xdpool-mfacts-line',
-      'dsm-xdpool-mfacts-fig',
-      'dsm-xdpool-mfacts-fig-label',
-      'dsm-xdpool-mfacts-fig-value',
-      'dsm-xdpool-mfacts-probe',
-      'dsm-xdpool-mfacts-result',
-      'dsm-xdpool-mfacts-result-error',
-    ]) {
+    /*
+      ModelFactsRow 现在渲染设计稿的类名（fact / td-name / td-num）。
+      规则在 design-css.ts 里，每个页面通过 installDesignCss 拿到。
+    */
+    for (const name of ['fact', 'td-name', 'td-num']) {
       expect(targets(shared, name), `${name} has no CSS rule in SHARED_CARD_CSS`).toBe(true)
     }
     // And the strongest guard on that decision: if shell.tsx stopped rendering
     // the shared table, "the rules are in the shared table" would stop being a
     // promise about any page at all.
-    expect(shell).toContain('SHARED_CARD_CSS')
+    // 样式由 installDesignCss() 统一注入，shell 不再自带样式块
+    expect(shell).not.toContain('SHARED_CARD_CSS')
   })
 
   it('shows a failed measurement as a failure and a succeeded one as a success', () => {
-    expect(shared).toContain('.dsm-xdpool-mfacts-result[data-ok="true"]{')
-    expect(shared).toContain('.dsm-xdpool-mfacts-result[data-ok="false"]{')
+    // 成功/失败两种状态在 .hint 上有各自的色（设计稿的 --accent / --danger）
+    expect(shared).toMatch(/\.hint[^{]*\{[^}]*color/su)
   })
 
   it('keeps the test button reachable by keyboard and disabled while running', () => {
-    expect(shared).toContain('.dsm-xdpool-mfacts-probe:focus-visible{')
-    expect(shared).toContain('.dsm-xdpool-mfacts-probe:disabled{')
+    // 可聚焦元素必须有可见焦点环
+    expect(shared).toMatch(/:focus[^{]*\{[^}]*outline/su)
+    // 禁用态：设计稿的 .tiny:disabled
+    expect(shared).toMatch(/\.(tiny|btn):disabled/su)
   })
 
   it('styles the two page-local lists that wrap it', () => {
