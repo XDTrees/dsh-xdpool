@@ -1004,7 +1004,7 @@ function ProviderRow({
         <div className="vd-actions">
           <button
             type="button"
-            className="dsm-btn dsm-btn-primary"
+            className="btn btn-primary"
             disabled={busy || !provider.supported}
             onClick={() => { void onSave() }}
           >
@@ -1012,7 +1012,7 @@ function ProviderRow({
           </button>
           <button
             type="button"
-            className="dsm-btn dsm-btn-outline"
+            className="btn"
             disabled={busy || !provider.supported}
             onClick={() => { void onTest() }}
           >
@@ -1021,7 +1021,7 @@ function ProviderRow({
           {provider.hasListing
             ? <button
                 type="button"
-                className="dsm-btn dsm-btn-outline"
+                className="btn"
                 disabled={busy || !provider.supported || !provider.configured}
                 onClick={() => { void onDiscover() }}
               >
@@ -1029,18 +1029,18 @@ function ProviderRow({
               </button>
             : null}
           {provider.authUrl !== undefined
-            ? <a className="dsm-btn dsm-btn-ghost" href={provider.authUrl} target="_blank" rel="noreferrer noopener">
+            ? <a className="btn" href={provider.authUrl} target="_blank" rel="noreferrer noopener">
                 {t?.('agg.getKey') ?? 'Get a key'}
               </a>
             : null}
           {provider.website !== undefined && provider.website !== provider.authUrl
-            ? <a className="dsm-btn dsm-btn-ghost" href={provider.website} target="_blank" rel="noreferrer noopener">
+            ? <a className="btn" href={provider.website} target="_blank" rel="noreferrer noopener">
                 {t?.('agg.website') ?? 'Website'}
               </a>
             : null}
           <button
             type="button"
-            className="dsm-btn dsm-btn-ghost"
+            className="btn"
             disabled={busy}
             onClick={() => { void onClear() }}
           >

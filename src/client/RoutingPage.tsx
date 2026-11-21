@@ -383,9 +383,29 @@ export function RoutingPage({ t }: RoutingPageProps) {
           which the shell injects on every page); it is the MEANING that was
           wrong, not the styling.
         */}
-        <button type="button" className="dsm-btn dsm-btn-primary" onClick={addChain}>
+        <button type="button" className="btn btn-primary" onClick={addChain}>
           {t?.('route.newChain') ?? 'New chain'}
         </button>
+      </div>
+      {/*
+        规则怎么生效 —— 设计稿的 .banner。
+
+        这条说明不是装饰：读者看到「命中就停」才知道为什么链是有顺序的，
+        否则会以为它是一个「优先度评分」。
+      */}
+      <div className="banner">
+        <span className="banner-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round">
+            <path d="M6 3v18M18 3v18M6 8h12M6 16h12" />
+          </svg>
+        </span>
+        <div className="banner-body">
+          <span className="banner-t">{t?.('route.bannerTitle') ?? '规则从上往下匹配，命中就停'}</span>
+          <span className="banner-d">
+            {t?.('route.bannerBody') ?? '一条链里的成员按顺序试，谁先能上就用谁。'}
+          </span>
+        </div>
       </div>
       {error !== undefined ? <p className="hint">{error}</p> : null}
       {flash !== undefined ? <p className="hint">{flash}</p> : null}
@@ -431,7 +451,7 @@ export function RoutingPage({ t }: RoutingPageProps) {
                     uses for its own saves. */}
                 <button
                   type="button"
-                  className="dsm-btn dsm-btn-primary"
+                  className="btn btn-primary"
                   disabled={saving}
                   onClick={() => { void save() }}
                 >
@@ -498,7 +518,7 @@ function ChainRow({
               a pair of per-row actions and reading as one filter pill among
               options made the pair look like a choice rather than a pair of
               commands. */}
-          <button type="button" className="dsm-btn dsm-btn-outline" onClick={onEdit}>
+          <button type="button" className="btn" onClick={onEdit}>
             {editable ? (t?.('route.editOpen') ?? 'Editing') : (t?.('route.edit') ?? 'Edit')}
           </button>
           <button type="button" className="tiny" onClick={onDelete}>
@@ -802,7 +822,7 @@ function ChainEditor({
                         </select>
                         <button
                           type="button"
-                          className="dsm-btn dsm-btn-outline"
+                          className="btn"
                           disabled={busy || picked === ''}
                           onClick={() => {
                             if (picked === '' || platform.models.includes(picked)) return
@@ -836,7 +856,7 @@ function ChainEditor({
             </select>
             <button
               type="button"
-              className="dsm-btn dsm-btn-outline"
+              className="btn"
               disabled={busy || pickLane === ''}
               onClick={() => {
                 if (pickLane === '' || used.includes(pickLane)) return

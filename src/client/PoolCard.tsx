@@ -1689,7 +1689,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                         <div className="filters">
                           <button
                             type="button"
-                            className="dsm-btn dsm-btn-outline btn"
+                            className="btn btn"
                             disabled={busyRegion !== undefined}
                             aria-busy={busyRegion === region}
                             onClick={() => { void rescan(region) }}
@@ -1700,7 +1700,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                           </button>
                           <button
                             type="button"
-                            className="dsm-btn dsm-btn-outline btn"
+                            className="btn btn"
                             disabled={catalogBusyRegion !== undefined}
                             aria-busy={catalogBusyRegion === region}
                             onClick={() => { void refreshCatalog(region) }}
@@ -1906,7 +1906,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                       </span>}
                                   <button
                                     type="button"
-                                    className="dsm-btn dsm-btn-outline"
+                                    className="btn"
                                     disabled={!card.modelState.dirty}
                                     onClick={() => { discardModels(region) }}
                                   >
@@ -1914,7 +1914,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                   </button>
                                   <button
                                     type="button"
-                                    className="dsm-btn dsm-btn-primary"
+                                    className="btn btn-primary"
                                     disabled={!card.modelState.dirty || card.modelState.enabled === 0}
                                     onClick={() => { void saveModels(region) }}
                                   >
@@ -2044,7 +2044,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                 {automation.enabled
                                   ? <button
                                       type="button"
-                                      className="dsm-btn dsm-btn-outline tiny"
+                                      className="btn tiny"
                                       disabled={automationRun !== undefined}
                                       onClick={() => { void runAutomationJob(region) }}
                                     >

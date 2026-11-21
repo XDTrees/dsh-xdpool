@@ -332,6 +332,8 @@ export const en = {
   'recuse.label': 'Recommended use',
   // Routing chains (combo:<slug> models).
   'route.title': 'Routing',
+  'route.bannerTitle': 'Rules match top to bottom — first hit wins',
+  'route.bannerBody': 'Members of a chain are tried in order; the first one that answers takes the turn.',
   'route.sub': 'A chain is a model of its own: it tries each member in order and stops at the first answer.',
   'route.chains': 'Chains',
   'route.rosterCount': '{count} model(s) you can chain',
@@ -1023,6 +1025,8 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   'recuse.label': '推荐用途',
   // 路由链（combo:<slug> 模型）
   'route.title': '路由',
+  'route.bannerTitle': '规则从上往下匹配，命中就停',
+  'route.bannerBody': '一条链里的成员按顺序试，谁先能上就用谁。',
   'route.sub': '一条链本身就是个模型：按顺序挨个试成员，谁先答上就用谁。',
   'route.chains': '链',
   'route.rosterCount': '{count} 个可入链模型',

@@ -40,7 +40,9 @@ function shortDay(day: string): string {
  * 高度按「这一天在整段窗口里占多少」归一，不是绝对值：一屏里要同时看形状和大小，
  * 绝对值只对最右边那天有意义。
  */
-export function DayChart({ days, emptyLabel }: {
+export function DayChart({ title, days, emptyLabel }: {
+  /** 区块名，显示在趋势图上方的标题行。 */
+  title: string
   days: readonly UsageDay[] | undefined
   emptyLabel: string
 }): ReactElement {
@@ -56,8 +58,14 @@ export function DayChart({ days, emptyLabel }: {
       和一个标题、一组切换按钮共处一张卡里，才读得出是一个区块。
     */
     <div className="trend">
+      {/*
+        标题行：设计稿的 .trend-head —— 左边是区块名，右边是切换按钮。
+        少了它，读者看不出这块是什么，也不知道柱子在数什么。
+      */}
+      <div className="trend-head">
+        <span className="trend-title">{title}</span>
+      </div>
       <div className="chart">
-        <div className="chart">
           {days.map(day => {
           const total = day.inputTokens + day.outputTokens
           const height = Math.max(2, Math.round((total / peak) * 100))
@@ -83,9 +91,8 @@ export function DayChart({ days, emptyLabel }: {
           )
         })}
       </div>
-        <div className="axis">
-          {days.map(day => <span key={day.day}>{shortDay(day.day)}</span>)}
-        </div>
+      <div className="axis">
+        {days.map(day => <span key={day.day}>{shortDay(day.day)}</span>)}
       </div>
     </div>
   )

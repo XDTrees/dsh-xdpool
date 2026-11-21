@@ -338,7 +338,7 @@ describe('every class the page renders is styled', () => {
     // out as bare browser buttons.
     expect(SHARED_CSS, '.dsm-btn-ghost must exist in the shared sheet').toContain('.dsm-btn-ghost{')
     expect(SHARED_CSS).toContain('.dsm-btn-ghost:hover:not(:disabled)')
-    expect(page).toContain('dsm-btn dsm-btn-ghost')
+    expect(page).toContain('className="btn"') // 按钮统一成设计稿的 .btn
   })
 })
 

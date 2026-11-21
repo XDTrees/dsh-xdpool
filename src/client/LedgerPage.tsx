@@ -303,6 +303,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
               两段色差把那个区别直接画出来。
             */}
             <DayChart
+              title={t?.('ledger.trend') ?? '每天用量'}
               days={summary.days}
               emptyLabel={t?.('ledger.noDays') ?? '还没有按天的记录'}
             />
