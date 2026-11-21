@@ -724,7 +724,31 @@ async function fetchOwnSession(channel: string): Promise<
   }
 }
 
-export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }): ReactElement {
+/**
+ * 渠道详情。
+ *
+ * 设计稿的右栏是「选中那一个渠道的详情」：一个标题、三格统计、它的账号、
+ * 它的模型。中栏的 .ch 行负责选中。
+ *
+ * 之前这里把二十家渠道的卡片平铺成网格 —— 每张卡里各有一套折叠。那不是设计稿
+ * 的形状：读者要连着看两家渠道，得在两张卡之间来回滚，而设计稿里切换只需点
+ * 中栏一行。
+ *
+ * `active` 为空时（首次进入、或选中的渠道被移除）退回第一家，这样右栏
+ * 永远不会是空的。
+ */
+export function ChannelPoolSection({ t, active }: {
+  readonly t?: Translate | undefined
+  /** 中栏选中的渠道 id；空则显示第一家。 */
+  readonly active?: string | undefined
+}): ReactElement {
+  /*
+    选中哪一家。外部传了就用外部的（中栏在别的组件里时），
+    没传就自己管 —— 这样这一栏可以独立渲染成「列表 + 详情」。
+  */
+  const [ownActive, setOwnActive] = useState<string>('')
+  const chosen = active ?? ownActive
+  void setOwnActive
   // Seeded from the cross-mount snapshot: a remount paints the last good cards
   // on its very first frame, then revalidates. Only a genuinely cold start
   // begins empty — and that one says so, instead of rendering air.
@@ -1541,18 +1565,19 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
             : (t?.('channelpool.showAll') ?? `显示全部渠道（${String(entries.length)}）`)}
         </button>
       </div>
+      {/*
+        只画选中的那一个渠道。
+
+        设计稿的右栏是一个渠道的详情（mhead + kpis + 账号 + 模型），
+        中栏的 .ch 行负责切换。原来这里 map 了全部二十家，平铺成网格 ——
+        那不是这个页面的形状。
+      */}
       <div className="accts">
         {((): readonly ChannelEntry[] => {
-          const bound = entries.filter(entry => entry.accounts.length > 0)
-          /**
-           * Nothing bound yet means EVERYTHING is shown.
-           *
-           * Hiding empty cards is only useful once there is something to hide them behind. On a
-           * fresh install every card is empty, so the same rule would produce a blank page with
-           * no way to add the first account.
-           */
-          if (showAll || bound.length === 0) return entries
-          return bound
+          if (entries.length === 0) return []
+          const picked = entries.find(entry => entry.channel.id === chosen)
+          // 选中的渠道还没到（或已被移除）时退回第一家，右栏不留空
+          return [picked ?? entries[0]].filter((e): e is ChannelEntry => e !== undefined)
         })().map(entry => {
           const { channel, accounts, models, facts, balances, statuses, status } = entry
           const icon = channelIcon(channel.id)

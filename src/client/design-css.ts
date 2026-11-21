@@ -2778,6 +2778,20 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 .sw:active:not(:disabled) { filter: brightness(.94) }
 button:disabled { cursor: not-allowed }
 
+
+/* ============================================================
+   渠道详情：单列铺满
+   ------------------------------------------------------------
+   .accts 是账号卡的网格（auto-fill 248px），用在设计稿的详情页正合适 ——
+   六个账号排成三列两行。
+
+   但渠道详情只有一个「卡」，放进那个网格会只占一列 248px，右边空一大片。
+   这一层是单列容器：它里面只有一张卡，卡就该铺满。
+   ============================================================ */
+/* 渠道详情里只有一个 .card（后面跟着它自己的动作行），让卡铺满整行 */
+.accts > .card:first-child { grid-column: 1 / -1 }
+.accts > .sec-actions { grid-column: 1 / -1 }
+
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}
 `

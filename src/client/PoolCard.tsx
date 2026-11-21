@@ -63,6 +63,7 @@ import type { PaidSibling } from '../siblings.ts'
 import { ModelFactsRow } from './model-facts-row.tsx'
 import type { ModelProbeReading } from './model-facts.ts'
 import type { UsageSummary } from '../stats.ts'
+import { ChannelRail, ChannelRailHead, type RailEntry } from './AccountPoolShell.tsx'
 import { ChannelPoolSection } from './ChannelPoolSection.tsx'
 import { BackupPanel } from './BackupPanel.tsx'
 import { POOL_VERSION } from '../version.ts'
@@ -553,6 +554,8 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
     { id: 'gateway', label: t?.('shell.tabGateway') ?? 'Gateway' },
     { id: 'backup', label: t?.('shell.tabBackup') ?? 'Backup' },
   ] as const
+  /** 中栏选中的渠道 id；空则由 ChannelPoolSection 退回第一家。 */
+  const [selectedChannel, setSelectedChannel] = useState<string>('')
   const [page, setPage] = useState<string>(
     () => initialShellTab(rememberedShellTab(), shellTabs) ?? 'pool',
   )
@@ -2187,7 +2190,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                 })}
               </div>
               </section>
-              <ChannelPoolSection t={t} />
+              <ChannelPoolSection t={t} active={selectedChannel} />
               {/* Backup moved to its own page. It operates on the whole credential set
                   rather than on one pool card, and sitting it under the accounts implied a
                   scope it does not have. */}
