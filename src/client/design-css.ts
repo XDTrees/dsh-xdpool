@@ -2743,43 +2743,10 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 @keyframes xd-pulse{0%,100%{opacity:.35}50%{opacity:.6}}
 
 
-/* ============================================================
-   插件独有：余额点浮层、余额条、厂商标题
-   ------------------------------------------------------------
-   这三样在设计稿里没有画：设计稿是静态页，不需要「点一下看余额明细」
-   这个交互，也没有「输入框旁边的余额条」。
-
-   名字沿用设计稿的命名习惯（pop-* / vd-*），这样放在一起不像外来物。
-   ============================================================ */
-
-.pop-sec{padding:var(--s2) var(--s3);border-bottom:1px solid var(--line);font-size:var(--fs-xs);color:var(--faint);font-weight:600}
-.pop-row{display:flex;align-items:baseline;gap:var(--s2);padding:5px var(--s3);min-height:28px}
-.pop-rowname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-sm)}
-.pop-k{font-size:var(--fs-xs);color:var(--faint)}
-.pop-v{font-variant-numeric:tabular-nums;font-size:var(--fs-sm);font-weight:600}
-.pop-rowval{font-variant-numeric:tabular-nums;font-size:var(--fs-sm);flex:0 0 auto}
-.pop-more{display:block;width:100%;padding:var(--s2) var(--s3);border-top:1px solid var(--line);background:none;border-left:0;border-right:0;border-bottom:0;color:var(--accent);font-size:var(--fs-xs);cursor:pointer;text-align:center}
-
-/* 余额条：输入框旁边那条，显示「这个渠道还剩多少」 */
-.strip{display:flex;align-items:center;gap:var(--s2);min-width:0}
-.strip-main{display:flex;align-items:baseline;gap:var(--s1);min-width:0}
-.strip-meta{font-size:var(--fs-xs);color:var(--faint);white-space:nowrap}
-
-/* 厂商标题块：名字一行、分类一行 */
-.vd-titles{display:flex;flex-direction:column;gap:1px;min-width:0}
-.vd-org{font-size:var(--fs-xs);color:var(--faint)}
-
-
-/* 插件独有的几个容器：设计稿是静态页，没有这些运行时才出现的层 */
-.page{display:flex;flex-direction:column;gap:var(--s3);min-height:0}
-.region{display:flex;flex-direction:column;gap:var(--s2);min-width:0}
-.region-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:var(--s3)}
-.models-actions{display:flex;align-items:center;gap:var(--s2);flex-wrap:wrap}
-/* 按状态分色的事实行（fact-<status>，见 PoolCard 的模板拼接） */
-.fact-claimed{color:var(--accent)}
-.fact-already{color:var(--faint)}
-.fact-skipped{color:var(--faint)}
-.fact-failed{color:var(--danger)}
+/* 插件用 span/b 写字实行，设计稿用 dt/dd —— 给前者补上同样的排布 */
+.fact > .td-name{flex:0 0 auto;min-width:60px;color:var(--faint)}
+.fact > .td-num{flex:1 1 auto;min-width:0;color:var(--text);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fact > .td-num[data-tone="quiet"]{color:var(--faint)}
 
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}

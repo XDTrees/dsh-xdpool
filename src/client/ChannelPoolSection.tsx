@@ -1517,7 +1517,14 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
     )
   }
   return (
-    <section className="dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
+    /*
+      这一栏就是详情列 —— 设计稿的 .main。
+
+      外面不能再包一层 section：.app 的第三列要的就是这个元素，
+      多一层包装会让 grid 看不到 .main，详情被挤成 0 宽。
+      dsm-xdpool-cpool 保留为锚点（几处测试按它定位），不承载样式。
+    */
+    <main className="main dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
       {error === undefined ? null
         : <p className="hint">{t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}</p>}
       {notice === undefined ? null : <p className="note">{notice}</p>}
@@ -1603,7 +1610,15 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 </span>
               </div>
               <p className="hint">{channel.note}</p>
-              <div className="kpis">
+              {/*
+                三行事实：账号数 / 模型数 / 剩余积分。
+
+                原来是 .kpis —— 那是四列网格，里面每个 .fact 却是一整行，
+                于是三行的文字全叠在同一格里（截图里"channelpool.statAccounts"
+                和"channelpool.statModels"压在一起就是这个）。
+                .facts 是纵向堆叠的事实行，形状对得上。
+              */}
+              <div className="facts">
                 <span className="fact">
                   <span className="td-name">
                     {t?.('channelpool.statAccounts') ?? '账号'}
@@ -2084,6 +2099,6 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
           </button>
         </div>
       </div>
-    </section>
+    </main>
   )
 }

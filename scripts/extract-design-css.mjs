@@ -113,6 +113,12 @@ const bridge = `
 .skel-line:nth-child(2n){width:72%}
 @keyframes xd-pulse{0%,100%{opacity:.35}50%{opacity:.6}}
 
+
+/* 插件用 span/b 写字实行，设计稿用 dt/dd —— 给前者补上同样的排布 */
+.fact > .td-name{flex:0 0 auto;min-width:60px;color:var(--faint)}
+.fact > .td-num{flex:1 1 auto;min-width:0;color:var(--text);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fact > .td-num[data-tone="quiet"]{color:var(--faint)}
+
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}
 `
