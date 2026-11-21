@@ -469,6 +469,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
         </span>}
       />
       <div className="mbody">
+      <div className="groups">
       {autoCheckin !== undefined && (
         <div className="hint">
           <label className="sw">
@@ -556,6 +557,7 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
             </div>
           </section>
         ))}
+      </div>
       </div>
     </div>
   )

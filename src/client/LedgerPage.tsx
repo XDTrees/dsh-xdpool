@@ -130,6 +130,11 @@ function tokenCells(call: UsageCall): readonly [string, string, string] {
 }
 export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
   const [own, setOwn] = useState<UsageSummary | undefined>(shared)
+  /**
+   * 时间范围。插件只在内存里保留最近 2000 次调用，所以这里是前端过滤，
+   * 不重新请求 —— 切一次范围不该再打一次网络。
+   */
+  const [window_, setWindow] = useState<'today' | 'week' | 'month' | 'all'>('all')
   const [failed, setFailed] = useState(false)
   const mounted = useRef(true)
   // Adopt the parent's copy whenever it arrives, so opening this page shows the
@@ -244,6 +249,29 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
         )}
       />
       <div className="mbody">
+      {/*
+        时间范围：今天 / 7 天 / 30 天 / 全部 —— 设计稿的 .filters。
+
+        没有它，读者只能看「本进程启动以来的全部」，无法回答
+        「昨天用了多少」。插件本身只保留最近 2000 次调用，所以这里
+        是前端过滤，不是重新请求。
+      */}
+      <div className="filters">
+        {(['today', 'week', 'month', 'all'] as const).map(range => (
+          <button
+            key={range}
+            type="button"
+            className="chip"
+            aria-pressed={window_ === range}
+            onClick={() => { setWindow(range) }}
+          >
+            {range === 'today' ? (t?.('ledger.rangeToday') ?? '今天')
+              : range === 'week' ? (t?.('ledger.rangeWeek') ?? '7 天')
+                : range === 'month' ? (t?.('ledger.rangeMonth') ?? '30 天')
+                  : (t?.('ledger.rangeAll') ?? '全部')}
+          </button>
+        ))}
+      </div>
       {failed
         ? <p className="note" role="alert">
             {t?.('ledger.failed') ?? 'Could not read the usage numbers. The pool itself is unaffected.'}

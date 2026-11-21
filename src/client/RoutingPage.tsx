@@ -425,7 +425,12 @@ export function RoutingPage({ t }: RoutingPageProps) {
         ? null
         : drafts.length === 0
           ? <p className="hint">{t?.('route.empty') ?? 'No chain yet.'}</p>
-          : <div className="table-scroll">
+          : <section className="sec">
+              <div className="sec-head">
+                <span className="sec-title">{t?.('route.rulesTitle') ?? '规则'}</span>
+                <span className="sec-n num">{String(drafts.length)}</span>
+              </div>
+              <div className="table-scroll">
               {drafts.map(draft => (
                 <ChainRow
                   key={draft.key}
@@ -457,7 +462,8 @@ export function RoutingPage({ t }: RoutingPageProps) {
                   {saving ? (t?.('route.saving') ?? 'Saving…') : (t?.('route.save') ?? 'Save chains')}
                 </button>
               </div>
-            </div>}
+              </div>
+            </section>}
       </div>
     </div>
   )
