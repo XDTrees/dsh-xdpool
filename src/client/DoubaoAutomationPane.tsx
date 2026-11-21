@@ -96,18 +96,18 @@ export function DoubaoAutomationPane({ t }: { readonly t?: Translate | undefined
     <div className="dsm-xdpool-cpool-auto">
       <button
         type="button"
-        className="dsm-xdpool-region-tool"
+        className="field"
         aria-expanded={open}
         onClick={() => { setOpen(!open) }}
       >
-        <span className="dsm-xdpool-region-tool-caret" aria-hidden="true">▸</span>
+        <span className="strip-caret" aria-hidden="true">▸</span>
         <span>{t?.('row.autoTitle') ?? '积分自动化'}</span>
-        <span className="dsm-xdpool-region-tool-value">
+        <span className="td-num">
           {enabled ? (t?.('row.autoOn') ?? '已开启') : (t?.('row.autoOff') ?? '未开启')}
         </span>
       </button>
-      <div className="dsm-xdpool-region-pane" hidden={!open}>
-        <p className="dsm-xdpool-region-pane-warn">
+      <div className="card" hidden={!open}>
+        <p className="hint">
           豆包的签到自己点了会报系统错误（710010702），所以这里领的是「每日签到」等任务里
           已经完成、可以领的积分。开启后每 6 小时自动领一次。
         </p>
@@ -133,7 +133,7 @@ export function DoubaoAutomationPane({ t }: { readonly t?: Translate | undefined
           </button>
         </div>
         {lastRun === undefined ? null : (
-          <p className="dsm-xdpool-region-pane-note">
+          <p className="hint">
             上次执行：{lastRun}
             {typeof state.lastClaimed === 'number' ? `，领到 ${String(state.lastClaimed)} 项` : ''}
             {state.lastNote === undefined ? '' : `（${state.lastNote}）`}
@@ -141,7 +141,7 @@ export function DoubaoAutomationPane({ t }: { readonly t?: Translate | undefined
         )}
         {lastRun === undefined && state.lastNote === undefined ? null : null}
         {state.lastNote !== undefined && lastRun === undefined ? (
-          <p className="dsm-xdpool-region-pane-note">{state.lastNote}</p>
+          <p className="hint">{state.lastNote}</p>
         ) : null}
       </div>
     </div>
