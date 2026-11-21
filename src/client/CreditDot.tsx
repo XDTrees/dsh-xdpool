@@ -526,9 +526,9 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
             <>
           <div className="pop-head">
             <span className="ch">
-              {snapshot.all.length === 0
+              {(snapshot.all ?? []).length === 0
                 ? (t?.('dot.channelUnknown') ?? '未连接渠道')
-                : `${snapshot.channel?.name ?? ''} · ${grouped(snapshot.all.reduce((sum, row) => sum + row.total, 0))}`}
+                : `${snapshot.channel?.name ?? ''} · ${grouped((snapshot.all ?? []).reduce((sum, row) => sum + row.total, 0))}`}
             </span>
           </div>
           {/* The bar comes first: it is the one element that answers "am I close to the
@@ -563,10 +563,10 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
               header already carries the name and the total, and repeating them below
               would be the same fact twice — which is what made the earlier versions feel
               cluttered. */}
-          {snapshot.all.length > 1
+          {(snapshot.all ?? []).length > 1
             ? (
               <div className="pop-more">
-                {snapshot.all.map(channel => {
+                {(snapshot.all ?? []).map(channel => {
                   const used = snapshot.usedChannels?.some(row => row.id === channel.id) === true
                   return (
                     <div className="pop-row" key={channel.id}>

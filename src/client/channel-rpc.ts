@@ -452,6 +452,14 @@ export interface ChannelCreditPackage {
   /** Percent remaining, when the vendor reports it as a percentage. */
   remaining?: number
   total?: number
+  /**
+   * 这一包的额度与到期时间。
+   *
+   * 厂商回来的数据里就有（临期提醒要用），但类型上一直没声明 ——
+   * `expiring-credits.ts` 读它们时被类型系统挡住。
+   */
+  amount?: number
+  expiresAt?: number
 }
 
 /**

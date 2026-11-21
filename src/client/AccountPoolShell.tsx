@@ -66,9 +66,9 @@ export function PoolSummaryBar({ summary, labels }: {
       <div className="ls ls">
         <span className="ls-k">{labels.total}</span>
         <span className="ls-v">
-          {summary.totals.length === 0
+          {(summary.totals ?? []).length === 0
             ? '—'
-            : summary.totals.map(total => (
+            : (summary.totals ?? []).map(total => (
               <span key={total.unit} className="ls-v">
                 {formatAmount(total.amount)}
                 <span className="ls-u">{total.unit}</span>

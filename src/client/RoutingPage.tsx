@@ -315,7 +315,7 @@ export function RoutingPage({ t }: RoutingPageProps) {
             // flattened sequence every resolver reads. The server derives `models`
             // from `platforms`, so sending both costs nothing and keeps a build
             // that predates the two-level editor from seeing an empty chain.
-            platforms: draft.platforms.map(group => ({ owner: group.owner, models: group.models })),
+            platforms: (draft.platforms ?? []).map(group => ({ owner: group.owner, models: group.models })),
             models: draft.flat,
             strategy: draft.strategy,
             stickyLimit: draft.stickyLimit,
@@ -486,7 +486,7 @@ function ChainRow({
         </span>
         <span className="chip">
           <span className="pill" data-tone="off">
-            {t?.('route.platformCount', { count: draft.platforms.length }) ?? `${draft.platforms.length} platform(s)`}
+            {t?.('route.platformCount', { count: (draft.platforms ?? []).length }) ?? `${(draft.platforms ?? []).length} platform(s)`}
           </span>
           <span className="pill" data-tone="off">
             {t?.('route.memberCount', { count: flat.length }) ?? `${flat.length} model(s)`}
@@ -516,16 +516,16 @@ function ChainRow({
         made the reader work out the platform boundaries themselves. That is the
         part the two-level editor is for, and it should be visible collapsed too.
       */}
-      {draft.platforms.length === 0
+      {(draft.platforms ?? []).length === 0
         ? <p className="pill">{t?.('route.noMembers') ?? 'Add at least one member.'}</p>
         : <ol className="filters">
-            {draft.platforms.map((platform, index) => (
+            {(draft.platforms ?? []).map((platform, index) => (
               <li className="lane" key={`${platform.owner}-${index}`}>
                 <span className="num">{index + 1}</span>
                 <span className="lane-t" title={platform.owner}>
                   {ownerName(platform.owner, t)}
                 </span>
-                <span className="lane-d">· {platform.models.length}</span>
+                <span className="lane-d">· {(platform.models ?? []).length}</span>
               </li>
             ))}
           </ol>}
@@ -603,7 +603,7 @@ function ChainEditor({
   const [pickLane, setPickLane] = useState('')
 
   /** Owners already in the chain — a platform appears at most once. */
-  const used = draft.platforms.map(platform => platform.owner)
+  const used = (draft.platforms ?? []).map(platform => platform.owner)
   /**
    * Platforms still available to add, with how many models each could offer.
    *
@@ -631,7 +631,7 @@ function ChainEditor({
     onChange({ platforms, flat: flattenDraft(platforms) })
   }
   const patchLane = (index: number, update: { models?: string[]; owner?: string }): void => {
-    commit(draft.platforms.map((platform, at) => (at === index ? { ...platform, ...update } : platform)))
+    commit((draft.platforms ?? []).map((platform, at) => (at === index ? { ...platform, ...update } : platform)))
   }
   const moveLane = (index: number, delta: number): void => {
     const next = [...draft.platforms]
@@ -702,10 +702,10 @@ function ChainEditor({
       <p className="hint">{t?.('route.stickyHint') ?? ''}</p>
 
       <p className="hint">{t?.('route.platformOrder') ?? 'Platform order (higher is tried first)'}</p>
-      {draft.platforms.length === 0
+      {(draft.platforms ?? []).length === 0
         ? <p className="pill">{t?.('route.noMembers') ?? 'Add at least one member.'}</p>
         : <div className="grid2">
-            {draft.platforms.map((platform, index) => {
+            {(draft.platforms ?? []).map((platform, index) => {
               const group = { models: platform.models }
               const choices = candidatesFor(platform.owner, group)
               const picked = pickByLane[platform.owner] ?? ''
@@ -720,17 +720,17 @@ function ChainEditor({
                     <button type="button" className="tiny" disabled={index === 0} onClick={() => { moveLane(index, -1) }}>
                       {t?.('route.moveUp') ?? 'Up'}
                     </button>
-                    <button type="button" className="tiny" disabled={index === draft.platforms.length - 1} onClick={() => { moveLane(index, 1) }}>
+                    <button type="button" className="tiny" disabled={index === (draft.platforms ?? []).length - 1} onClick={() => { moveLane(index, 1) }}>
                       {t?.('route.moveDown') ?? 'Down'}
                     </button>
                     <button type="button" className="tiny" onClick={() => { dropLane(index) }}>
                       {t?.('route.removePlatform') ?? 'Remove'}
                     </button>
                   </div>
-                  {platform.models.length === 0
+                  {(platform.models ?? []).length === 0
                     ? <p className="hint">{t?.('route.platformNoModels') ?? 'No model added to this platform yet.'}</p>
                     : <ol className="table">
-                        {platform.models.map((model, modelIndex) => {
+                        {(platform.models ?? []).map((model, modelIndex) => {
                           const fullId = platform.owner === 'workbuddy' ? model : `${platform.owner}/${model}`
                           const candidate = candidateById.get(fullId)
                           return (
@@ -761,7 +761,7 @@ function ChainEditor({
                               <button
                                 type="button"
                                 className="tiny"
-                                disabled={modelIndex === platform.models.length - 1}
+                                disabled={modelIndex === (platform.models ?? []).length - 1}
                                 onClick={() => {
                                   const next = [...platform.models]
                                   const [moved] = next.splice(modelIndex, 1)

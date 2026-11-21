@@ -159,10 +159,11 @@ describe('the credit dot', () => {
     // the LARGEST channel, not the sum. Two screens in one plugin disagreeing about the
     // same quantity is a bug the reader cannot resolve.
     const start = dot.indexOf('pop-head')
-    const body = dot.slice(start, start + 800)
-    expect(body).toContain('snapshot.all.reduce')
+    const body = dot.slice(start, start + 1600)
+    // 两处都判空：snapshot.all 来自一次 fetch，读失败时是 undefined
+    expect(body).toContain('(snapshot.all ?? []).reduce(')
     // And the per-channel split is shown so the total is reconcilable.
-    expect(dot).toContain('snapshot.all.map')
+    expect(dot).toContain('(snapshot.all ?? []).map(')
   })
 
   it('names the channel in the header, not a status word', () => {
