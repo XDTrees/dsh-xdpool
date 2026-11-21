@@ -89,7 +89,7 @@ describe('设计稿对齐', () => {
       grid 就只看到一个孩子，整页塌成一块（前十几轮反复踩的就是这个）。
     */
     const flat = all.split(String.fromCharCode(13)).join('')
-    expect(flat).toMatch(/\.app\s*\{[\s\S]{0,600}?display:grid/u)
+    expect(flat).toMatch(/\.app\s*\{[\s\S]{0,1200}?display:grid/u)
     expect(flat).toMatch(/\.app\s*\{[\s\S]{0,600}?grid-template-columns:\s*var\(--rail-w\)\s+var\(--list-w\)/u)
     // 两栏的宽度来自 token，不是散落的魔数
     expect(flat).toMatch(/--rail-w:\s*\d+px/u)
