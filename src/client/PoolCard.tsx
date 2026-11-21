@@ -45,7 +45,6 @@ import {
   type PoolDistribution,
 } from '../status-paths.ts'
 import { DEFAULT_AUTOMATION_HOURS } from '../status-paths.ts'
-import { POOL_CARD_CSS } from './styles.ts'
 import { POOL_CARD_AVATAR } from './avatar.ts'
 import { PoolShell, PageHero, initialShellTab, rememberedShellTab } from './shell.tsx'
 import { LedgerPage } from './LedgerPage.tsx'
@@ -111,20 +110,6 @@ export type PoolCardProps = PropsRuntime<'settings.plugin.item'>
  */
 const DEFAULT_CONTEXT_BUDGET = 200_000
 const POLL_INTERVAL_MS = 30_000
-/** Inject or refresh the shared card CSS for the current client bundle. */
-if (typeof document !== 'undefined') {
-  const cssId = 'dsh-xdpool/client.css'
-  const existing = document.querySelector<HTMLStyleElement>(`style[data-plugin-css="${cssId}"]`)
-  if (existing !== null) {
-    existing.textContent = POOL_CARD_CSS
-  } else {
-    const styleTag = document.createElement('style')
-    styleTag.dataset.plugin = 'dsh-xdpool'
-    styleTag.dataset.pluginCss = cssId
-    styleTag.textContent = POOL_CARD_CSS
-    document.head.appendChild(styleTag)
-  }
-}
 function formatNumber(value: number | undefined): string {
   if (value === undefined) return '–'
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)
@@ -569,7 +554,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
     { id: 'backup', label: t?.('shell.tabBackup') ?? 'Backup' },
   ] as const
   const [page, setPage] = useState<string>(
-    () => initialShellTab(rememberedShellTab(), shellTabs),
+    () => initialShellTab(rememberedShellTab(), shellTabs) ?? 'pool',
   )
   /**
    * Which side an in-flight action belongs to.
@@ -1535,7 +1520,6 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                 : page === 'gateway' ? <GatewayPage t={t} />
                   : page === 'backup' ? <BackupPanel t={t} />
                   : <>
-              <style>{POOL_CARD_CSS}</style>
               {usage === undefined
                 ? null
                 : <section className="card sec" aria-label={t?.('row.usageTitle') ?? 'Usage'}>
@@ -2065,7 +2049,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                 {automation.enabled
                                   ? <button
                                       type="button"
-                                      className="dsm-btn dsm-btn-outline dsm-xdpool-auto-run"
+                                      className="dsm-btn dsm-btn-outline tiny"
                                       disabled={automationRun !== undefined}
                                       onClick={() => { void runAutomationJob(region) }}
                                     >
@@ -2379,7 +2363,7 @@ function AccountBlock({
               </span>
             : null}
           {isDead
-            ? <span className="ch-org dsm-xdpool-account-meta-dead">
+            ? <span className="ch-org">
                 {t?.('row.credentialDeadHint') ?? 'Sign in again in the WorkBuddy desktop app to restore it'}
               </span>
             : null}
