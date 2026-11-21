@@ -388,6 +388,8 @@ export const en = {
   // Login channels (the vendored pack's thirteen QR/browser logins, plus Doubao).
   'chan.tab': 'Login channels',
   'chan.title': 'Login channels',
+  'chan.groupBound': 'Connected',
+  'chan.groupUnbound': 'Not connected',
   'chan.sub': 'Thirteen vendors that sign you in with a browser or a QR code — scan once and their free models join the same picker.',
   'chan.login': 'Add account',
   'chan.loginSms': 'Sign in (SMS)',
@@ -1081,6 +1083,8 @@ export const zh: Record<XdPoolSettingsKey, string> = {
   // 扫码登录页（vendored pack 的十三家 + 豆包）
   'chan.tab': '扫码登录',
   'chan.title': '扫码登录',
+  'chan.groupBound': '已连接',
+  'chan.groupUnbound': '未连接',
   'chan.sub': '十四家支持网页或扫码登录的厂商：登一次，它们的免费模型就出现在同一个选择器里。',
   'chan.login': '添加账号',
   'chan.loginSms': '登录（短信）',

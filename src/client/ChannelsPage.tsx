@@ -30,7 +30,6 @@ import {
 import type { ChannelAccount, ChannelRpcEnvelope } from '../channels.ts'
 import { accountsFrom, autoCheckinFrom, callPack, createdFrom, fetchChannels, pollFrom, providerStatusesFrom, type ChannelAutoCheckin } from './channel-rpc.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
-import { CHANNEL_CARD_CSS } from './styles.ts'
 import { BrandTile } from './brand-tile.tsx'
 import { channelIcon, channelInitials } from './channel-icons.ts'
 import { PageHero } from './shell.tsx'
@@ -454,7 +453,6 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
   const channels = status?.channels ?? []
   return (
     <div className="groups">
-      <style>{CHANNEL_CARD_CSS}</style>
       <PageHero
         title={t?.('chan.title') ?? 'Login channels'}
         sub={t?.('chan.sub') ?? ''}
@@ -512,7 +510,24 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
       {state === 'ready' && channels.length === 0 && (
         <p className="hint">{t?.('chan.empty')}</p>
       )}
-      {channels.map((channel) => (
+      {/*
+        两组：已连接 / 未连接 —— 设计稿的 .group-head + .cards。
+
+        平铺成一张长表时，读者要逐行看右侧的「已登录」才知道哪些能用，
+        而这两个组的答案本来是不同的（一个"能用"，一个"还得登"）。
+      */}
+      {([[t?.('chan.groupBound') ?? '已连接', channels.filter(c => connectedFor(c).length > 0)],
+        [t?.('chan.groupUnbound') ?? '未连接', channels.filter(c => connectedFor(c).length === 0)]] as const)
+        .filter(([, list]) => list.length > 0)
+        .map(([label, list]) => (
+          <section key={label}>
+            <div className="group-head">
+              <span className="group-dot" aria-hidden="true" />
+              <span className="group-title">{label}</span>
+              <span className="group-n num">{String(list.length)}</span>
+            </div>
+            <div className="cards">
+      {list.map((channel) => (
         <ChannelRow
           key={channel.id}
           channel={channel}
@@ -537,6 +552,9 @@ export function ChannelsPage({ t }: ChannelsPageProps) {
           onSubmitPaste={() => { void submitPaste(channel.id) }}
         />
       ))}
+            </div>
+          </section>
+        ))}
     </div>
   )
 }
@@ -586,8 +604,14 @@ function ChannelRow({
     >
       <div className="ch-head">
         <BrandTile accent={channel.accent} glyph="login" {...tileMark} />
-        <span className="ch-title">{channel.name}</span>
-        <span className="ch-org">{channel.org}</span>
+        {/*
+          名字与厂商放在一列里 —— 设计稿的 .ch-titles。
+          平铺的话 .ch-title 的 ellipsis 没有容器约束，长名字会把厂商名挤出去。
+        */}
+        <span className="ch-titles">
+          <span className="ch-title">{channel.name}</span>
+          <span className="ch-org">{channel.org}</span>
+        </span>
         {connectedCount > 0 && (
           <span className="ch-state">
             {t?.('chan.connected', { count: connectedCount }) ?? 'Connected'}
