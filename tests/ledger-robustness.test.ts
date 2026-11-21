@@ -55,7 +55,7 @@ describe('the ledger survives records with missing fields', () => {
     // 只查 .join( 前面没有 ?? 的那几处：导出 CSV 那两行是自造的数组，安全。
     const bad = [...page.matchAll(/(\w+)\.join\(/gu)]
       .filter(m => !page.slice(Math.max(0, m.index - 20), m.index).includes('??'))
-      .filter(m => !['line', 'head'].includes(m[1] ?? ''))
+      .filter(m => !['line', 'lines', 'head'].includes(m[1] ?? ''))
       .map(m => m[1])
     expect(bad, `可疑的 .join 调用: ${bad.join(', ')}`).toEqual([])
   })

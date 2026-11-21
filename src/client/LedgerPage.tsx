@@ -130,6 +130,51 @@ function tokenCells(call: UsageCall): readonly [string, string, string] {
 }
 export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
   const [own, setOwn] = useState<UsageSummary | undefined>(shared)
+  const [clearing, setClearing] = useState(false)
+
+  /**
+   * 导出 CSV。
+   *
+   * 前端生成 Blob，不经过后端：这份数据本来就在内存里，
+   * 再绕一次接口只会多一个失败点。列名用英文（Excel/Numbers 都认），
+   * 值原样输出 —— 把数字格式化成 "1.2k" 会让它没法再算。
+   */
+  const exportCsv = useCallback(() => {
+    const rows = own?.rows ?? []
+    if (rows.length === 0) return
+    const head = ['channel', 'region', 'model', 'calls', 'turns', 'failed', 'recovered',
+      'input_tokens', 'output_tokens', 'reasoning_tokens', 'cached_tokens', 'tps', 'avg_ttft_ms', 'last_used_at']
+    const esc = (v: unknown): string => {
+      const s2 = v === null || v === undefined ? '' : String(v)
+      return /[",\n]/.test(s2) ? `"${s2.replace(/"/g, '""')}"` : s2
+    }
+    const lines = [head.join(',')]
+    for (const r of rows) {
+      lines.push([r.channel, r.region, r.model, r.calls, r.turns, r.failed, r.recovered,
+        r.inputTokens, r.outputTokens, r.reasoningTokens, r.cachedTokens,
+        r.tps, r.avgTtftMs, r.lastUsedAt === undefined ? '' : new Date(r.lastUsedAt).toISOString(),
+      ].map(esc).join(','))
+    }
+    /* BOM：Excel 不认没 BOM 的 UTF-8 中文 */
+    const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `xdpool-usage-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [own])
+
+  /** 清空记录。DELETE 之后重新读一次，免得界面还挂着旧数字。 */
+  const clearUsage = useCallback(async () => {
+    setClearing(true)
+    try {
+      await fetch(POOL_USAGE_PATH, { method: 'DELETE', credentials: 'same-origin' })
+      const res = await fetch(POOL_USAGE_PATH, { headers: { accept: 'application/json' }, credentials: 'same-origin' })
+      if (res.ok) setOwn(await res.json() as UsageSummary)
+    } catch { /* 失败时保留原有数字，读者能看出没清掉 */ }
+    finally { setClearing(false) }
+  }, [])
   /**
    * 时间范围。插件只在内存里保留最近 2000 次调用，所以这里是前端过滤，
    * 不重新请求 —— 切一次范围不该再打一次网络。
@@ -245,6 +290,32 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
             <span className="pill" data-tone="off">
               {t?.('ledger.memoryOnly') ?? 'cleared on restart'}
             </span>
+          </>
+        )}
+        /*
+          页级动作 —— 设计稿放在 .mhead-actions（页头右侧）。
+          这两件事作用于整份记录，不属于任何一个区块。
+        */
+        actions={(
+          <>
+            <button
+              type="button"
+              className="btn"
+              disabled={summary === undefined || summary.rows.length === 0}
+              onClick={() => { exportCsv() }}
+            >
+              {t?.('ledger.exportCsv') ?? '导出 CSV'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={clearing || (summary?.calls ?? 0) === 0}
+              onClick={() => { void clearUsage() }}
+            >
+              {clearing
+                ? (t?.('ledger.clearing') ?? '清空中…')
+                : (t?.('ledger.clear') ?? '清空')}
+            </button>
           </>
         )}
       />

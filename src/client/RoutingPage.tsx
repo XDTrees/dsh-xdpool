@@ -358,6 +358,12 @@ export function RoutingPage({ t }: RoutingPageProps) {
       <PageHero
         title={t?.('route.title') ?? 'Routing'}
         sub={t?.('route.sub') ?? ''}
+        /* 新建一条链是页级动作 —— 设计稿放在 .mhead-actions */
+        actions={(
+          <button type="button" className="btn btn-primary" onClick={addChain}>
+            {t?.('route.newChain') ?? '新建规则'}
+          </button>
+        )}
         pills={<>
           <span className="pill" data-tone="ok">
             {t?.('route.memberCount', { count: combos.length }) ?? `${combos.length} chain(s)`}
@@ -382,9 +388,6 @@ export function RoutingPage({ t }: RoutingPageProps) {
           which the shell injects on every page); it is the MEANING that was
           wrong, not the styling.
         */}
-        <button type="button" className="btn btn-primary" onClick={addChain}>
-          {t?.('route.newChain') ?? 'New chain'}
-        </button>
       </div>
       {/*
         规则怎么生效 —— 设计稿的 .banner。
