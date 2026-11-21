@@ -987,7 +987,26 @@ export function ChannelPoolSection({ t, active }: {
         balanceError: undefined as string | undefined,
         modelError: undefined as string | undefined,
       }
-      const next = channels
+      /*
+        名册是编译期常量，后端没答也照样列出来。
+
+        `channels` 来自 /plugins/dsh-xdpool/channels —— 首装、或 pack 还没
+        装上时它是空的。那时中栏就是一片空白：读者看不到自己能登什么，
+        只看到一个 retry。而二十家的名字本来就是代码里的常量，
+        没有理由等后端。
+
+        后端答了就用它的（可能带新的备注/端点），没答就用名册。
+      */
+      const roster: readonly PoolWebChannel[] = channels.length > 0
+        ? channels
+        : REGISTERED_CHANNELS
+            .filter(channel => !REGION_OWNED_CHANNELS.has(channel.id))
+            .map(channel => ({
+              ...channel,
+              loginKind: channel.login,
+              ownedByPool: channel.ownedByPool === true,
+            }) as PoolWebChannel)
+      const next = roster
         .map(channel => ({
           channel,
           ...(byProvider.get(channel.id) ?? EMPTY_ENTRY),
