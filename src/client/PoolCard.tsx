@@ -1558,7 +1558,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                       </p>
                     </div>
                     {usage.calls === 0
-                      ? <p className="dsm-xdpool-usage-note">{t?.('row.usageEmpty') ?? 'No calls recorded yet.'}</p>
+                      ? <p className="hint">{t?.('row.usageEmpty') ?? 'No calls recorded yet.'}</p>
                       : null}
                     {/* "Reported no tokens" and "used no tokens" are different
                         facts, and only `usageReported` tells them apart. Printing
@@ -1567,7 +1567,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                         invent. */}
                     {usage.usageReported
                       ? null
-                      : <p className="dsm-xdpool-usage-note">{t?.('row.usageNotReported') ?? 'The gateway reported no token counts.'}</p>}
+                      : <p className="hint">{t?.('row.usageNotReported') ?? 'The gateway reported no token counts.'}</p>}
                     <div className="dsm-xdpool-usage-rows">
                       {usage.rows.map(row => (
                         <div className="dsm-xdpool-usage-row" key={`${row.region}:${row.model}`}>
@@ -1596,7 +1596,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                     {/* Stated rather than hidden: the window lives in memory, so
                         a restart empties it. A user who reads these as a
                         permanent record will one day be wrong about them. */}
-                    <p className="dsm-xdpool-usage-note">
+                    <p className="hint">
                       {t?.('row.usageWindow', { samples: usage.samples }) ?? 'Last {samples} call(s) held in memory; restarting clears them.'}
                     </p>
                   </section>}
@@ -1625,7 +1625,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                         : (t?.('row.autoOff') ?? 'Off')}
                   </button>
                 </div>
-                <p className="dsm-xdpool-usage-note">
+                <p className="hint">
                   {sidebarRow
                     ? (t?.('row.sidebarRowOn') ?? 'XD Pool has its own row in the left sidebar. Turn it off to open the pool from Settings instead.')
                     : (t?.('row.sidebarRowOff') ?? 'The sidebar row is hidden; the pool still opens from Settings → XD Pool, and models are unaffected.')}
@@ -1685,23 +1685,23 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                         * numbers were the smallest text on it.
                         */}
                       <div className="dsm-xdpool-region-stats">
-                        <span className="dsm-xdpool-region-stat">
-                          <span className="dsm-xdpool-region-label">
+                        <span className="fact">
+                          <span className="td-name">
                             {t?.('row.regionStatAccounts') ?? 'accounts'}
                           </span>{' '}
-                          <b className="dsm-xdpool-region-num">{card.accountCount === 0 ? '–' : String(card.accountCount)}</b>
+                          <b className="td-num">{card.accountCount === 0 ? '–' : String(card.accountCount)}</b>
                         </span>
-                        <span className="dsm-xdpool-region-stat">
-                          <span className="dsm-xdpool-region-label">
+                        <span className="fact">
+                          <span className="td-name">
                             {t?.('row.regionStatModels') ?? 'models'}
                           </span>{' '}
-                          <b className="dsm-xdpool-region-num">{models.length === 0 ? '–' : `${card.modelState.enabled}/${models.length}`}</b>
+                          <b className="td-num">{models.length === 0 ? '–' : `${card.modelState.enabled}/${models.length}`}</b>
                         </span>
-                        <span className="dsm-xdpool-region-stat">
-                          <span className="dsm-xdpool-region-label">
+                        <span className="fact">
+                          <span className="td-name">
                             {t?.('row.regionStatCredit') ?? 'credit left'}
                           </span>{' '}
-                          <b className="dsm-xdpool-region-num" data-tone="quiet">
+                          <b className="td-num" data-tone="quiet">
                             {creditLeft ?? '–'}
                           </b>
                         </span>
@@ -2098,13 +2098,13 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                 && card.automationTotals.bonusCredit === 0 && card.automationTotals.travelCredit === 0
                                 && card.automationTotals.compensationCredit === 0
                                 ? null
-                                : <div className="dsm-xdpool-auto-total">
+                                : <div className="fact">
                                     <span className="dsm-xdpool-auto-total-label">
                                       {t?.('row.autoToday') ?? 'Today'}
                                     </span>
                                     <span className="dsm-xdpool-auto-total-list">
                                       {card.automationTotals.credit > 0
-                                        ? <span className="dsm-xdpool-auto-total-row">
+                                        ? <span className="fact">
                                             {t?.('row.autoFromTasks', {
                                               credit: card.automationTotals.credit,
                                               energy: card.automationTotals.energy,
@@ -2113,25 +2113,25 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                                           </span>
                                         : null}
                                       {card.automationTotals.checkinCredit > 0
-                                        ? <span className="dsm-xdpool-auto-total-row">
+                                        ? <span className="fact">
                                             {t?.('row.autoFromCheckin', { credit: card.automationTotals.checkinCredit })
                                               ?? `Check-in +${card.automationTotals.checkinCredit}`}
                                           </span>
                                         : null}
                                       {card.automationTotals.bonusCredit > 0
-                                        ? <span className="dsm-xdpool-auto-total-row">
+                                        ? <span className="fact">
                                             {t?.('row.autoFromBonus', { credit: card.automationTotals.bonusCredit })
                                               ?? `Streak +${card.automationTotals.bonusCredit}`}
                                           </span>
                                         : null}
                                       {card.automationTotals.travelCredit > 0
-                                        ? <span className="dsm-xdpool-auto-total-row">
+                                        ? <span className="fact">
                                             {t?.('row.autoFromTravel', { credit: card.automationTotals.travelCredit })
                                               ?? `Buddy +${card.automationTotals.travelCredit}`}
                                           </span>
                                         : null}
                                       {card.automationTotals.compensationCredit > 0
-                                        ? <span className="dsm-xdpool-auto-total-row">
+                                        ? <span className="fact">
                                             {t?.('row.autoFromCompensation', { credit: card.automationTotals.compensationCredit })
                                               ?? `Compensation +${card.automationTotals.compensationCredit}`}
                                           </span>
@@ -2215,7 +2215,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
               {flash === undefined ? null
                 : <p className="note">{flash}</p>}
               {error === undefined ? null
-                : <p className="dsm-xdpool-error">
+                : <p className="hint">
                     {t?.('row.error', { message: error }) ?? `Pool status unavailable: ${error}`}
                   </p>}
           </>
@@ -2304,9 +2304,9 @@ function AccountBlock({
       <div className="dsm-xdpool-account-head">
         <span className="dsm-xdpool-account-label">{account.label}</span>
         {serving === true
-          ? <span className="dsm-xdpool-current">
-              <span className="dsm-xdpool-current-dot" />
-              <span className="dsm-xdpool-current-label">
+          ? <span className="acct-head">
+              <span className="acct-dot" />
+              <span className="acct-name">
                 {t?.('row.currentAccount') ?? 'In use now'}
               </span>
             </span>
@@ -2365,13 +2365,13 @@ function AccountBlock({
       <div className="dsm-xdpool-account-body">
         <div className="dsm-xdpool-account-copy">
           {account.expiresAt !== undefined
-            ? <span className="dsm-xdpool-account-meta">
+            ? <span className="ch-org">
                 {t?.('row.tokenExpiry', { time: formatDateTime(account.expiresAt) })
                   ?? `token ${formatDateTime(account.expiresAt)}`}
               </span>
             : null}
           {isCooling && cooldownUntil !== undefined && !Number.isNaN(cooldownUntil)
-            ? <span className="dsm-xdpool-account-meta">
+            ? <span className="ch-org">
                 {t?.('row.cooldownUntil', { time: formatTime(cooldownUntil) }) ?? `until ${formatTime(cooldownUntil)}`}
                 {' · '}
                 {t?.('row.cooldownHits', { hits: account.rateLimitHits ?? 0 })
@@ -2379,7 +2379,7 @@ function AccountBlock({
               </span>
             : null}
           {isDead
-            ? <span className="dsm-xdpool-account-meta dsm-xdpool-account-meta-dead">
+            ? <span className="ch-org dsm-xdpool-account-meta-dead">
                 {t?.('row.credentialDeadHint') ?? 'Sign in again in the WorkBuddy desktop app to restore it'}
               </span>
             : null}
@@ -2428,37 +2428,37 @@ function AccountBlock({
             row of zeroes that reads like a failure. */}
         {account.automationToday === undefined
           ? null
-          : <div className="dsm-xdpool-earned">
-              <span className="dsm-xdpool-earned-label">
+          : <div className="fact">
+              <span className="td-name">
                 {t?.('row.autoEarned') ?? 'Automation today'}
               </span>
-              <span className="dsm-xdpool-earned-list">
+              <span className="facts">
                 {account.automationToday.credit > 0
-                  ? <span className="dsm-xdpool-earned-row">
+                  ? <span className="fact">
                       {t?.('row.autoFromTasks', { credit: account.automationToday.credit, energy: account.automationToday.energy, count: account.automationToday.claimed })
                         ?? `Tasks +${account.automationToday.credit}`}
                     </span>
                   : null}
                 {account.automationToday.checkinCredit > 0
-                  ? <span className="dsm-xdpool-earned-row">
+                  ? <span className="fact">
                       {t?.('row.autoFromCheckin', { credit: account.automationToday.checkinCredit })
                         ?? `Check-in +${account.automationToday.checkinCredit}`}
                     </span>
                   : null}
                 {account.automationToday.bonusCredit > 0
-                  ? <span className="dsm-xdpool-earned-row">
+                  ? <span className="fact">
                       {t?.('row.autoFromBonus', { credit: account.automationToday.bonusCredit })
                         ?? `Streak +${account.automationToday.bonusCredit}`}
                     </span>
                   : null}
                 {account.automationToday.travelCredit > 0
-                  ? <span className="dsm-xdpool-earned-row">
+                  ? <span className="fact">
                       {t?.('row.autoFromTravel', { credit: account.automationToday.travelCredit })
                         ?? `Buddy +${account.automationToday.travelCredit}`}
                     </span>
                   : null}
                 {account.automationToday.compensationCredit > 0
-                  ? <span className="dsm-xdpool-earned-row">
+                  ? <span className="fact">
                       {t?.('row.autoFromCompensation', { credit: account.automationToday.compensationCredit })
                         ?? `Compensation +${account.automationToday.compensationCredit}`}
                     </span>
@@ -2545,8 +2545,8 @@ function CreditReserveRow({
     }
   }
   return (
-    <div className="dsm-xdpool-reserve">
-      <span className="dsm-xdpool-reserve-label">
+    <div className="row">
+      <span className="field">
         {t?.('row.reserveTitle') ?? 'Keep at least'}
       </span>
       <input
@@ -2555,7 +2555,7 @@ function CreditReserveRow({
         step={1}
         value={draft}
         disabled={busy}
-        className="dsm-xdpool-reserve-input"
+        className="input"
         aria-label={t?.('row.reserveTitle') ?? 'Keep at least'}
         onChange={(event) => {
           setDraft(event.target.value)
@@ -2565,12 +2565,12 @@ function CreditReserveRow({
           if (event.key === 'Enter') void commit()
         }}
       />
-      <span className="dsm-xdpool-reserve-unit">
+      <span className="kpi-u">
         {t?.('row.reserveUnit') ?? 'credits'}
       </span>
       <button
         type="button"
-        className="dsm-xdpool-reserve-save"
+        className="tiny"
         disabled={busy || !dirty}
         onClick={() => { void commit() }}
       >
@@ -2591,7 +2591,7 @@ function CreditReserveRow({
           </span>
         : null}
       {account.reserved === true
-        ? <span className="dsm-xdpool-reserve-badge">
+        ? <span className="pill">
             {t?.('row.reserveHolding') ?? 'Reserved: skipped'}
           </span>
         : null}
@@ -2632,8 +2632,8 @@ function AccountStats({
      * and stops a routine balance from being set in 28px type.
      */
     <div className="dsm-xdpool-stats">
-      <span className="dsm-xdpool-panel dsm-xdpool-panel-total">
-        <span className="dsm-xdpool-panel-title">
+      <span className="sec kpi-v">
+        <span className="sec-title">
           {t?.('row.creditsTotal') ?? 'Total'}
         </span>
         <span className="dsm-xdpool-total-value">
@@ -2641,31 +2641,31 @@ function AccountStats({
         </span>
       </span>
       {hasCheckin
-        ? <div className="dsm-xdpool-checkin">
+        ? <div className="sec">
             {account.checkinError !== undefined
               /* Folded to a marker with the full text in the tooltip. A gateway
                  rejection is a whole paragraph; printed inline it buries the
                  figures it belongs to. */
-              ? <span className="dsm-xdpool-checkin-error" title={account.checkinError}>
+              ? <span className="hint" title={account.checkinError}>
                   {t?.('row.checkinUnavailable') ?? 'check-in unavailable'}
                 </span>
               : checkin === undefined
                 ? null
                 : <>
-                    <div className="dsm-xdpool-checkin-meta">
+                    <div className="hint">
                       <span className="dsm-xdpool-checkin-streak">
                         {t?.('row.checkinStreak', { days: checkin.streakDays })
                           ?? `${checkin.streakDays}-day streak`}
                       </span>
                       {checkin.dailyCredit > 0
-                        ? <span className="dsm-xdpool-checkin-daily">
+                        ? <span className="fact">
                             {t?.('row.checkinDaily', { credit: formatNumber(checkin.dailyCredit) })
                               ?? `+${formatNumber(checkin.dailyCredit)}/day`}
                           </span>
                         : null}
                     </div>
                     {checkin.isStreakDay && checkin.streakBonusCredit > 0
-                      ? <span className="dsm-xdpool-checkin-bonus">
+                      ? <span className="fact">
                           {t?.('row.checkinStreakBonus', {
                             days: formatNumber(checkin.nextStreakDay),
                             credit: formatNumber(checkin.streakBonusCredit),
@@ -2674,7 +2674,7 @@ function AccountStats({
                       : null}
                     <button
                       type="button"
-                      className="dsm-xdpool-checkin-btn"
+                      className="tiny"
                       disabled={!checkin.active || checkin.todayCheckedIn || checkinBusy}
                       onClick={() => { onClaim(account.id) }}
                     >
@@ -2690,7 +2690,7 @@ function AccountStats({
           </div>
         : null}
       {hasCredits
-        ? <ul className="dsm-xdpool-panel-packages dsm-xdpool-packages">
+        ? <ul className="facts sec">
             {account.creditsError !== undefined
               // The upstream error is a full English paragraph (it explains HOW
               // to recover). Printed inline it would blow the line up to several
@@ -2735,7 +2735,7 @@ function AccountStats({
                   )
                 })}
             {credits?.expiringSoon !== undefined && credits.expiringSoon > 0
-              ? <li className="dsm-xdpool-packages-when">
+              ? <li className="hint">
                   {t?.('row.creditsSoon') ?? 'Expiring in 3 days'}
                   {' '}
                   {formatNumber(credits.expiringSoon)}
@@ -2881,7 +2881,7 @@ function ModelRow({
                   model that costs nothing is worse than printing nothing.
                   The badge below already carries the free/free-tier label. */}
               {model.multiplier === undefined || model.multiplier === 0 ? null
-                : <span className="dsm-xdpool-model-name-rate">
+                : <span className="model-mult">
                     {t?.('row.rate', { rate: model.multiplier.toFixed(2) }) ?? `${model.multiplier.toFixed(2)}x`}
                   </span>}
             </span>
@@ -2924,24 +2924,24 @@ function ModelRow({
             : null}
         </div>
       </div>
-      <div className="dsm-xdpool-model-meta">
+      <div className="model-sub">
         {tagText === null ? null
-          : <span className="dsm-xdpool-model-meta-tag">{tagText}</span>}
+          : <span className="badge">{tagText}</span>}
         {laterHint === null ? null
           : <span className="dsm-xdpool-model-meta-later">{laterHint}</span>}
         {promoUntil === null ? null
-          : <span className="dsm-xdpool-model-meta-promo">{promoUntil}</span>}
+          : <span className="badge">{promoUntil}</span>}
         {paidTwin === undefined ? null
-          : <span className="dsm-xdpool-model-meta-twin" title={t?.('row.paidTwinHint') ?? 'Same model, paid row'}>
+          : <span className="badge" title={t?.('row.paidTwinHint') ?? 'Same model, paid row'}>
               {t?.('row.paidTwin', { id: paidTwin.id, rate: paidTwin.multiplier.toFixed(2) })
                 ?? `paid twin ${paidTwin.id} (${paidTwin.multiplier.toFixed(2)}x)`}
             </span>}
-        <span className="dsm-xdpool-model-cap">
+        <span className="badge">
           {t?.('row.modelOutput', { size: formatCapacity(model.maxOutputTokens) })
             ?? `out ${formatCapacity(model.maxOutputTokens)}`}
         </span>
         {model.supportedEfforts === undefined || model.supportedEfforts.length === 0 ? null
-          : <span className="dsm-xdpool-model-cap">
+          : <span className="badge">
               {t?.('row.modelReasoning', { efforts: model.supportedEfforts.join(' / ') })
                 ?? model.supportedEfforts.join(' / ')}
             </span>}
