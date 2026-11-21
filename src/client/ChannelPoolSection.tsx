@@ -1350,7 +1350,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
   return (
     <section className="dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
       {error === undefined ? null
-        : <p className="dsm-xdpool-error">{t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}</p>}
+        : <p className="hint">{t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}</p>}
       {notice === undefined ? null : <p className="note">{notice}</p>}
       {/* The switch that brings the unbound channels back, for adding another. */}
       <div className="dsm-xdpool-cpool-bar">
@@ -1435,30 +1435,30 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
               </div>
               <p className="dsm-xdpool-region-note">{channel.note}</p>
               <div className="dsm-xdpool-region-stats">
-                <span className="dsm-xdpool-region-stat">
-                  <span className="dsm-xdpool-region-label">
+                <span className="fact">
+                  <span className="td-name">
                     {t?.('channelpool.statAccounts') ?? '账号'}
                   </span>{' '}
-                  <b className="dsm-xdpool-region-num">
+                  <b className="td-num">
                     {accounts.length === 0
                       ? '–'
                       : String(accounts.filter(account => account.enabled !== false).length)}
                   </b>
                 </span>
-                <span className="dsm-xdpool-region-stat">
-                  <span className="dsm-xdpool-region-label">
+                <span className="fact">
+                  <span className="td-name">
                     {t?.('channelpool.statModels') ?? '模型'}
                   </span>{' '}
-                  <b className="dsm-xdpool-region-num">
+                  <b className="td-num">
                     {models.length === 0 ? '–' : `${String(modelsEnabled)}/${String(models.length)}`}
                   </b>
                 </span>
                 {channel.credits === undefined ? null : (
-                  <span className="dsm-xdpool-region-stat">
-                    <span className="dsm-xdpool-region-label">
+                  <span className="fact">
+                    <span className="td-name">
                       {t?.('channelpool.statCredit') ?? '剩余积分'}
                     </span>{' '}
-                    <b className="dsm-xdpool-region-num" data-tone="quiet">
+                    <b className="td-num" data-tone="quiet">
                       {entry.balancePending && total === undefined
                         ? (t?.('channelpool.balanceLoading') ?? '…')
                         : total === undefined
@@ -1554,32 +1554,32 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 <div className="dsm-xdpool-region-seg">
                   <button
                     type="button"
-                    className="dsm-xdpool-region-seg-btn"
+                    className="seg"
                     aria-expanded={fold === 'accounts'}
                     disabled={accounts.length === 0}
                     onClick={() => toggleFold(channel.id, 'accounts')}
                   >
-                    <span className="dsm-xdpool-region-seg-glyph" aria-hidden="true">▶</span>
-                    <span className="dsm-xdpool-region-seg-text">
+                    <span className="" aria-hidden="true">▶</span>
+                    <span className="seg">
                       {t?.('row.accountsTitle') ?? '池中账号'}
                     </span>
                     {accounts.length === 0 ? null : (
-                      <span className="dsm-xdpool-region-seg-count">{accounts.length}</span>
+                      <span className="num">{accounts.length}</span>
                     )}
                   </button>
                   <button
                     type="button"
-                    className="dsm-xdpool-region-seg-btn"
+                    className="seg"
                     aria-expanded={fold === 'models'}
                     disabled={models.length === 0}
                     onClick={() => toggleFold(channel.id, 'models')}
                   >
-                    <span className="dsm-xdpool-region-seg-glyph" aria-hidden="true">▸</span>
-                    <span className="dsm-xdpool-region-seg-text">
+                    <span className="" aria-hidden="true">▸</span>
+                    <span className="seg">
                       {t?.('row.modelsTitle') ?? '模型'}
                     </span>
                     {models.length === 0 ? null : (
-                      <span className="dsm-xdpool-region-seg-count">{models.length}</span>
+                      <span className="num">{models.length}</span>
                     )}
                   </button>
                 </div>
@@ -1629,7 +1629,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                           {channel.id === 'doubao' && (
                             <button
                               type="button"
-                              className="dsm-xdpool-minibtn"
+                              className="tiny"
                               disabled={isBusy}
                               onClick={() => { void accountAction(channel.id, account.id, 'claim') }}
                             >
@@ -1638,7 +1638,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                           )}
                           <button
                             type="button"
-                            className="dsm-xdpool-minibtn"
+                            className="tiny"
                             disabled={isBusy}
                             onClick={() => { void accountAction(channel.id, account.id, 'test') }}
                           >
@@ -1646,7 +1646,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                           </button>
                           <button
                             type="button"
-                            className="dsm-xdpool-minibtn"
+                            className="tiny"
                             disabled={isBusy}
                             onClick={() => { void accountAction(channel.id, account.id, 'refresh') }}
                           >
@@ -1654,7 +1654,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                           </button>
                           <button
                             type="button"
-                            className="dsm-xdpool-minibtn"
+                            className="tiny"
                             disabled={isBusy}
                             onClick={() => { void accountAction(channel.id, account.id, 'toggle') }}
                           >
@@ -1664,7 +1664,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                           </button>
                           <button
                             type="button"
-                            className="dsm-xdpool-minibtn"
+                            className="tiny"
                             data-tone="danger"
                             disabled={isBusy}
                             onClick={() => { void accountAction(channel.id, account.id, 'delete') }}
@@ -1687,7 +1687,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     <div className="dsm-xdpool-cpool-modeltools">
                       <button
                         type="button"
-                        className="dsm-xdpool-minibtn"
+                        className="tiny"
                         disabled={isBusy || models.length === 0}
                         onClick={() => { void setAllModels(channel.id, true) }}
                       >
@@ -1695,7 +1695,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                       </button>
                       <button
                         type="button"
-                        className="dsm-xdpool-minibtn"
+                        className="tiny"
                         disabled={isBusy || models.length === 0}
                         onClick={() => { void setAllModels(channel.id, false) }}
                       >
@@ -1821,19 +1821,19 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                               */}
                               {multiplierOf(model.name) === undefined ? null : (
                                 <span
-                                  className="dsm-xdpool-cpool-tag"
+                                  className="lane"
                                   data-tone={multiplierTone(multiplierOf(model.name) ?? '')}
                                 >
                                   {multiplierOf(model.name)}
                                 </span>
                               )}
                               {model.isFree === true && (
-                                <span className="dsm-xdpool-cpool-tag" data-tone="free">
+                                <span className="lane" data-tone="free">
                                   {t?.('channelpool.modelFree') ?? 'free'}
                                 </span>
                               )}
                               {model.dead === true && (
-                                <span className="dsm-xdpool-cpool-tag" data-tone="dead">
+                                <span className="lane" data-tone="dead">
                                   {t?.('channelpool.modelDead') ?? 'dead'}
                                 </span>
                               )}
@@ -1846,8 +1846,8 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                             */}
                             <ModelFactsRow facts={merged} className="dsm-xdpool-cpool-mfacts" t={t} />
                             {recuse === undefined ? null : (
-                              <p className="dsm-xdpool-recuse">
-                                <span className="dsm-xdpool-recuse-label">{t?.('recuse.label') ?? '推荐用途'}</span>
+                              <p className="hint">
+                                <span className="hint">{t?.('recuse.label') ?? '推荐用途'}</span>
                                 {recuse}
                               </p>
                             )}
