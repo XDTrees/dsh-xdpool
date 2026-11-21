@@ -431,18 +431,18 @@ export function AggregatePage({ t }: AggregatePageProps) {
           ? <span className="hint">{t?.('agg.laneOffHint') ?? ''}</span>
           : null}
       </div>
-      <div className="dsm-xdpool-agg-filter">
+      <div className="filters">
         <input
-          className="dsm-xdpool-agg-search"
+          className="search"
           type="search"
           value={query}
           placeholder={t?.('agg.search') ?? 'Search…'}
           onChange={event => { setQuery(event.target.value) }}
         />
-        <div className="dsm-xdpool-agg-cats" role="group">
+        <div className="tabs" role="group">
           <button
             type="button"
-            className="dsm-xdpool-agg-cat"
+            className="tab"
             data-on={category === 'all' ? 'true' : 'false'}
             onClick={() => { setCategory('all') }}
           >
@@ -452,7 +452,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
             <button
               key={value}
               type="button"
-              className="dsm-xdpool-agg-cat"
+              className="tab"
               data-on={category === value ? 'true' : 'false'}
               onClick={() => { setCategory(value) }}
             >
@@ -473,7 +473,7 @@ export function AggregatePage({ t }: AggregatePageProps) {
         ? <p className="hint">…</p>
         : visible.length === 0
           ? <p className="hint">{t?.('agg.empty') ?? 'No vendor matches.'}</p>
-          : <div className="dsm-xdpool-agg-list">
+          : <div className="vendors">
               {visible.map(provider => (
                 <ProviderRow
                   key={provider.id}
@@ -823,9 +823,9 @@ function ProviderRow({
         {/* The same 40px tile the sign-in page and the pool cards wear, so the
             three lists read as one product. */}
         <BrandTile accent={accentFor(provider.id)} glyph="globe" {...tileMark} />
-        <div className="dsm-xdpool-agg-titles">
+        <div className="vd-titles">
           <span className="vd-name">{provider.name}</span>
-          <span className="dsm-xdpool-agg-org">
+          <span className="vd-org">
             {category === undefined ? provider.category : (t?.(category) ?? provider.category)}
             {` · ${provider.format}`}
           </span>
@@ -844,7 +844,7 @@ function ProviderRow({
         ? null
         : <p className="vd-models-line">{provider.notes}</p>}
       <div className="dsm-xdpool-agg-foot">
-        <div className="dsm-xdpool-agg-tags">
+        <div className="vd-key-tag">
           <span className="lane" data-tone={provider.configured ? 'ok' : 'off'}>
             {keyState}
           </span>
@@ -900,12 +900,12 @@ function ProviderRow({
         hidden={!open}
       >
         {!provider.supported
-          ? <p className="dsm-xdpool-agg-warn">
+          ? <p className="pill">
               {t?.('agg.unsupported') ?? 'This vendor signs in via OAuth/ADC.'}
             </p>
           : null}
         {provider.authKind !== 'none'
-          ? <div className="dsm-xdpool-agg-fields">
+          ? <div className="grid2">
               <label className="field">
                 <span>{t?.('agg.key') ?? 'API key'}</span>
                 <input
@@ -941,7 +941,7 @@ function ProviderRow({
           row onto every card.
         */}
         {provider.authKind === 'apiKey' && provider.keyCount >= 1
-          ? <div className="dsm-xdpool-agg-fields">
+          ? <div className="grid2">
               <label className="field">
                 <span>
                   {t?.('agg.extraKey', { count: provider.keyCount })
@@ -977,7 +977,7 @@ function ProviderRow({
             a vendor in the pool — that is the whole point of pasting one — but
             taking a vendor back OUT without throwing the key away is a different
             decision, and it needs its own control. */}
-        <label className="sw dsm-xdpool-agg-switch">
+        <label className="sw">
           <input
             type="checkbox"
             checked={enabled}
@@ -1034,7 +1034,7 @@ function ProviderRow({
           </button>
         </div>
         {preview.length > 0
-          ? <p className="dsm-xdpool-agg-models">
+          ? <p className="vd-models-line">
               {preview.join(' · ')}
               {rest > 0 ? ` +${rest}` : ''}
             </p>
@@ -1106,7 +1106,7 @@ function ProviderRow({
               </p>
               {chooserWorthIt || modelQuery !== ''
                 ? <input
-                    className="dsm-xdpool-cpool-searchbox"
+                    className="search"
                     type="search"
                     value={modelQuery}
                     placeholder={t?.('agg.modelSearch') ?? 'Filter models…'}
