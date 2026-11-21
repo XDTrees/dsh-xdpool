@@ -1621,7 +1621,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                   "not signed in here yet" rather than a tab that only appears
                   after the user has already signed in somewhere else. */}
               <section className="dsm-xdpool-regions">
-              <div className="dsm-xdpool-region-grid">
+              <div className="region-grid">
                 {REGION_CARDS.map(region => {
                   const card = cardOf(region)
                   const accountsPaneId = `dsm-xdpool-${region}-accounts`
@@ -1646,7 +1646,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                   return (
                     <article
                       key={region}
-                      className="dsm-xdpool-region dsm-xdpool-region-in"
+                      className="region is-in"
                       data-region={region}
                       data-state={card.cardState}
                       style={regionCardStyle(region) as Record<string, string>}
