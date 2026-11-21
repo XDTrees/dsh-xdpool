@@ -1534,7 +1534,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
             : (t?.('channelpool.showAll') ?? `显示全部渠道（${String(entries.length)}）`)}
         </button>
       </div>
-      <div className="dsm-xdpool-cpool-grid">
+      <div className="accts">
         {((): readonly ChannelEntry[] => {
           const bound = entries.filter(entry => entry.accounts.length > 0)
           /**
@@ -1573,7 +1573,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
           return (
             <article
               key={channel.id}
-              className="dsm-xdpool-cpool-card"
+              className="card"
               /**
                * `ok` / `idle`, matching the WorkBuddy cards.
                *
@@ -1754,7 +1754,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 </div>
               </div>
               {entry.balanceError !== undefined && (
-                <p className="dsm-xdpool-cpool-balanceerror" role="status">
+                <p className="hint" role="status">
                   {entry.balanceError}
                 </p>
               )}
@@ -1768,7 +1768,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     const disabled = account.enabled === false
                     return (
                       <li key={account.id} className="ch" data-off={disabled}>
-                        <span className="dsm-xdpool-cpool-acctname">{account.nickname ?? account.id}</span>
+                        <span className="ch-name">{account.nickname ?? account.id}</span>
                         <span className="ch-org">
                           {disabled
                             ? (t?.('channelpool.disableAccount') ?? 'disabled')
@@ -1776,7 +1776,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                           {expiryText(account.expiresAt, t) === undefined ? null : ` · ${expiryText(account.expiresAt, t)}`}
                         </span>
                         {checkin?.todayCheckedIn === true && (
-                          <span className="dsm-xdpool-cpool-creditbadge">
+                          <span className="badge">
                             {t?.('channelpool.claim') ?? 'claimed'}
                             {typeof checkin.todayCredit === 'number' ? ` +${amount(checkin.todayCredit)}` : ''}
                           </span>
@@ -1847,13 +1847,13 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 </ul>
               )}
               {fold === 'models' && (
-                <div className="dsm-xdpool-cpool-models">
-                  <div className="dsm-xdpool-cpool-modelhead">
+                <div className="models">
+                  <div className="model-top">
                     <span>
                       {t?.('channelpool.metaModels', { enabled: modelsEnabled, total: models.length })
                         ?? `${modelsEnabled}/${models.length}`}
                     </span>
-                    <div className="dsm-xdpool-cpool-modeltools">
+                    <div className="sec-actions">
                       <button
                         type="button"
                         className="tiny"
@@ -1880,7 +1880,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                     attention on every card.
                   */}
                   {models.length >= MODEL_SEARCH_THRESHOLD && (
-                    <div className="dsm-xdpool-cpool-search">
+                    <div className="search">
                       <input
                         type="search"
                         className="search"
@@ -1889,7 +1889,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                         aria-label={t?.('channelpool.searchModels') ?? 'Search models'}
                         onChange={event => { setQuery(channel.id, event.target.value) }}
                       />
-                      <span className="dsm-xdpool-cpool-searchnote" role="status">
+                      <span className="hint" role="status">
                         {query === ''
                           ? (t?.('channelpool.searchHint') ?? 'Matches name, id, description and image input')
                           : (t?.('channelpool.searchHit', { count: visibleModels.length })
@@ -1914,7 +1914,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                           ?? `Could not list models: ${entry.modelError}`)}
                     </p>
                   ) : (
-                    <ul className="dsm-xdpool-cpool-modellist">
+                    <ul className="models">
                       {visibleModels.map(model => {
                         const fact = facts.get(model.id)
                         const on = enabledIds.has(model.id)
@@ -1968,15 +1968,15 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                         */
                         const budget = model.contextBudget ?? native
                         return (
-                          <li key={model.id} className="dsm-xdpool-cpool-modelrow" data-off={!on}>
-                            <label className="dsm-xdpool-cpool-modelrow-toggle">
+                          <li key={model.id} className="model" data-off={!on}>
+                            <label className="sw">
                               <input
                                 type="checkbox"
                                 checked={on}
                                 disabled={isBusy}
                                 onChange={() => { void toggleModel(channel.id, model.id, !on) }}
                               />
-                              <span className="dsm-xdpool-cpool-modelname" title={model.id}>
+                              <span className="model-name" title={model.id}>
                                 {baseName(model.name ?? model.id)}
                               </span>
                               {/*
@@ -2013,7 +2013,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                               and returns null when the vendor published none —
                               so a thin row stays thin instead of growing dashes.
                             */}
-                            <ModelFactsRow facts={merged} className="dsm-xdpool-cpool-mfacts" t={t} />
+                            <ModelFactsRow facts={merged} className="facts" t={t} />
                             {recuse === undefined ? null : (
                               <p className="hint">
                                 <span className="hint">{t?.('recuse.label') ?? '推荐用途'}</span>
@@ -2022,7 +2022,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                             )}
                             {capped && (
                               <fieldset
-                                className="badge dsm-xdpool-cpool-budget"
+                                className="badge"
                                 aria-label={t?.('channelpool.modelBudget') ?? 'Context window'}
                               >
                                 <label>
@@ -2063,7 +2063,7 @@ export function ChannelPoolSection({ t }: { readonly t?: Translate | undefined }
                 but "are any of them available at all".
               */}
               {status?.closed === true && (
-                <p className="dsm-xdpool-cpool-note">
+                <p className="note">
                   {t?.('channelpool.everyModelOff', { total: status.modelsTotal })
                     ?? `All ${status.modelsTotal} models are switched off.`}
                 </p>
