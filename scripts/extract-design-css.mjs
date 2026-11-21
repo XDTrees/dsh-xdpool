@@ -184,6 +184,17 @@ label.sw { cursor: pointer }
 label.sw:has(input:checked)::after { transform: translateX(16px) }
 label.sw:has(input:disabled) { opacity: .5; cursor: not-allowed }
 
+
+/* 搜索框那一行：输入框 + 命中数提示 */
+.search-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin: var(--s2) 0;
+}
+.search-wrap > .search { flex: 1 1 auto; min-width: 0 }
+.search-wrap > .hint { flex: 0 0 auto; margin: 0 }
+
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}
 `

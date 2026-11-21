@@ -2059,7 +2059,8 @@ export function ChannelPoolSection({ t, active }: {
                     attention on every card.
                   */}
                   {models.length >= MODEL_SEARCH_THRESHOLD && (
-                    <div className="search">
+                    /* .search 是输入框自己的样式；外面那层不能也叫 .search，否则画两层边框 */
+                    <div className="search-wrap">
                       <input
                         type="search"
                         className="search"
