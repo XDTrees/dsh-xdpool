@@ -213,6 +213,8 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
    * 不重新请求 —— 切一次范围不该再打一次网络。
    */
   const [window_, setWindow] = useState<'today' | 'week' | 'month' | 'all'>('all')
+  /** 只看失败的行。与时间范围互相独立。 */
+  const [failedOnly, setFailedOnly] = useState(false)
   const [failed, setFailed] = useState(false)
   const mounted = useRef(true)
   // Adopt the parent's copy whenever it arrives, so opening this page shows the
@@ -262,6 +264,19 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
       controller.abort()
     }
   }, [load, shared])
+  /** 这段时间内有失败的次数（它决定那个芯片能不能点）。 */
+  const failedTotal = (own?.rows ?? []).reduce((n, r) => n + (r.failed ?? 0), 0)
+
+  /**
+   * 列表用的行。
+   *
+   * 「只看失败」时只留 failed > 0 的。
+   */
+  const shownRows = useMemo(() => {
+    const rows = own?.rows ?? []
+    return failedOnly ? rows.filter(r => (r.failed ?? 0) > 0) : rows
+  }, [own, failedOnly])
+
   const summary = own
   /**
    * Totals are summed here rather than read from a server-side total, because
@@ -382,6 +397,24 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
                   : (t?.('ledger.rangeAll') ?? '全部')}
           </button>
         ))}
+        {/*
+          只看失败 —— 设计稿的 .filters 里有这一个。
+          时间范围决定「看多久」，这个决定「看什么」，
+          两者是不同的问题，放在同一排里也不会混。
+        */}
+        <button
+          type="button"
+          className="chip"
+          aria-pressed={failedOnly}
+          disabled={failedTotal === 0}
+          title={failedTotal === 0
+            ? (t?.('ledger.noFailures') ?? '这段时间没有失败')
+            : undefined}
+          onClick={() => { setFailedOnly(!failedOnly) }}
+        >
+          {t?.('ledger.failedOnly') ?? '只看失败'}
+          {failedTotal > 0 ? ` ${String(failedTotal)}` : ''}
+        </button>
       </div>
       {failed
         ? <p className="note" role="alert">
@@ -462,7 +495,7 @@ export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
               <RankList
                 title={t?.('ledger.byChannel') ?? '按渠道'}
                 count={new Set(summary.rows.map(row => row.channel)).size}
-                items={byChannel(summary.rows)}
+                items={byChannel(shownRows)}
                 emptyLabel={t?.('ledger.none') ?? '还没有记录'}
               />
               <RankList
