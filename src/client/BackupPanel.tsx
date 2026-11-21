@@ -54,6 +54,8 @@ function statusFrom(value: unknown): BackupStatus | undefined {
 
 export function BackupPanel({ t }: { readonly t?: Translate | undefined }): ReactElement {
   const [password, setPassword] = useState('')
+  /** 密码框的引用。页头按钮在密码不够时把焦点送到这里。 */
+  const passwordRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
@@ -230,6 +232,32 @@ export function BackupPanel({ t }: { readonly t?: Translate | undefined }): Reac
           <span className="mhead-name">{t?.('backup.title') ?? '备份'}</span>
           <span className="mhead-org">账号池、设置、路由规则</span>
         </div>
+        {/*
+          页级动作 —— 设计稿放在 .mhead-actions。
+          导入与导出作用在整份凭据上，不属于正文的任何一个区块。
+          密码不够时把焦点送到正文的密码框 —— 而不是把按钮禁用成灰色，
+          那样读者只知道「点不了」，不知道差什么。
+        */}
+        <div className="mhead-actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={() => { if (tooShort) { passwordRef.current?.focus(); return } void importBackup() }}
+          >
+            {picked === undefined
+              ? (t?.('backup.pick') ?? '导入')
+              : (t?.('backup.import') ?? '导入')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy}
+            onClick={() => { if (tooShort) { passwordRef.current?.focus(); return } void exportBackup() }}
+          >
+            {t?.('backup.export') ?? '立即备份'}
+          </button>
+        </div>
       </header>
       <div className="mbody">
       {/*
@@ -265,6 +293,7 @@ export function BackupPanel({ t }: { readonly t?: Translate | undefined }): Reac
       <label className="field">
         <span className="field">{t?.('backup.password') ?? '密码'}</span>
         <input
+          ref={passwordRef}
           type="password"
           className="input"
           value={password}
@@ -275,36 +304,10 @@ export function BackupPanel({ t }: { readonly t?: Translate | undefined }): Reac
         />
       </label>
 
-      {/* Two actions, one button each. The import button doubles as the file picker until
-          a file exists, so the row never shows a control whose only job is to reveal
-          another one. */}
-      <div className="hint">
-        <button
-          type="button"
-          className="btn"
-          data-tone="primary"
-          disabled={busy || tooShort}
-          title={tooShort
-            ? (t?.('backup.passwordShort', { min: MIN_PASSWORD }) ?? '')
-            : (t?.('backup.exportHint') ?? '导出为加密文件')}
-          onClick={() => { void exportBackup() }}
-        >
-          {t?.('backup.export') ?? '导出'}
-        </button>
-        <button
-          type="button"
-          className="btn"
-          data-tone="quiet"
-          disabled={busy}
-          title={picked === undefined
-            ? (t?.('backup.pickHint') ?? '选择要导入的备份文件')
-            : (t?.('backup.importHint') ?? '导入会整体替换现有账号')}
-          onClick={() => { void importBackup() }}
-        >
-          {picked === undefined
-            ? (t?.('backup.pick') ?? '选择文件并导入')
-            : (t?.('backup.import') ?? '导入')}
-        </button>
+      {/*
+        导入与导出已移到页头的 .mhead-actions。
+        这里只留那个隐形的 file input —— 它必须栋在触发它的按钮同一个作用域里。
+      */}
         {/* Structurally out of the layout, so no stylesheet is required to hide it. */}
         <input
           ref={fileRef}
@@ -332,8 +335,7 @@ export function BackupPanel({ t }: { readonly t?: Translate | undefined }): Reac
 
       {notice === undefined ? null : <p className="note">{notice}</p>}
       {error === undefined ? null : <p className="hint">{error}</p>}
-    </div>
       </div>
-    </div>
+      </div>
   )
 }

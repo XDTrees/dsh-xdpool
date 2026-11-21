@@ -41,7 +41,7 @@ describe('the backup card', () => {
     const buttons = [...panel.matchAll(/<button\b/gu)]
     // Export, import/pick, and the chip's clear button.
     expect(buttons.length).toBe(3)
-    expect(panel).toContain("t?.('backup.pick') ?? '选择文件并导入'")
+    expect(panel).toContain("t?.('backup.pick') ?? '导入'")
   })
 
   it('does the picking and the importing through ONE control until a file exists', () => {
