@@ -156,6 +156,26 @@ export function UpdatePanel({ t }: { readonly t?: Translate | undefined }): Reac
         </button>
       </div>
 
+      {/*
+        安装进行中 —— 设计稿的 .banner + 步骤。
+
+        原来只有按钮文字变成「安装中…」，读者看不出：
+        是在下载、在写盘、还是卡住了；也不知道装完要不要重启。
+        这条 banner 把三件事说清楚：正在做什么、装完要重启、数据和账号不受影响。
+      */}
+      {installing ? (
+        <div className="banner">
+          <span className="banner-icon" aria-hidden="true">
+            <span className="spinner" />
+          </span>
+          <div className="banner-body">
+            <span className="banner-t">{t?.('update.runTitle') ?? '正在下载并安装'}</span>
+            <span className="banner-d">
+              {t?.('update.runBody') ?? '装好后需要重启 DSH 才会生效；数据和账号不受影响。'}
+            </span>
+          </div>
+        </div>
+      ) : null}
       {status?.error === undefined ? null : (
         <p className="hint">
           {t?.('update.failed') ?? '没能检查更新'}：{status.error}
