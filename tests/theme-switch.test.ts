@@ -19,12 +19,21 @@
  *   4. **接线层**：开关把 `data-theme` 写到 `.app` 上，手机档也够得着。
  */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { hostTheme, initialTheme, otherTheme, storedTheme } from '../src/client/theme.ts'
 
 const themeModule = readFileSync(new URL('../src/client/theme-css.ts', import.meta.url), 'utf8')
-const designTokens = readFileSync(new URL('../../xdpool-design/theme-light.css', import.meta.url), 'utf8')
+/**
+ * 设计稿里的同一份亮色（静态预览用）。
+ *
+ * 它在**仓库外**（`xdpool-design/` 是作者本机的设计稿目录，不进 git），所以 CI 上
+ * 不存在。存在就比对、不存在就跳过 —— 这样「本机守住漂移」和「CI 能跑」同时成立，
+ * 而不是让 CI 因为一个不该进仓库的目录红掉。
+ */
+const designUrl = new URL('../../xdpool-design/theme-light.css', import.meta.url)
+const hasDesign = existsSync(designUrl)
+const designTokens = hasDesign ? readFileSync(designUrl, 'utf8') : ''
 const styleInstaller = readFileSync(new URL('../src/client/design-style.ts', import.meta.url), 'utf8')
 const shell = readFileSync(new URL('../src/client/shell.tsx', import.meta.url), 'utf8')
 const responsive = readFileSync(new URL('../src/client/responsive-css.ts', import.meta.url), 'utf8')
@@ -74,6 +83,8 @@ describe('护眼绿这一档真的存在', () => {
   })
 
   it('设计稿侧也有（静态页要能预览同一种亮色）', () => {
+    // 仓库里没有设计稿目录时跳过这一条（见文件头的说明）。
+    if (!hasDesign) return
     expect(ruleBody(designTokens, '.app[data-theme="light"]')).toBeDefined()
   })
 
@@ -116,6 +127,8 @@ describe('护眼绿这一档真的存在', () => {
 describe('插件与设计稿是同一套值', () => {
   it('两边的前 20 个变量逐字相同', () => {
     // 改一处漏一处会让静态预览和实装慢慢分家，而这种分家没人会去核对。
+    // 设计稿目录不在仓库里（CI 上没有），那就没有「两边」可言 —— 跳过。
+    if (!hasDesign) return
     const plugin = ruleBody(themeModule, '.app[data-theme="light"]') ?? ''
     const design = ruleBody(designTokens, '.app[data-theme="light"]') ?? ''
     for (const name of REQUIRED.slice(0, 20)) {
