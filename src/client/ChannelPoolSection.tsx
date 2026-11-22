@@ -2055,7 +2055,7 @@ export function ChannelPoolSection({ t, active }: {
                         账号是整个账号池里读者最常看的东西（「我哪个号还有钱」），
                         做成一行文本要逐行读；做成卡片一眼扫过去。
                       */
-                      <li key={account.id} className="acct" data-off={disabled}>
+                      <article key={account.id} className="acct" data-off={disabled}>
                         <div className="acct-head">
                           <span className="acct-dot" data-on={checkin?.todayCheckedIn === true ? 'true' : 'false'} aria-hidden="true" />
                           <span className="acct-name">{accountLabel(account)}</span>
@@ -2126,100 +2126,71 @@ export function ChannelPoolSection({ t, active }: {
                               <dd>{disabled ? (t?.('channelpool.disableAccount') ?? 'disabled') : (t?.('channelpool.enableAccount') ?? 'enabled')}</dd>
                             </div>
                           </dl>
-                        </details>
-                        {/*
-                          用量条 —— 设计稿的 .quota。
-
-                          token 型渠道（豆包、Accio、Marvis）每天给固定额度，
-                          读者要知道的是「今天还剩多少」，不是「有 3 个窗口」。
-                          一根 4px 的条子比一行数字先被看见。
-                        */}
-                        {buckets.length > 0 && buckets.some(b => typeof b.remaining === 'number') && (
-                          <div className="quota">
-                            {buckets.slice(0, 2).map((b, i) => {
-                              const pct = typeof b.remaining === 'number' ? Math.max(0, Math.min(100, b.remaining)) : 0
-                              return (
-                                <div className="quota-bar" key={`${b.name}-${String(i)}`}
-                                  title={`${b.name} · ${String(Math.round(pct))}%`}>
-                                  <span style={{ width: `${String(pct)}%` }} />
-                                </div>
-                              )
-                            })}
-                            <span className="quota-text">
-                              <span className="quota-used">
-                                {buckets[0]?.name ?? ''}
-                                {typeof buckets[0]?.remaining === 'number'
-                                  ? ` ${String(Math.round(buckets[0].remaining))}%`
-                                  : ''}
-                              </span>
-                              {buckets.length > 1 && <span className="quota-reset">+{String(buckets.length - 1)}</span>}
-                            </span>
-                          </div>
-                        )}
-                        <span className="sec-actions">
-                          {/* Collecting Doubao's campaign credits, beside the other row actions. */}
-                          {channel.id === 'doubao' && (
+                          {/*
+                            单行动作 —— 设计稿把它们放在「积分明细」展开之后，
+                            而不是摊在卡片上。一张卡上五个按钮会把「我这个号还有多少钱」
+                            这个主要问题淹没掉。
+                          */}
+                          <div className="acct-actions">
+                            {channel.id === 'doubao' && (
+                              <button
+                                type="button"
+                                className="tiny"
+                                disabled={isBusy}
+                                onClick={() => { void accountAction(channel.id, account.id, 'claim') }}
+                              >
+                                {t?.('channelpool.claimCredits') ?? '领取积分'}
+                              </button>
+                            )}
                             <button
                               type="button"
                               className="tiny"
                               disabled={isBusy}
-                              onClick={() => { void accountAction(channel.id, account.id, 'claim') }}
+                              onClick={() => { void accountAction(channel.id, account.id, 'test') }}
                             >
-                              {t?.('channelpool.claimCredits') ?? '领取积分'}
+                              {t?.('channelpool.testAccount') ?? '测试'}
                             </button>
-                          )}
-                          <button
-                            type="button"
-                            className="tiny"
-                            disabled={isBusy}
-                            onClick={() => { void accountAction(channel.id, account.id, 'test') }}
-                          >
-                            {t?.('channelpool.testAccount') ?? '测试'}
-                          </button>
-                          {/*
-                            设为首选 —— 设计稿的 account 页有。
-                            首选是整个账号池的属性：设了之后下一次请求优先用它。
-                          */}
-                          <button
-                            type="button"
-                            className="tiny"
-                            disabled={isBusy || account.preferred === true}
-                            title={t?.('channelpool.preferHint') ?? '优先用这个账号接下一次请求'}
-                            onClick={() => { void preferAccount(channel.id, account.id) }}
-                          >
-                            {account.preferred === true
-                              ? (t?.('channelpool.preferred') ?? '首选')
-                              : (t?.('channelpool.prefer') ?? '设为首选')}
-                          </button>
-                          <button
-                            type="button"
-                            className="tiny"
-                            disabled={isBusy}
-                            onClick={() => { void accountAction(channel.id, account.id, 'refresh') }}
-                          >
-                            {t?.('channelpool.refreshAccount') ?? 'Refresh'}
-                          </button>
-                          <button
-                            type="button"
-                            className="tiny"
-                            disabled={isBusy}
-                            onClick={() => { void accountAction(channel.id, account.id, 'toggle') }}
-                          >
-                            {disabled
-                              ? (t?.('channelpool.enableAccount') ?? 'Enable')
-                              : (t?.('channelpool.disableAccount') ?? 'Disable')}
-                          </button>
-                          <button
-                            type="button"
-                            className="tiny"
-                            data-tone="danger"
-                            disabled={isBusy}
-                            onClick={() => { void accountAction(channel.id, account.id, 'delete') }}
-                          >
-                            {t?.('channelpool.deleteAccount') ?? 'Remove'}
-                          </button>
-                        </span>
-                      </li>
+                            <button
+                              type="button"
+                              className="tiny"
+                              disabled={isBusy || account.preferred === true}
+                              title={t?.('channelpool.preferHint') ?? '优先用这个账号接下一次请求'}
+                              onClick={() => { void preferAccount(channel.id, account.id) }}
+                            >
+                              {account.preferred === true
+                                ? (t?.('channelpool.preferred') ?? '首选')
+                                : (t?.('channelpool.prefer') ?? '设为首选')}
+                            </button>
+                            <button
+                              type="button"
+                              className="tiny"
+                              disabled={isBusy}
+                              onClick={() => { void accountAction(channel.id, account.id, 'refresh') }}
+                            >
+                              {t?.('channelpool.refreshAccount') ?? '刷新凭据'}
+                            </button>
+                            <button
+                              type="button"
+                              className="tiny"
+                              disabled={isBusy}
+                              onClick={() => { void accountAction(channel.id, account.id, 'toggle') }}
+                            >
+                              {disabled
+                                ? (t?.('channelpool.enableAccount') ?? '启用')
+                                : (t?.('channelpool.disableAccount') ?? '停用')}
+                            </button>
+                            <button
+                              type="button"
+                              className="tiny"
+                              data-tone="danger"
+                              disabled={isBusy}
+                              onClick={() => { void accountAction(channel.id, account.id, 'delete') }}
+                            >
+                              {t?.('channelpool.deleteAccount') ?? '删除'}
+                            </button>
+                          </div>
+                        </details>
+                      </article>
                     )
                   })}
                 </div>
