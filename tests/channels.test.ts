@@ -17,9 +17,9 @@ import {
  * method allowlist cannot quietly drift from the pack's own HTTP surface.
  */
 describe('login channel roster', () => {
-  it('lists twenty-two channels', () => {
+  it('lists twenty-four channels', () => {
     // Thirteen from the pack plus Doubao, whose lane this plugin serves itself.
-    expect(REGISTERED_CHANNELS).toHaveLength(22)
+    expect(REGISTERED_CHANNELS).toHaveLength(24)
   })
   it('gives every channel a unique id', () => {
     const ids = REGISTERED_CHANNELS.map((channel) => channel.id)

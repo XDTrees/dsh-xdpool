@@ -37,7 +37,7 @@ export interface ChannelDescriptor {
   /** Rows whose login page shows a phone code on the same screen as the QR. */
   smsHint?: boolean
   /** A sentence shown beside the button, for a login that needs explaining. */
-  loginHint?: 'doubao' | 'marvis' | 'astudio' | 'accio' | 'qiniu' | 'monkeycode' | 'baizhi' | 'autoclaw'
+  loginHint?: 'doubao' | 'marvis' | 'astudio' | 'accio' | 'qiniu' | 'monkeycode' | 'baizhi' | 'autoclaw' | 'magicrew'
   /** Whether the channel is served by this plugin rather than by the pack. */
   ownedByPool?: boolean
 }
@@ -184,6 +184,28 @@ export const REGISTERED_CHANNELS: readonly ChannelDescriptor[] = [
     login: 'paste',
     credits: {'unit':'积分'},
     loginHint: 'autoclaw',
+  },
+  {
+    id: 'magicrew',
+    name: '超级麦吉',
+    org: 'Magicrew',
+    domain: 'letsmagic.cn',
+    accent: '#7C5CFF',
+    note: '网页登录；余额来自积分接口，每日登录可领积分，新人任务另算',
+    login: 'browser',
+    credits: { claim: true, unit: '积分' },
+    loginHint: 'magicrew',
+  },
+  {
+    id: 'magicrew-intl',
+    name: 'MagiCrew 国际',
+    org: 'Magicrew',
+    domain: 'magicrew.ai',
+    accent: '#9B7CFF',
+    note: '国际站独立账号；必须带组织码，其余与国内站同构',
+    login: 'browser',
+    credits: { claim: true, unit: '积分' },
+    loginHint: 'magicrew',
   },
   {
     id: 'baizhi',

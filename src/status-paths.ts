@@ -79,6 +79,14 @@ export const POOL_MAGICREW_CN_CHECKIN_PATH = '/plugins/dsh-xdpool/magicrew/check
 export const POOL_MAGICREW_INTL_SESSION_PATH = '/plugins/dsh-xdpool/magicrew-intl/session'
 export const POOL_MAGICREW_INTL_WALLET_PATH = '/plugins/dsh-xdpool/magicrew-intl/wallet'
 export const POOL_MAGICREW_INTL_CHECKIN_PATH = '/plugins/dsh-xdpool/magicrew-intl/checkin'
+/**
+ * 账号列表 / 开关 / 删单个账号。
+ *
+ * 和 session 分开：session 管「登录/退出」这条线，accounts 管「池子里这几个号」。
+ * 一个渠道多个账号时，退出整站和删掉某一个号是两件事。
+ */
+export const POOL_MAGICREW_CN_ACCOUNTS_PATH = '/plugins/dsh-xdpool/magicrew/accounts'
+export const POOL_MAGICREW_INTL_ACCOUNTS_PATH = '/plugins/dsh-xdpool/magicrew-intl/accounts'
 
 /** Accio (阿里): the stored account, and the quota buckets. */
 export const POOL_ACCIO_SESSION_PATH = '/plugins/dsh-xdpool/accio/session'

@@ -24,6 +24,10 @@
  */
 import {
   POOL_ASTUDIO_LOGIN_PATH,
+  POOL_MAGICREW_CN_LOGIN_PATH,
+  POOL_MAGICREW_INTL_LOGIN_PATH,
+  POOL_MAGICREW_CN_SESSION_PATH,
+  POOL_MAGICREW_INTL_SESSION_PATH,
   POOL_ASTUDIO_SESSION_PATH,
   POOL_ASTUDIO_BROWSER_LOGIN_PATH,
   POOL_ACCIO_SESSION_PATH,
@@ -69,7 +73,7 @@ const POLL_INTERVAL_MS = 2_000
  */
 const POLL_TIMEOUT_MS = 10 * 60_000
 /** Per-channel UI phase. `signing-in` carries the pending login while it waits. */
-type ChannelPhase = 'idle' | 'signing-in' | 'paste-credential' | 'done' | 'failed'
+type ChannelPhase = 'idle' | 'choose-method' | 'signing-in' | 'paste-credential' | 'done' | 'failed'
 interface ChannelUiState {
   phase: ChannelPhase
   /** The pack's account id while a login is in flight. */
@@ -84,6 +88,8 @@ interface ChannelUiState {
   via?: 'pack' | 'window' | 'paste' | undefined
   /** 开始登录时这家已有几个账号 —— 「我已完成登录」靠它判断有没有多出来。 */
   startCount?: number | undefined
+  /** 腾讯 Marvis 用哪条登录路：QQ 还是微信。 */
+  loginType?: 'QC' | 'WX' | undefined
 }
 const IDLE: ChannelUiState = { phase: 'idle' }
 
@@ -107,6 +113,9 @@ const PASTE_ROUTES: Readonly<Record<string, string>> = {
   'baizhi': POOL_BAIZHI_SESSION_PATH,
   'autoclaw': POOL_AUTOCLAW_INTL_SESSION_PATH,
   'autoclaw-cn': POOL_AUTOCLAW_CN_SESSION_PATH,
+  /* 超级麦吉两站：网页登录拿到的 JWT 粘进来即可 */
+  'magicrew': POOL_MAGICREW_CN_SESSION_PATH,
+  'magicrew-intl': POOL_MAGICREW_INTL_SESSION_PATH,
 }
 
 /**
@@ -122,6 +131,9 @@ const WINDOW_LOGIN_ROUTES: Readonly<Record<string, string>> = {
   'monkeycode': POOL_MONKEYCODE_CN_BROWSER_LOGIN_PATH,
   'monkeycode-intl': POOL_MONKEYCODE_INTL_BROWSER_LOGIN_PATH,
   'baizhi': POOL_BAIZHI_BROWSER_LOGIN_PATH,
+  /* 超级麦吉两站：开窗登录，登完从 localStorage 读 authorization */
+  'magicrew': POOL_MAGICREW_CN_LOGIN_PATH,
+  'magicrew-intl': POOL_MAGICREW_INTL_LOGIN_PATH,
 }
 
 /**
@@ -373,7 +385,7 @@ export function ChannelsPage(_props: ChannelsPageProps) {
     [fail, finishDone, refresh, stopPolling],
   )
   const signIn = useCallback(
-    async (channel: PoolWebChannel, startCount: number): Promise<void> => {
+    async (channel: PoolWebChannel, startCount: number, loginType?: 'QC' | 'WX'): Promise<void> => {
       setActive(channel.id)
       const token = bump(channel.id)
       const windowRoute = WINDOW_LOGIN_ROUTES[channel.id]
@@ -388,7 +400,11 @@ export function ChannelsPage(_props: ChannelsPageProps) {
             method: 'POST',
             credentials: 'same-origin',
             ...channel.id === 'marvis'
-              ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ loginType: 'QC' }) }
+              ? {
+                  headers: { 'content-type': 'application/json' },
+                  /* 用用户选的那条路；没选过就按 QQ —— 它与微信都能登，QQ 是国内默认 */
+                  body: JSON.stringify({ loginType: loginType ?? 'QC' }),
+                }
               : {},
           })
           const body = await response.json().catch(() => undefined) as
@@ -401,6 +417,12 @@ export function ChannelsPage(_props: ChannelsPageProps) {
           if (body?.signedIn === true || body?.ok === true) {
             const warning = body?.warning
             finishDone(channel.id, warning !== undefined && CJK.test(warning) ? warning : undefined)
+            /*
+              插件自己开窗口的那条登录路（Marvis / CodeArts / 各类扫码）在这里成功。
+              原来只调了 load() 刷新登录通道自己的数据 —— 账号池那份 30 秒的
+              账号数缓存没作废，切过去还是旧数字，看起来像「登上了但池子没同步」。
+            */
+            invalidateProviderStatusCache()
             void load()
             return
           }
@@ -457,6 +479,16 @@ export function ChannelsPage(_props: ChannelsPageProps) {
   }, [bump, stopPolling])
   /** 卡片上的「登录 / 再登一个」。 */
   const start = useCallback((channel: PoolWebChannel): void => {
+    /*
+      腾讯 Marvis 有两条登录路：QQ 和微信。
+      原来这里直接进登录、把 loginType 写死成 'QC'，微信那条路在界面上根本不存在。
+      现在先问一句用哪个，再走。
+    */
+    if (channel.id === 'marvis') {
+      setUi(prev => ({ ...prev, [channel.id]: { phase: 'choose-method' } }))
+      setActive(channel.id)
+      return
+    }
     if (WINDOW_LOGIN_ROUTES[channel.id] === undefined && canPaste(channel)) {
       startPaste(channel)
       return
@@ -508,6 +540,8 @@ export function ChannelsPage(_props: ChannelsPageProps) {
       if (countOf(channel.id, accounts, own) > (current.startCount ?? 0)) {
         bump(channel.id)
         finishDone(channel.id)
+        /* 自家适配器的登录（astudio / accio / magicrew）也走这条，同样要作废账号数缓存 */
+        invalidateProviderStatusCache()
         return
       }
     }
@@ -543,6 +577,7 @@ export function ChannelsPage(_props: ChannelsPageProps) {
         return
       }
       finishDone(channelId)
+      invalidateProviderStatusCache()
       refresh()
       void load()
     } catch (cause: unknown) {
@@ -599,6 +634,54 @@ export function ChannelsPage(_props: ChannelsPageProps) {
           </div>
         </header>
         <div className="mbody">
+          {/*
+            腾讯 Marvis 的登录方式选择。
+
+            它有两条 OAuth 路：QQ（graph.qq.com）和微信（open.weixin.qq.com）。
+            原来这里直接进登录、把 loginType 写死成 'QC'，微信那条路在界面上不存在 ——
+            用户只能拿 QQ 登，微信账号进不来。
+          */}
+          {phase === 'choose-method' && (
+            <>
+              <div className="banner">
+                <span className="banner-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 8v4l3 2" />
+                  </svg>
+                </span>
+                <span className="banner-body">
+                  <span className="banner-t">选一种登录方式</span>
+                  <span className="banner-d">
+                    两条路走的是同一个腾讯账号体系，登进来之后用法一样。
+                  </span>
+                </span>
+              </div>
+              <div className="row">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setUi(prev => ({ ...prev, [channel.id]: { ...prev[channel.id], phase: 'signing-in', via: 'window', startCount: countFor(channel), loginType: 'QC' } }))
+                    void signIn(channel, countFor(channel), 'QC')
+                  }}
+                >
+                  QQ 登录
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    setUi(prev => ({ ...prev, [channel.id]: { ...prev[channel.id], phase: 'signing-in', via: 'window', startCount: countFor(channel), loginType: 'WX' } }))
+                    void signIn(channel, countFor(channel), 'WX')
+                  }}
+                >
+                  微信登录
+                </button>
+                <button type="button" className="btn" onClick={() => { cancel(channel.id) }}>取消</button>
+              </div>
+            </>
+          )}
           {phase === 'signing-in' && activeUi.via !== 'paste' && (
             <>
               <div className="banner">

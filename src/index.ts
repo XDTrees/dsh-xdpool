@@ -28,6 +28,7 @@ import { registerBaizhiRoutes } from './baizhi-routes.ts'
 import { defaultBaizhiCredential } from './baizhi-store.ts'
 import { AutoclawHostAdapter } from './autoclaw-host-adapter.ts'
 import { registerAutoclawRoutes } from './autoclaw-routes.ts'
+import { registerMagicrewRoutes } from './magicrew-routes.ts'
 import { autoclawCredentialFor } from './autoclaw-store.ts'
 import { AUTOCLAW_CN, AUTOCLAW_INTL } from './autoclaw-protocol.ts'
 import { defaultMarvisAccount, readMarvisAccounts } from './marvis-store.ts'
@@ -1640,6 +1641,7 @@ function canonicalJson(value: unknown): string {
     registerMonkeycodeRoutes(webCtx, { adopted: () => { ownAdapterRefresherSlot.current?.() }, trustedHosts })
     registerBaizhiRoutes(webCtx, { adopted: () => { ownAdapterRefresherSlot.current?.() }, trustedHosts })
     registerAutoclawRoutes(webCtx, { adopted: () => { ownAdapterRefresherSlot.current?.() }, trustedHosts })
+    registerMagicrewRoutes(webCtx, { adopted: () => { ownAdapterRefresherSlot.current?.() }, trustedHosts })
     registerMarvisRoutes(webCtx, {
       accounts: async () => (await readMarvisAccounts()).map(account => ({
         openid: account.openid,

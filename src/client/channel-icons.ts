@@ -68,6 +68,8 @@ export const CHANNEL_ICONS: Readonly<Record<string, string>> = Object.freeze({
  */
 const INITIALS_BY_NAME: Readonly<Record<string, string>> = {
   '豆包': 'DB',
+  '超级麦吉': 'MJ',
+  'MagiCrew 国际': 'MI',
   '百智云': 'BZ',
   '腾讯 Marvis': 'MV',
   '智谱 GLM (CN)': 'GL',

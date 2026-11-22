@@ -73,6 +73,8 @@ import {
   POOL_BAIZHI_CHECKIN_PATH,
   POOL_MAGICREW_CN_CHECKIN_PATH,
   POOL_MAGICREW_INTL_CHECKIN_PATH,
+  POOL_MAGICREW_CN_WALLET_PATH,
+  POOL_MAGICREW_INTL_WALLET_PATH,
   POOL_ACCOUNT_PREFER_PATH,
   POOL_CHANNEL_USAGE_PATH,
 } from '../status-paths.ts'
@@ -1021,6 +1023,9 @@ const OWN_WALLET_ROUTES: Readonly<Record<string, string>> = {
   baizhi: POOL_BAIZHI_WALLET_PATH,
   'autoclaw-intl': POOL_AUTOCLAW_INTL_WALLET_PATH,
   'autoclaw': POOL_AUTOCLAW_CN_WALLET_PATH,
+  /* 超级麦吉两站各自的钱包路由（magicrew-routes.ts 实现） */
+  'magicrew': POOL_MAGICREW_CN_WALLET_PATH,
+  'magicrew-intl': POOL_MAGICREW_INTL_WALLET_PATH,
 }
 
 /** 从一家自己的钱包路由读余额；失败返回 undefined，卡片就不印数字。 */
@@ -2377,10 +2382,14 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
   const visibleModels = modelsMatching(chosenEntry, query)
   const mode = modeOf(channel.id)
   /*
-    积分自动化：后台调度器是全局一份、只跑 WorkBuddy 国内版的签到（国际版网关没有积分体系），
-    所以只在 buddy 这一家显示。给别的渠道也画一个开关会是假的 —— 点了不会去领它们的积分。
+    积分自动化：后台调度器（pack 的 autoCheckin）遍历**所有有账号的渠道**，
+    对每一家调 `credits.claimAll` —— 不是只跑 WorkBuddy。
+
+    所以「能签到的渠道」都该有这个开关；判据就是 canClaim
+    （pack 声明了 claim，或插件自己有签到路由）。
+    原来这里写死 `channel.id === 'buddy'`，是基于「只跑国内版」的旧认知。
   */
-  const showAutomation = channel.id === 'buddy' && onAutoClaim !== undefined
+  const showAutomation = canClaim && onAutoClaim !== undefined
 
   /*
     腾讯 Marvis：按 token 计，不是积分（设计稿 marvis.html）。
@@ -2986,9 +2995,6 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
             <div className="hint"><b>提示</b><span>只勾选要用的模型即可。倍率是相对积分消耗，越小越省。</span></div>
           )}
         </section>
-
-        {/* Doubao's credits come from campaign tasks; its automation pane sits at the bottom. */}
-        {channel.id === 'doubao' && <DoubaoAutomationPane t={t} />}
       </div>
     </main>
     </>
