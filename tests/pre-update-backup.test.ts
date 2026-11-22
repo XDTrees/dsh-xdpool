@@ -353,7 +353,15 @@ describe('installVersion：下载 → 校验 → 备份 → 写入', () => {
     expect(manifest.targetVersion).toBe(version)
     expect(readFileSync(join(backupPath, 'xdpool', 'aggregate.json'), 'utf8')).toBe(DATA_FILES['aggregate.json'])
     const pkg = JSON.parse(readFileSync(join(w.profile, 'package.json'), 'utf8')) as { dependencies: Record<string, string> }
-    expect(pkg.dependencies['dsh-xdpool']).toMatch(new RegExp(`^file:.*dsh-xdpool-${version.replaceAll('.', '\\.')}\\.tgz$`, 'u'))
+    /**
+     * 写的是**版本号**，不是 `file:<下载下来的 tgz>`。
+     *
+     * 这条以前断言的是 `^file:.*dsh-xdpool-<version>.tgz$`。那个写法有三处被用户
+     * 报上来的毛病：插件市场按 `link:`/`file:` 判定「本地开发」从而不再提供更新、
+     * 路径指向系统临时目录（被清理后下次启动直接加载失败）、以及市场显示的
+     * 「3.0.1.tgz」与实际 bundle 的版本号对不上。
+     */
+    expect(pkg.dependencies['dsh-xdpool']).toBe(version)
     expect(pkg.dependencies['some-other-plugin']).toBe('1.0.0')
     expect(existsSync(join(w.profile, 'package.json.tmp'))).toBe(false)
   })
