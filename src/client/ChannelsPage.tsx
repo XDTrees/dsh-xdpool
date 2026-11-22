@@ -48,6 +48,8 @@ import {
 } from '../status-paths.ts'
 import type { ChannelAccount, ChannelRpcEnvelope } from '../channels.ts'
 import { accountsFrom, callPack, createdFrom, fetchChannels, pollFrom, providerStatusesFrom } from './channel-rpc.ts'
+/** 登录成功后要作废账号数缓存，否则账号池还显示旧的计数。 */
+import { invalidateProviderStatusCache } from './ChannelPoolSection.tsx'
 import type { XdPoolSettingsKey } from './locales.ts'
 import { channelIcon, channelInitials } from './channel-icons.ts'
 
@@ -358,6 +360,12 @@ export function ChannelsPage(_props: ChannelsPageProps) {
           return
         }
         finishDone(channel.id)
+        /*
+          账号数缓存作废 —— 登录通道刚刚多了一个账号，
+          账号池那边若还拿着 30 秒前的计数，会显示旧的数字，
+          看起来就像「登上了但池子没同步」。
+        */
+        invalidateProviderStatusCache()
         refresh()
       }
       timers.current.set(channel.id, window.setInterval(() => { void tick() }, POLL_INTERVAL_MS))
@@ -477,6 +485,7 @@ export function ChannelsPage(_props: ChannelsPageProps) {
           if (answer.done && answer.success !== false) {
             stopPolling(channel.id)
             finishDone(channel.id)
+            invalidateProviderStatusCache()
             refresh()
             return
           }

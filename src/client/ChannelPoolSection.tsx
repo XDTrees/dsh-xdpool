@@ -220,6 +220,17 @@ let providerStatusCache: { at: number; key: string; answer: ChannelRpcEnvelope }
 const PROVIDER_STATUS_TTL_MS = 30_000
 
 /**
+ * 丢掉账号数缓存。
+ *
+ * 30 秒的缓存让「回到账号池」很便宜，但登录完一个账号后它就是错的：
+ * 登录通道（不走缓存）显示 3，账号池（走缓存）还显示 1，要等半分钟才对上。
+ * 任何会改变账号数量的动作之后都调一次。
+ */
+export function invalidateProviderStatusCache(): void {
+  providerStatusCache = undefined
+}
+
+/**
  * Channels whose rewards are collected through `onboarding.claim`, not a daily
  * check-in.
  *
@@ -920,9 +931,39 @@ function accountDisplay(
   const raw = accountLabel(account)
   const id = typeof account.id === 'string' ? account.id : raw
   const full = raw === id ? raw : `${raw}（${id}）`
+  /*
+    昵称只是渠道名（含「CodeArts 代码」「腾讯 Marvis 账号 1」这类变体）时，
+    它不区分任何账号 —— 三个 CodeArts 账号会长得一模一样。
+    这种情况按「没有昵称」处理，改用 id 末四位区分。
+
+    判据：昵称里去掉渠道名和常见后缀字之后，剩下的不是有意义的词。
+  */
+  if (sameAsChannel(raw, channelName)) {
+    const tail = id.replace(/[^A-Za-z0-9]/gu, '').slice(-4)
+    return { name: `${channelName} ${String(index + 1)}`, ...(tail === '' ? {} : { tail }), full }
+  }
   if (!looksLikeMachineId(raw)) return { name: raw, full }
   const tail = id.replace(/[^A-Za-z0-9]/gu, '').slice(-4)
   return { name: `${channelName} 账号 ${String(index + 1)}`, ...(tail === '' ? {} : { tail }), full }
+}
+
+/**
+ * 昵称是不是「就是渠道名」，或者只比渠道名多几个没有信息量的词。
+ *
+ * pack 的默认昵称是 `CodeArts 代码`、`腾讯 Marvis 账号 1` 这种：
+ * 同一家的每个账号都叫这个，等于没有名字。
+ */
+function sameAsChannel(nickname: string, channelName: string): boolean {
+  const strip = (text: string): string => text
+    .toLowerCase()
+    .replace(/\s+/gu, '')
+    /* 去掉这些没有区分度的中文词：它们只是把渠道名拉长，不指向任何具体账号 */
+    .replace(/代码|账号|账户|默认|用户|腾讯|国际版|国内版|国际|国内|的|号/gu, '')
+  const a = strip(nickname)
+  const b = strip(channelName)
+  if (a === '' || b === '') return false
+  /* 昵称去掉外壳后落在渠道名里，或渠道名落在昵称里 —— 都不是真名字 */
+  return a.includes(b) || b.includes(a)
 }
 
 /**
