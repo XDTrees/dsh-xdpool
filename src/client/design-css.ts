@@ -98,8 +98,8 @@ export const DESIGN_TOKENS_CSS = `/* XD Pool 设计变量
 
 
 
-button, input, select { font-family: inherit; }
-button { cursor: pointer; }
+
+
 
 /* 数字等宽：刷新时不左右跳 */
 .num { font-variant-numeric: tabular-nums; }
@@ -2084,7 +2084,6 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 .tiny:active:not(:disabled),
 .rail-item:active { transform: translateY(1px) }
 .sw:active:not(:disabled) { filter: brightness(.94) }
-button:disabled { cursor: not-allowed }
 
 
 /* ============================================================
@@ -2146,6 +2145,26 @@ label.sw:has(input:disabled) { opacity: .5; cursor: not-allowed }
 .rail-item {
   line-height: 1.65;
 }
+
+
+/* ============================================================
+   元素选择器收进 .app
+   ------------------------------------------------------------
+   设计稿的 button { cursor: pointer } / input { font-family: inherit }
+   在独立页面里是对的。注入到宿主页面后就变成「改宿主所有按钮」——
+   DSH 自己的按钮、输入框都会受影响。
+
+   这里把它们重新声明在 .app 作用域内，并把原来那几条全局的删掉。
+   （删在下面的 CLEANUP 里做，因为它要处理拼接后的整份 CSS。）
+   ============================================================ */
+.app button,
+.app input,
+.app select,
+.app textarea {
+  font-family: inherit;
+}
+.app button { cursor: pointer }
+.app button:disabled { cursor: not-allowed }
 
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}

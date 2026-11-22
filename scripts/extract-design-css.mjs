@@ -92,6 +92,10 @@ const scoped = app
   .replace(/^\s*\*\s*\{\s*box-sizing:\s*border-box;?\s*\}/gmu, '.app, .app * { box-sizing: border-box }')
   /* :root 里的变量改成挂在 .app 上，不污染宿主 */
   .replace(/^:root\s*\{/gmu, '.app {')
+  // 全局元素选择器删掉 —— 上面已经在 .app 里重新声明过了
+  .replace(/^button,\s*input,\s*select\s*\{[^}]*\}/gmu, '')
+  .replace(/^button\s*\{[^}]*\}/gmu, '')
+  .replace(/^button:disabled\s*\{[^}]*\}/gmu, '')
   .replace(/::-webkit-scrollbar/gu, '.app ::-webkit-scrollbar')
 
 const bridge = `
@@ -244,6 +248,26 @@ label.sw:has(input:disabled) { opacity: .5; cursor: not-allowed }
   line-height: 1.65;
 }
 
+
+/* ============================================================
+   元素选择器收进 .app
+   ------------------------------------------------------------
+   设计稿的 button { cursor: pointer } / input { font-family: inherit }
+   在独立页面里是对的。注入到宿主页面后就变成「改宿主所有按钮」——
+   DSH 自己的按钮、输入框都会受影响。
+
+   这里把它们重新声明在 .app 作用域内，并把原来那几条全局的删掉。
+   （删在下面的 CLEANUP 里做，因为它要处理拼接后的整份 CSS。）
+   ============================================================ */
+.app button,
+.app input,
+.app select,
+.app textarea {
+  font-family: inherit;
+}
+.app button { cursor: pointer }
+.app button:disabled { cursor: not-allowed }
+
 .strip-caret{width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--faint);transition:transform var(--t-base) var(--ease)}
 .strip-caret[data-open="true"]{transform:rotate(180deg)}
 `
@@ -260,7 +284,7 @@ const MIN_FONT_FIX = (css) => css.replace(/font-size:1[01]px/gu, 'font-size:12px
  */
 const scopedMobile = MIN_FONT_FIX(mobile)
 
-const out = `/**
+let out = `/**
  * 设计稿样式，原样接管。
  *
  * 来源：xdpool-design 的 tokens.css / app.css / channel-colors.css / build-a.mjs。
@@ -270,6 +294,29 @@ export const DESIGN_TOKENS_CSS = \`${tokens.replace(/^\*\s*\{\s*box-sizing:\s*bo
 
 export const DESIGN_DETAIL_CSS = \`${MIN_FONT_FIX(scoped)}\n${MIN_FONT_FIX(pageCss())}\n${scopedMobile}\n${bridge}\`
 `
+
+/*
+  最后一道清理：全局元素选择器。
+
+  `button { cursor: pointer }` 这类规则在设计稿里没问题，但注入到宿主页面后
+  会改掉 DSH 自己的每一个按钮。上面已经在 .app 作用域里重新声明过了，
+  所以这里把全局的那几条删掉。
+
+  放在最后而不是各个 replace 里：三处 :root 分别来自 tokens / colors / icons，
+  每个都有自己的处理链，漏一条就漏一条。统一在这里扫一遍。
+*/
+const globals = [
+  /^button,\s*input,\s*select\s*\{[^}]*\}\n?/gmu,
+  /^button\s*\{[^}]*\}\n?/gmu,
+  /^button:disabled\s*\{[^}]*\}\n?/gmu,
+  /^input\s*\{[^}]*\}\n?/gmu,
+  /^select\s*\{[^}]*\}\n?/gmu,
+  /^html\s*\{[^}]*\}\n?/gmu,
+  /^body\s*\{[^}]*\}\n?/gmu,
+]
+let cleaned = out
+for (const re of globals) cleaned = cleaned.replace(re, '')
+out = cleaned
 
 writeFileSync('D:/dsh-home/_xdpool-src/src/client/design-css.ts', out, 'utf8')
 console.log('生成 design-css.ts:', Math.round(out.length / 1024), 'KB')
