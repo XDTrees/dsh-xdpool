@@ -596,6 +596,11 @@ export function ChannelsPage(_props: ChannelsPageProps) {
     },
     [status],
   )
+  /* 已经登上了的厂家数 —— 副标题里和总数并列，一眼看出还剩几家没接 */
+  const connectedCount = useMemo(
+    (): number => channels.filter(channel => countFor(channel) > 0).length,
+    [channels, countFor],
+  )
   /* 搜索过滤：名字、厂商、备注任一命中 */
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -865,7 +870,9 @@ export function ChannelsPage(_props: ChannelsPageProps) {
         <div className="mhead-title">
           <span className="mhead-name">登录通道</span>
           <span className="mhead-org">
-            {channels.length > 0 ? `${String(channels.length)} 家厂商` : '正在读取渠道…'}
+            {channels.length === 0
+              ? '正在读取渠道…'
+              : `${String(channels.length)} 家厂商 · 已连接 ${String(connectedCount)}`}
           </span>
         </div>
         <div className="mhead-actions">
