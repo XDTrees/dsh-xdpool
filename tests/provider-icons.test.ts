@@ -82,7 +82,7 @@ describe('the aggregate row reaches for artwork before initials', () => {
     // the vendors that had a logo and the logo to the ones that did not.
     expect(card).not.toContain('{...icon === undefined ? {} : { icon }}')
     // 设计稿卡片头的图标是 20px，所以多传一个 size。
-    expect(card).toContain('<BrandTile accent={accentFor(provider.id)} glyph="globe" size={20} {...tileMark} />')
+    expect(card).toContain('{...tileMark}')
   })
 
   it('reuses the one initials helper the sign-in page uses', () => {

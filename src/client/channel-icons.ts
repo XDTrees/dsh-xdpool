@@ -121,6 +121,19 @@ export function channelInitials(name: string): string {
  * CSS 变量无法在 JS 里读成字符串，所以这里返回一个
  * 特殊标记 `css:--icon-xxx`，由 BrandTile 写成 `var(--icon-xxx)`。
  */
+/**
+ * 设计稿 `icons.css` 里真实有定义的图标变量名。
+ *
+ * 这张表必须和 design-css.ts 里的 `--icon-*` 变量一致 ——
+ * 多写一个就会得到一个解析失败的 `var()`，图不显示还不报错。
+ * 判断方法：`grep -oE '--icon-[a-z0-9-]+' src/client/design-css.ts | sort -u`
+ */
+const CSS_ICON_NAMES: ReadonlySet<string> = new Set([
+  'accio', 'astudio', 'autoclaw', 'baizhi', 'buddy', 'cline', 'codearts',
+  'doubao', 'gemini', 'lobsterai', 'loomy', 'marvis', 'minimax',
+  'monkeycode', 'qoder', 'qodercn', 'raccoon', 'trae', 'workbuddy', 'zcode',
+])
+
 export function channelIcon(id: string): string | undefined {
   const own = CHANNEL_ICONS[id]
   if (own !== undefined) return own
@@ -134,5 +147,17 @@ export function channelIcon(id: string): string | undefined {
     'monkeycode-cn': 'monkeycode',
   }
   const cssName = CSS_ALIAS[id] ?? id
-  return `css:--icon-${cssName}`
+  /*
+    只有设计稿真的定义了这个变量才返回 `css:`。
+
+    原来这里无条件返回 `css:--icon-<id>`，于是调用方
+    `channelIcon(id) ?? providerIcon(id)` 的 `??` **永远不会执行** ——
+    聚合页的 77 家厂商拿到的是 `var(--icon-anthropic)`，
+    而这个变量根本不存在（icons.css 只有 20 家登录渠道的图），
+    于是背景图永远是 none。
+
+    现在只有真存在的才用变量，其余返回 undefined，让调用方去查
+    provider-icons 的 76 家美术。
+  */
+  return CSS_ICON_NAMES.has(cssName) ? `css:--icon-${cssName}` : undefined
 }

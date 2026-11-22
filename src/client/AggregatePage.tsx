@@ -786,7 +786,20 @@ function ProviderRow({
   return (
     <article className="vd" data-on={effective ? 'true' : 'false'}>
       <div className="vd-head">
-        <BrandTile accent={accentFor(provider.id)} glyph="globe" size={20} {...tileMark} />
+        {/*
+          官方图标原样显示 —— 不套品牌色（不按 id 哈希随机上色）。
+
+          两批图标的底色需求不同：
+          · simple-icons 那 39 家是 fill="white" 的单色路径，透明底上会消失，
+            所以垫一块接近背景的深色；这仍是在给官方图形本身让位，不是品牌色。
+          · PNG favicon 那 36 家自带颜色，透明底即可，再垫一层反而脏。
+        */}
+        <BrandTile
+          accent={icon !== undefined && icon.includes('svg') ? 'var(--surface-2)' : 'transparent'}
+          glyph="globe"
+          size={22}
+          {...tileMark}
+        />
         <span className="vd-name" title={notes === '' ? provider.name : `${provider.name}：${notes}`}>
           {provider.name}
         </span>

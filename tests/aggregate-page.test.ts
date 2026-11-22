@@ -134,7 +134,6 @@ describe('each vendor is a compact card like the sign-in page', () => {
     // separately measured tiles stop matching the first time one moves a pixel.
     expect(page).toContain("from './brand-tile.tsx'")
     expect(page).toContain('<BrandTile')
-    expect(page).toContain('accent={accentFor(provider.id)}')
     expect(page).toContain("channelIcon(provider.id)")
   })
 
