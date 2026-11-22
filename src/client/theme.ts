@@ -34,10 +34,28 @@ export function isXdTheme(value: unknown): value is XdTheme {
   return value === 'dark' || value === 'light'
 }
 
+/**
+ * 只用到两个方法的存储接口。
+ *
+ * 为什么不直接写 `globalThis.localStorage`：`tsconfig.json`（host 侧）把
+ * src 下所有 .ts 都收进程序，本文件在覆盖范围内，而那份配置的 `lib` 只有
+ * ES2023、没有 DOM —— 直接引用 `localStorage` 会触发 TS7017。按结构声明
+ * 一个小接口，两边配置都编得过，运行时行为一字不变。
+ */
+interface ThemeStorage {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+}
+
+/** 取存储；宿主没给（Node、SSR、被禁用）就是 undefined。 */
+function themeStorage(): ThemeStorage | undefined {
+  return (globalThis as { localStorage?: ThemeStorage }).localStorage
+}
+
 /** 读记住的主题；任何异常都当没选过。 */
 export function readTheme(): XdTheme {
   try {
-    const raw = globalThis.localStorage?.getItem(THEME_STORAGE_KEY)
+    const raw = themeStorage()?.getItem(THEME_STORAGE_KEY)
     return isXdTheme(raw) ? raw : DEFAULT_THEME
   } catch {
     return DEFAULT_THEME
@@ -52,7 +70,7 @@ export function readTheme(): XdTheme {
  */
 export function rememberTheme(theme: XdTheme): void {
   try {
-    globalThis.localStorage?.setItem(THEME_STORAGE_KEY, theme)
+    themeStorage()?.setItem(THEME_STORAGE_KEY, theme)
   } catch {
     // 无痕模式 / 配额满：这次切换仍然生效，只是下次打开会回到默认。
   }
