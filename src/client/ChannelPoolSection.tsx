@@ -913,6 +913,18 @@ function accountLabel(account: { id?: unknown; nickname?: unknown }): string {
 function looksLikeMachineId(text: string): boolean {
   const value = text.trim()
   if (value === '') return true
+  /*
+    pack 的占位名：某个 provider 的凭据文件里有引用、但找不到对应账号记录时，
+    它写 `nickname: provider + " account"`（`buddy account`）。
+    七个账号全叫这个名字 —— 那不是名字。
+  */
+  if (/^[a-z0-9][a-z0-9-]* account$/iu.test(value)) return true
+  /*
+    pack 生成的默认 id：`codearts-f882ad03` / `minimax-e8524f6e`。
+    这家上游没有昵称接口（见下方 accountDisplay 的说明），pack 只能发一个唯一 id，
+    而它同时把 id 当成了 nickname。
+  */
+  if (/^[a-z][a-z0-9-]*-[a-f0-9]{8}$/u.test(value)) return true
   if (/[\u4e00-\u9fff\s@]/u.test(value)) return false
   if (/^\+?[\d*]{7,15}$/u.test(value)) return false            // 手机号 / 打码手机号
   if (/^[0-9a-f-]{16,}$/iu.test(value)) return true              // hex / uuid
