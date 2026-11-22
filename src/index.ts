@@ -485,6 +485,15 @@ export interface Config {
    * (the aggregate switch does not govern it — it is not an aggregate provider).
    */
   freeLane?: boolean
+  /**
+   * Doubao catalog ids enabled in the model picker — issue #196.
+   *
+   * The card owns the tick list (its localStorage) and the picker is built in
+   * this process, which cannot read it, so the card mirrors the list into this
+   * field. Empty means "never configured" and serves the whole roster, the
+   * same read every other lane uses; only a NON-EMPTY list filters.
+   */
+  doubaoEnabledModelIds?: string[]
 }
 /** One region's saved model selection. */
 export interface ModelSelectionConfig {
@@ -693,7 +702,9 @@ export const Config: z<Config> = z.object({
   freeLane: asVolatile(
     z.boolean().default(false)
       .description('Offer the shared 免密 free models (the "XD Pool · 免费模型" group). Off by default: it is a third-party endpoint with no key of your own.'),
-  )
+  ),
+  /** Doubao's tick list, mirrored from the card (see the Config doc). Empty = unconfigured = whole roster. */
+  doubaoEnabledModelIds: asVolatile(z.array(z.string()).default([]).description('Doubao catalog ids enabled in the picker (mirrored from the Doubao card; empty serves the whole roster)')),
 })
 /** Everything the CLI needs from a live plugin instance. */
 export interface WorkBuddyPoolApi {
@@ -1663,6 +1674,19 @@ function canonicalJson(value: unknown): string {
         void removeStoredSession()
       },
       automation: () => doubaoAutomation,
+      /**
+       * Persist Doubao's tick list — issue #196.
+       *
+       * The card's ticks used to live only in the browser's localStorage, which
+       * the host-side `DoubaoHostAdapter.listModels` can never read, so the
+       * picker published the whole roster. This mirrors the resulting enabled ids
+       * into the plugin's settings field; `setSetting` re-reads and throws if the
+       * document did not change, so a refused write reaches the card as a 500.
+       */
+      saveDoubaoSelection: async (ids) => {
+        const payload = [...ids]
+        await setSetting('doubaoEnabledModelIds', payload, payload)
+      },
     })
     return registerPoolStatusRoute(webCtx, {
     pool: core.pool,
@@ -2307,7 +2331,10 @@ function canonicalJson(value: unknown): string {
            */
           releaseAdapterDoubao = ctx.llm.registerAdapter(
             [DOUBAO_PROVIDER_ID],
-            new DoubaoHostAdapter({ session: () => doubaoSession }),
+            new DoubaoHostAdapter({
+              session: () => doubaoSession,
+              selection: () => current().doubaoEnabledModelIds,
+            }),
           )
           /**
            * Marvis, the fifteenth channel.

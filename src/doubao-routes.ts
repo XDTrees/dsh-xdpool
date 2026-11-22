@@ -47,6 +47,16 @@ export interface DoubaoRouteOptions {
   clear: () => void
   /** The credit automation, so the card can read and flip it. */
   automation: () => DoubaoAutomation
+  /**
+   * Persist Doubao's tick list — issue #196.
+   *
+   * The card owns the selection in its localStorage, which this half of the
+   * plugin can never read, so the picker published the whole roster. The card
+   * pushes the resulting enabled ids here and this callback mirrors them into
+   * the plugin's settings field. Absent means the settings service is not
+   * available, and the route answers 503 rather than pretending the save stuck.
+   */
+  saveDoubaoSelection?: ((ids: readonly string[]) => void | Promise<void>) | undefined
   /** The authorities this deployment serves, so a proxied UI can sign in — see `origin-trust.ts`. */
   trustedHosts?: () => TrustedHosts
 }
@@ -209,8 +219,38 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       kind: 'exact',
       path: POOL_DOUBAO_MODELS_PATH,
       handler: async (req: IncomingMessage, res: ServerResponse) => {
-        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+        if (req.method !== 'GET' && req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
         if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
+        /**
+         * POST saves the tick list — issue #196.
+         *
+         * The card's ticks used to live only in the browser's localStorage, so
+         * this half of the plugin never learned them and `listModels` published
+         * the whole roster. Persisting them host-side is what lets the picker
+         * honour the same list the card shows.
+         *
+         * An absent field is left alone; an explicitly empty array is a real
+         * (empty) selection and stored as such — the same distinction the pool
+         * lanes make. A non-string or empty entry is rejected with 400 so a
+         * malformed body never half-writes the list.
+         */
+        if (req.method === 'POST') {
+          if (deps.saveDoubaoSelection === undefined) return json(res, 503, { error: 'settings service unavailable; doubao selection cannot be saved' })
+          const body = await readJson(req)
+          const raw = body['enabledModelIds']
+          if (!Array.isArray(raw)) return json(res, 400, { error: 'enabledModelIds must be an array' })
+          const ids: string[] = []
+          for (const entry of raw) {
+            if (typeof entry !== 'string' || entry === '') return json(res, 400, { error: 'enabledModelIds must contain non-empty strings' })
+            ids.push(entry)
+          }
+          try {
+            await deps.saveDoubaoSelection(ids)
+            return json(res, 200, { ok: true, enabledModelIds: ids })
+          } catch (error: unknown) {
+            return json(res, 500, { error: error instanceof Error ? error.message : String(error) })
+          }
+        }
         /**
          * The same list the picker gets.
          *

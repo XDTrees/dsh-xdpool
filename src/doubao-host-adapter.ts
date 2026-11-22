@@ -98,6 +98,16 @@ interface DoubaoChatOptions {
 export interface DoubaoHostAdapterOptions {
   /** The stored session, read per call so a sign-in is visible without a restart. */
   session: () => DoubaoSession | undefined
+  /**
+   * The catalog ids the user has ticked on the card, read per call so a toggle
+   * is visible without a restart — issue #196.
+   *
+   * `undefined` or an empty list means NOT YET CONFIGURED and serves the whole
+   * roster — the same read every other lane uses (`visible()` in the catalog),
+   * so a fresh install never presents an empty group. The card mirrors its tick
+   * list into the plugin settings; this process cannot read its localStorage.
+   */
+  selection?: (() => readonly string[] | undefined) | undefined
   /** Called when the upstream reports its conversation id. */
   onConversationId?: ((id: string) => void) | undefined
 }
@@ -142,8 +152,28 @@ export class DoubaoHostAdapter extends LlmAdapter {
       return []
     }
     const models = await fetchLiveModels(session)
+    /**
+     * `cached` deliberately keeps the FULL roster; only what the picker is
+     * offered gets filtered — issue #196.
+     *
+     * An unchecked model stays resolvable, so a chain or a pinned default that
+     * names it still answers: the tick list governs the list, never the wire.
+     */
     this.cached = { at: Date.now(), models }
-    return models.map(model => this.describe(model))
+    const enabled = this.options.selection?.()
+    /**
+     * `undefined` means "never configured" and serves the whole roster; an EMPTY
+     * ARRAY means the user pressed 「全关」 and must serve NOTHING.
+     *
+     * This is deliberately NOT `visible()`'s reading. There the empty array is a
+     * host-initialised default ("nothing chosen yet") that has to fall open, or a
+     * fresh install would show an empty picker. Here the array is only ever
+     * written by an explicit card action, so empty can only mean "all switched
+     * off" — falling open there made 「全关」 a no-op, which is issue #196.
+     */
+    const allow = enabled === undefined ? undefined : new Set(enabled)
+    const shown = allow === undefined ? models : models.filter(model => allow.has(model.id))
+    return shown.map(model => this.describe(model))
   }
 
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {
