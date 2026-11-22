@@ -18,13 +18,11 @@ describe('the aggregate vendors carry their own artwork', () => {
   it('holds an icon for almost every vendor in the registry', () => {
     const without = vendorIds.filter((id) => !entries.has(id))
     expect(entries.size).toBe(vendorIds.length - without.length)
-    // Four entries have nowhere to get a mark: LLaMA.cpp is a repository with
-    // no brand site (borrowing Meta's would be a lie), Morph's site serves a
-    // non-PNG icon a CSS background cannot draw, bynara.id publishes no favicon
-    // at all, and `custom_openai` is not a vendor — it is whatever endpoint the
-    // user points at, so there is no artwork to fetch and initials are both the
-    // honest answer and the only correct one.
-    expect([...without].sort()).toEqual(['custom_openai', 'llamacpp', 'morph', 'nararoute'])
+    // Morph（morphllm.com）、NaraRoute（router.bynara.id）的 favicon 已转成 32px PNG；
+    // LLaMA.cpp 用的是它所属组织 ggml-org 的 GitHub 头像（不是 Meta 的）。
+    // 只剩 `custom_openai`：它不是一家厂商，是用户自己填的任意接口地址，
+    // 没有可取的图标，首字母是唯一正确的答案。
+    expect([...without].sort()).toEqual(['custom_openai'])
   })
 
   it('invents no key the registry does not have', () => {
@@ -83,7 +81,8 @@ describe('the aggregate row reaches for artwork before initials', () => {
     // The conditional used to be inverted, which handed the letters to exactly
     // the vendors that had a logo and the logo to the ones that did not.
     expect(card).not.toContain('{...icon === undefined ? {} : { icon }}')
-    expect(card).toContain('<BrandTile accent={accentFor(provider.id)} glyph="globe" {...tileMark} />')
+    // 设计稿卡片头的图标是 20px，所以多传一个 size。
+    expect(card).toContain('<BrandTile accent={accentFor(provider.id)} glyph="globe" size={20} {...tileMark} />')
   })
 
   it('reuses the one initials helper the sign-in page uses', () => {

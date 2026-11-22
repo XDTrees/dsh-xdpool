@@ -28,6 +28,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { env } from 'node:process'
 import { ensureSecretDir, writeSecretFile } from './file-perms.ts'
+import { carryUnknownAggregateEntries, preserveUnreadableJson, readRawJson } from './data-guard.ts'
 import { isDistributionStrategy } from './status-paths.ts'
 import type { AggregateSettings, ProviderRecord, ProviderSetting } from './providers.ts'
 import { getProvider, listProviderIds, PROVIDERS } from './providers.ts'
@@ -80,6 +81,12 @@ export interface RelaySetting {
    * an id — including the login channels, whose quota is this account's.
    */
   models?: string[]
+  /**
+   * 模型共享方式。'pool' = 按账号池启用列表（models 保留但不生效）；
+   * 'custom' = 只放行 models。旧配置没有这个字段时按 models 是否存在推断，
+   * 这样升级前存过列表的网关行为不变。
+   */
+  modelsMode?: 'pool' | 'custom'
 }
 export interface AggregateFile {
   version: number
@@ -231,6 +238,9 @@ function normalizeRelay(raw: unknown): RelaySetting | undefined {
   if (Array.isArray(value.models)) {
     relay.models = normalizeRelayModels(value.models)
   }
+  // 模型共享方式：'pool' = 按账号池启用列表（models 留着但不生效）；'custom' = 只放行 models。
+  // 旧配置没有这个字段，读的地方按 models 是否存在推断。
+  if (value.modelsMode === 'pool' || value.modelsMode === 'custom') relay.modelsMode = value.modelsMode
   return Object.keys(relay).length === 0 ? undefined : relay
 }
 /**
@@ -261,7 +271,18 @@ export async function writeAggregateSettings(settings: AggregateStore): Promise<
   // The mode goes on the TEMP file so the rename carries it across, which is the
   // whole reason the write is staged.
   await ensureSecretDir(dirname(path))
-  const file: AggregateFile = { version: STORE_VERSION, ...settings }
+  const document: AggregateFile = { version: STORE_VERSION, ...settings }
+  // 兼容性保护（2.7.x 老用户升级时审计出来的「下一次保存静默抹掉」问题）：
+  //   1. 磁盘上的文件读不懂（手改坏了、写到一半断电）时，readAggregateSettings 当它是空的，
+  //      这次保存就会把所有 API Key 盖掉 —— 先原样另存一份 `.unreadable-<时间戳>`。
+  //   2. 注册表不认识的厂商 id、当前版本不认识的顶层字段，normalize 读的时候跳过了，
+  //      这里把它们原样带回去，而不是在这次保存时永久丢掉。认识的字段一律以本次为准。
+  preserveUnreadableJson(path)
+  const file = carryUnknownAggregateEntries(
+    readRawJson(path),
+    document as unknown as Record<string, unknown>,
+    id => Boolean(getProvider(id)),
+  )
   await writeSecretFile(`${path}.tmp`, `${JSON.stringify(file, null, 2)}\n`)
   await rename(`${path}.tmp`, path)
 }
@@ -455,6 +476,7 @@ export async function updateRelaySetting(patch: Partial<RelaySetting>): Promise<
     // key never reopens a closed gateway.
     after.models = normalizeRelayModels(patch.models)
   }
+  if (patch.modelsMode === 'pool' || patch.modelsMode === 'custom') after.modelsMode = patch.modelsMode
   const next: AggregateStore = { ...current }
   // A section that carries nothing is removed instead of saved as `{}`: the card
   // reads presence to decide whether the relay has ever been configured, and an

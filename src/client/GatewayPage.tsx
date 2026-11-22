@@ -1,33 +1,35 @@
 /**
- * The gateway page: the relay that re-exposes the pool to the rest of the LAN.
+ * 网关页：把账号池通过一个 OpenAI 兼容接口暴露给局域网里的其它设备。
  *
- * The page is written around one fact that is easy to get wrong and expensive to
- * get wrong twice: the key shown here is the RELAY key, not the shim's secret.
- * The shim's secret is minted per process, so if it were the thing a phone held,
- * every DSH restart would break every configured client. This page therefore
- * never hands out a credential that outlives a restart.
+ * 布局严格对照设计稿 xdpool-design/gateway.html：
  *
- * Three deliberate honesty choices:
+ *   main
+ *   ├── header.mhead   标题 + 状态 pill + 重启 / 关闭网关 / 复制地址
+ *   └── div.mbody
+ *       ├── .kpis            请求 / 平均延迟 / 输入 / 输出
+ *       ├── section.sec      连接信息（地址 / 鉴权 / 监听 / 模型 + 共享哪些模型）
+ *       ├── section.sec      客户端配置（.code）
+ *       └── section.sec      健康检查（.table）
  *
- * 1. Defaulting to loopback. The bind address is a choice with a network-visible
- *    consequence, so it starts at `127.0.0.1` and says plainly what that means
- *    ("only this computer"). Turning it to `0.0.0.0` is a separate, explicit act.
- * 2. A key is minted the moment the relay is enabled, not on first use. An
- *    enabled relay with no key would have to either refuse everyone (so the
- *    switch silently does nothing) or accept everyone.
- * 3. A failed bind is reported as a failure, not as "off". The difference matters
- *    because "off" tells the user to turn on something that is already on.
+ * 几个必须守住的事实（测试里有断言）：
  *
- * Class names: this page reuses the shell's generic `.dsm-xdpool-sec`
- * and `-sectitle` instead of redefining a section frame per panel. The few
- * classes it does own are prefixed `-gw-` and all live in `GATEWAY_CARD_CSS`.
+ * 1. 默认只绑本机 127.0.0.1；改成 0.0.0.0 是用户单独做的一步。
+ * 2. 这里给出的是中继自己的密钥，不是 shim 每进程生成的秘密 —— DSH 重启后仍然有效。
+ * 3. 「已开」和「在监听」是两件事：开了但没绑上端口要显示成警告，而不是「已关」。
+ * 4. 密钥默认打码显示，但复制按钮复制的是真实密钥。
+ *
+ * 模型共享有两种方式：
+ *   - 按账号池启用列表：不额外限制，账号池 / 渠道里启用了什么，网关就放行什么；
+ *   - 自定义：按渠道勾选，只放行勾选的模型 id。
+ * 旧配置没有 modelsMode 字段：shared 不存在视为「按账号池」，存在视为「自定义」。
  *
  * @module dsh-xdpool/client/GatewayPage
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { POOL_RELAY_PATH, type PoolWebRelayStatus } from '../status-paths.ts'
 import { copyText } from './clipboard.ts'
-import { PageHero } from './shell.tsx'
+import { isFreeChannelModel } from './channel-rpc.ts'
+import { brandName, splitTokens } from './ledger-charts.tsx'
 import type { XdPoolSettingsKey } from './locales.ts'
 /** The translator the settings section injects. */
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
@@ -35,27 +37,23 @@ export interface GatewayPageProps {
   t?: Translate | undefined
 }
 /**
- * The only two bind addresses offered.
+ * 只提供这两个绑定地址。
  *
- * Mirrors `RELAY_HOSTS` in `src/relay.ts`. Duplicated rather than imported
- * because the server module imports `node:http` and this bundle is built for the
- * browser — importing it would drag a Node listener into the card.
- * `tests/relay-page.test.ts` asserts the two lists cannot drift apart.
+ * 与 `src/relay.ts` 的 `RELAY_HOSTS` 保持一致（服务端模块引了 node:http，浏览器包不能 import），
+ * `tests/relay-page.test.ts` 会检查两份列表不漂移。
  */
 const HOSTS = [
-  { value: '127.0.0.1', fallback: 'localhost only' },
-  { value: '0.0.0.0', fallback: 'every device on this network' },
+  { value: '127.0.0.1', label: '仅本机' },
+  { value: '0.0.0.0', label: '局域网内所有设备' },
 ] as const
-/** Poll interval. Slower than the pool card: a relay does not change on its own. */
+/** 轮询间隔。网关不会自己变，比账号池卡片慢。 */
 const POLL_MS = 15_000
+/** 模型共享方式。 */
+type ShareMode = 'pool' | 'custom'
 /**
- * A masked key for display, never the full value.
+ * 打码显示的密钥，不直接渲染完整值。
  *
- * The card renders a reveal button instead of printing the key, because a
- * screenshot of the settings panel is a normal thing to share and a settings
- * screenshot should not hand out a credential. The value is still in the
- * document — the user asked for it and has to paste it into another device — it
- * is just not pre-rendered.
+ * 设置面板截图是很常见的分享行为，截图不应该把凭据一起送出去。
  */
 function maskOf(key: string): string {
   /* 后端把 key 写成对象时 .length/.slice 都会抛错，整页白掉。这里先确认它是字符串。 */
@@ -63,16 +61,59 @@ function maskOf(key: string): string {
   if (text.length <= 8) return '•'.repeat(Math.max(4, text.length))
   return `${text.slice(0, 4)}${'•'.repeat(8)}${text.slice(-4)}`
 }
+/**
+ * 当前生效的共享方式。
+ *
+ * 新后端会回 `modelsMode`；旧后端没有这个字段，就按 shared 是否存在推断，
+ * 这与旧语义（absent = 全放行，有列表 = 白名单）一致。
+ */
+function modeOf(status: PoolWebRelayStatus | undefined): ShareMode {
+  const raw = (status as unknown as { modelsMode?: unknown } | undefined)?.modelsMode
+  if (raw === 'pool' || raw === 'custom') return raw
+  return status?.shared === undefined ? 'pool' : 'custom'
+}
+/** 渠道 id → 界面上显示的名字。 */
+function sourceName(source: string): string {
+  if (source === 'combo') return '路由组合'
+  return brandName(source)
+}
+/** 是否含中文：后端偶尔已经给的是中文提示，那就直接用。 */
+const HAS_CJK = /[\u4e00-\u9fff]/u
+/**
+ * 后端 / 网络返回的英文错误 → 中文。映射不了的统一说「操作失败」，不把英文原样展示。
+ */
+function zhError(raw: string | undefined): string {
+  const text = typeof raw === 'string' ? raw : ''
+  if (text === '') return '操作失败'
+  if (HAS_CJK.test(text)) return text
+  if (/EADDRINUSE|in use/iu.test(text)) return '端口已被占用，换一个端口再试'
+  if (/EACCES|permission/iu.test(text)) return '没有权限绑定这个端口'
+  if (/not a port/iu.test(text)) return '这个端口不能用'
+  if (/advertise/iu.test(text)) return '监听到的地址无法对外提供'
+  if (/origin-not-trusted/iu.test(text)) return '请求来源不受信任，请在 DSH 里打开此页面'
+  if (/not available in this build/iu.test(text)) return '当前版本没有网关功能'
+  if (/cannot bind|bind/iu.test(text)) return '绑定端口失败'
+  const http = /HTTP (\d+)/u.exec(text)
+  if (http !== null) return `请求失败（HTTP ${http[1] ?? ''}）`
+  if (/fetch|network|abort/iu.test(text)) return '连不上 DSH 后端'
+  return '操作失败'
+}
+/** 平均延迟：不足 1 秒用 ms，否则用 s。 */
+function latencyParts(ms: number | undefined): readonly [string, string] {
+  if (ms === undefined || !Number.isFinite(ms)) return ['—', '']
+  if (ms < 1000) return [String(Math.round(ms)), 'ms']
+  return [(ms / 1000).toFixed(1), 's']
+}
+/** 健康检查一行的列宽，与设计稿一致（第二列改成「详情」）。 */
+const HEALTH_COLS = { gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.4fr) 88px' } as const
 export function GatewayPage({ t }: GatewayPageProps) {
   const [status, setStatus] = useState<PoolWebRelayStatus | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const [flash, setFlash] = useState<string | undefined>(undefined)
   /**
-   * Which field was last copied, so its own button can say "Copied" for a moment.
+   * 哪个字段刚被复制，让那个按钮自己显示「已复制」。
    *
-   * Held per-field rather than one global flag: a single boolean would put "Copied"
-   * on the key button right after the base URL was copied, which reads as a bug in a
-   * panel whose whole job is to hand over exactly the right strings.
+   * 按字段记而不是一个全局布尔：否则复制完地址，密钥按钮也会显示「已复制」。
    */
   const [copiedField, setCopiedField] = useState<string | undefined>(undefined)
   const copyTimer = useRef<number | undefined>(undefined)
@@ -80,38 +121,75 @@ export function GatewayPage({ t }: GatewayPageProps) {
   const [revealed, setRevealed] = useState(false)
   const [host, setHost] = useState<string>('127.0.0.1')
   const [port, setPort] = useState<string>('8326')
+  /** 共享方式的草稿；undefined 表示跟随服务端。 */
+  const [draftMode, setDraftMode] = useState<ShareMode | undefined>(undefined)
   /**
-   * The in-progress share list, or undefined while it still mirrors the server.
+   * 自定义列表的草稿；undefined 表示跟随服务端。
    *
-   * Held as a draft for the same reason the model card holds one: saving is a
-   * deliberate act here, because every unchecked row stops working on whatever
-   * device is already pointed at the gateway.
+   * 保存是一个明确动作：取消勾选的模型，已经指向网关的设备会立刻开始收到 403。
    */
   const [draftShared, setDraftShared] = useState<ReadonlySet<string> | undefined>(undefined)
-  /**
-   * Which ids are shared right now.
-   *
-   * `status.shared === undefined` means the user has never chosen, and the
-   * gateway is serving everything — so the picker must show every row ticked
-   * rather than an empty list, which would read as "nothing is shared" and invite
-   * a save that closes a gateway that was open.
-   */
+  const [query, setQuery] = useState('')
   const candidates = status?.candidates ?? []
+  const serverMode = modeOf(status)
+  const mode: ShareMode = draftMode ?? serverMode
+  /**
+   * 服务端记着的列表。
+   *
+   * `status.shared === undefined` 表示用户从没选过、网关全部放行 —— 切到「自定义」时
+   * 要显示全部勾上，而不是空列表（那会被读成「什么都没共享」，一保存就把网关关上了）。
+   */
   const serverShared = status?.shared ?? candidates.map(row => row.id)
   const shared = draftShared ?? new Set(serverShared)
   const sharedDirty = draftShared !== undefined
     && (draftShared.size !== serverShared.length
       || [...draftShared].some(id => !serverShared.includes(id)))
+  const modeDirty = draftMode !== undefined && draftMode !== serverMode
+  const shareDirty = modeDirty || (mode === 'custom' && sharedDirty)
+  const sharedCount = candidates.filter(row => shared.has(row.id)).length
   const toggleShared = (id: string): void => {
     const next = new Set(shared)
     if (next.has(id)) next.delete(id)
     else next.add(id)
     setDraftShared(next)
   }
-  const setAllShared = (on: boolean): void => {
-    setDraftShared(on ? new Set(candidates.map(row => row.id)) : new Set<string>())
+  const setManyShared = (ids: readonly string[], on: boolean): void => {
+    const next = new Set(shared)
+    for (const id of ids) {
+      if (on) next.add(id)
+      else next.delete(id)
+    }
+    setDraftShared(next)
   }
-  /** True once the server's values were adopted, so polls do not stomp edits. */
+  /** 按渠道分组，并按搜索词过滤。同名模型在多个渠道下都有，平铺看不出勾的是哪一个。 */
+  const groups = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    const order: string[] = []
+    const bySource = new Map<string, typeof candidates[number][]>()
+    for (const row of candidates) {
+      if (needle !== ''
+        && !row.name.toLowerCase().includes(needle)
+        && !row.id.toLowerCase().includes(needle)) continue
+      const list = bySource.get(row.source)
+      if (list === undefined) {
+        bySource.set(row.source, [row])
+        order.push(row.source)
+      } else {
+        list.push(row)
+      }
+    }
+    /*
+      每个渠道组里免费的排最前面：名字里写了「免费」/ x0.00，或是免 Key 的 free: 通道。
+      同为免费或同为收费时保持后端给的顺序（sort 是稳定的）。
+    */
+    const freeRank = (row: { id: string; name: string }): number =>
+      row.id.startsWith('free:') || isFreeChannelModel({ name: row.name }) ? 0 : 1
+    return order.map(source => ({
+      source,
+      rows: [...(bySource.get(source) ?? [])].sort((a, b) => freeRank(a) - freeRank(b)),
+    }))
+  }, [candidates, query])
+  /** 服务端的值只采纳一次，之后字段归用户，轮询不能覆盖正在编辑的端口。 */
   const seeded = useRef(false)
   const mounted = useRef(true)
   useEffect(() => {
@@ -136,8 +214,7 @@ export function GatewayPage({ t }: GatewayPageProps) {
         const next = value as PoolWebRelayStatus
         setStatus(next)
         setError(undefined)
-        // Adopt the stored address ONCE. After that the fields belong to the
-        // user: a poll landing mid-edit must not replace a half-typed port.
+        // 只采纳一次存储的地址。之后字段归用户：轮询不能替换敲了一半的端口。
         if (!seeded.current) {
           seeded.current = true
           if (next.host !== '') setHost(next.host)
@@ -145,6 +222,7 @@ export function GatewayPage({ t }: GatewayPageProps) {
         }
       }
     } catch (cause: unknown) {
+      if (signal?.aborted === true) return
       if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause))
     }
   }, [])
@@ -158,13 +236,12 @@ export function GatewayPage({ t }: GatewayPageProps) {
     }
   }, [load])
   /**
-   * Send one patch.
+   * 发一个补丁。
    *
-   * The response IS the new state, so the panel never has to guess what the
-   * server decided: a port it refused, a key it minted, a bind it failed all
-   * come back as facts rather than as the optimistic local edit.
+   * 响应就是新状态：被拒的端口、新生成的密钥、绑定失败，全部以服务端的回答为准，
+   * 而不是本地的乐观修改。
    */
-  const write = useCallback(async (patch: Record<string, unknown>): Promise<void> => {
+  const write = useCallback(async (patch: Record<string, unknown>): Promise<PoolWebRelayStatus | undefined> => {
     setBusy(true)
     try {
       const response = await fetch(POOL_RELAY_PATH, {
@@ -176,53 +253,42 @@ export function GatewayPage({ t }: GatewayPageProps) {
       const value: unknown = await response.json().catch(() => undefined)
       if (!response.ok) {
         const detail = value as { error?: string } | undefined
-        if (mounted.current) setFlash(`${t?.('gw.saveFailed') ?? 'Could not save'}: ${detail?.error ?? `HTTP ${response.status}`}`)
-        return
+        if (mounted.current) setFlash(`${t?.('gw.saveFailed') ?? '没能保存'}：${zhError(detail?.error ?? `HTTP ${response.status}`)}`)
+        return undefined
       }
-      if (!mounted.current) return
+      if (!mounted.current) return undefined
       const next = value as PoolWebRelayStatus
       setStatus(next)
       setFlash(undefined)
       setError(undefined)
-      // A freshly minted key is a new secret; hide it again so it is not left on
-      // screen after the user copies it.
+      // 新密钥是新秘密：复制完不该还亮在屏幕上，重新打码。
       setRevealed(false)
+      return next
     } catch (cause: unknown) {
-      if (mounted.current) setFlash(cause instanceof Error ? cause.message : String(cause))
+      if (mounted.current) setFlash(`${t?.('gw.saveFailed') ?? '没能保存'}：${zhError(cause instanceof Error ? cause.message : String(cause))}`)
+      return undefined
     } finally {
       if (mounted.current) setBusy(false)
     }
   }, [t])
   /**
-   * Copy one of the strings a client needs, and say so on that field's own button.
-   *
-   * A copy button earns its place here because the alternative is transcription: the
-   * base URL, the key and the `/v1` suffix have to reach another program exactly, and
-   * a masked key cannot be read off the screen at all. The reference gateway solves
-   * the same problem by printing a shell one-liner that pipes a file into the
-   * clipboard — necessary there because its key lives only in a local file. Here the
-   * key is already in this document, so the button can be honest and direct.
-   *
-   * Failures are reported rather than swallowed: a copy that silently does nothing
-   * leaves the user pasting a stale value and blaming the key.
+   * 复制客户端需要的字符串，并在那个按钮上提示「已复制」。失败要说出来，不能静默。
    */
   const copy = useCallback(async (field: string, value: string): Promise<void> => {
     const ok = await copyText(value)
     if (!mounted.current) return
     if (!ok) {
-      setFlash(t?.('gw.copyFailed') ?? 'Could not copy — select the text and copy it manually.')
+      setFlash(t?.('gw.copyFailed') ?? '复制失败，请手动选中文本复制。')
       return
     }
     setFlash(undefined)
     setCopiedField(field)
     if (copyTimer.current !== undefined) window.clearTimeout(copyTimer.current)
-    // Long enough to be noticed, short enough that the label is back to normal before
-    // the reader wants to press it again.
     copyTimer.current = window.setTimeout(() => {
       if (mounted.current) setCopiedField(undefined)
     }, 1600)
   }, [t])
-  // The timer would otherwise fire into an unmounted component.
+  // 否则计时器会在卸载后触发。
   useEffect(() => () => {
     if (copyTimer.current !== undefined) window.clearTimeout(copyTimer.current)
   }, [])
@@ -232,48 +298,32 @@ export function GatewayPage({ t }: GatewayPageProps) {
   const parsedPort = Number(port)
   const portUsable = Number.isInteger(parsedPort) && parsedPort >= 1 && parsedPort <= 65_535
   /**
-   * The two strings a client actually needs, derived from the LIVE bound address.
-   *
-   * `status.endpoint` is what the listener really bound, which is not always what was
-   * requested: port 0 asks the OS for a free port, and a host of 0.0.0.0 binds every
-   * interface but cannot be dialled — a client on the same machine has to use
-   * 127.0.0.1. Copying the requested values would hand out a URL that does not answer.
+   * 客户端需要的地址，取自真正绑定上的 endpoint，而不是表单里填的端口：
+   * 端口 0 由系统分配，0.0.0.0 在本机也拨不通。
    */
   const endpoint = status?.endpoint ?? ''
   /**
-   * The origin, without `/v1`.
+   * 不带 /v1 的 origin。
    *
-   * WHAT GETS COPIED DEPENDS ON THE CLIENT, and getting it wrong produces a 404 that
-   * blames the relay:
-   *
-   *   - clients that append the path themselves (`{base}/v1/chat/completions`) want
-   *     the BARE origin — handed `/v1`, they ask for `/v1/v1/chat/completions`,
-   *     which is exactly the `404 /v1/v1/responses` a user reported;
-   *   - clients that want the full prefix pasted in (many "OpenAI compatible"
-   *     fields, and `OPENAI_BASE_URL`) want it WITH `/v1`.
-   *
-   * There is no single right answer, so the panel offers both and labels each with
-   * the client behaviour it suits. Silently picking one is what produced the report.
+   * 有的客户端自己拼 /v1（大多数 SDK），给它带 /v1 的地址会请求 /v1/v1/...；
+   * 有的字段（OPENAI_BASE_URL）要完整前缀。所以两种都给，并写明各自适用哪种。
    */
   // endpoint 若不是字符串，.replace 会抛错 —— 类型声明是 string，运行时不一定
   const origin = (typeof endpoint === 'string' ? endpoint : '').replace(/\/+$/u, '')
   const baseUrl = origin === '' ? '' : `${origin}/v1`
-  /**
-   * Base URL and key together, in the shape every OpenAI client asks for.
-   *
-   * Not JSON: pasting a JSON blob into a client that wants two separate fields is
-   * more work than pasting nothing, and the user still has to split it by eye. Two
-   * labelled lines survive that trip — and if they paste it into a chat to ask a
-   * question, the labels make it readable.
-   */
+  /** Base URL 和密钥两行带标签，粘进客户端或聊天里都看得懂。 */
   const configSnippet = baseUrl === '' || key === ''
     ? ''
     : `Base URL: ${baseUrl}\nAPI Key: ${key}`
+  /** 客户端配置示例里的模型名：优先取一个已共享的。 */
+  const sampleModel = (mode === 'custom'
+    ? candidates.find(row => shared.has(row.id))
+    : candidates[0])?.id ?? '模型 id'
+  const jsonSnippet = baseUrl === '' || key === ''
+    ? ''
+    : JSON.stringify({ baseURL: baseUrl, apiKey: key, model: sampleModel }, null, 2)
   /**
-   * 重启：先关再开。
-   *
-   * 改了端口之后，原来那个监听还在旧端口上 —— 只写配置不重启，
-   * 界面说「已开」，实际还是旧端口在听。关掉再开才会真的迁移。
+   * 重启：先关再开。改了端口之后旧监听还在旧端口上，只写配置不重启，界面说「已开」实际还是旧端口。
    */
   const restart = useCallback(async (): Promise<void> => {
     setBusy(true)
@@ -284,339 +334,541 @@ export function GatewayPage({ t }: GatewayPageProps) {
       setBusy(false)
     }
   }, [write])
+  /** 保存共享设置。 */
+  const saveShare = useCallback(async (): Promise<void> => {
+    const next = mode === 'pool'
+      ? await write({ modelsMode: 'pool' })
+      : await write({ modelsMode: 'custom', models: [...shared] })
+    if (next === undefined || !mounted.current) return
+    setDraftMode(undefined)
+    setDraftShared(undefined)
+    if (mode === 'pool' && modeOf(next) !== 'pool') {
+      // 旧后端不认 modelsMode：已经存过列表就回不到「按账号池」，如实告诉用户。
+      setFlash('当前后端版本还不支持切回「按账号池启用列表」，请更新插件后再试。')
+      return
+    }
+    setFlash(t?.('gw.shareSaved') ?? '网关共享设置已更新')
+  }, [mode, shared, t, write])
+  const discardShare = (): void => {
+    setDraftMode(undefined)
+    setDraftShared(undefined)
+  }
+  const [latency, latencyUnit] = latencyParts(status?.stats?.avgLatencyMs)
+  const [inputNum, inputUnit] = splitTokens(status?.stats?.inputTokens ?? 0)
+  const [outputNum, outputUnit] = splitTokens(status?.stats?.outputTokens ?? 0)
+  const failed = status?.stats?.failed ?? 0
+  const bindError = status?.error !== undefined && status.error !== '' ? zhError(status.error) : ''
 
   return (
-    <div className="main">
-      <PageHero
-        title={t?.('gw.title') ?? 'Gateway'}
-        sub={t?.('gw.sub') ?? ''}
-        pills={<>
-          <span className="pill" data-tone={enabled ? 'ok' : 'off'}>
-            {enabled ? (t?.('gw.on') ?? 'On') : (t?.('gw.off') ?? 'Off')}
-          </span>
-          {/* Two different states, on purpose. "On but not listening" is a
-              failure the user has to be able to see; collapsing it into "off"
-              would tell them to switch on something that is already on. */}
+    <main className="main">
+      <header className="mhead">
+        <div className="mhead-title">
+          <span className="mhead-name">{t?.('gw.title') ?? '网关'}</span>
+          <span className="mhead-org">把账号池暴露成 OpenAI 兼容接口</span>
+          {/* 两种不同的状态：「开了但没监听」是用户必须看得见的故障，不能并进「已关」。 */}
           <span className="pill" data-tone={listening ? 'ok' : enabled ? 'warn' : 'off'}>
             {listening
-              ? (t?.('gw.listening') ?? 'Listening')
+              ? '运行中'
               : enabled
-                ? (t?.('gw.notListening') ?? 'On, not listening')
-                : (t?.('gw.idle') ?? 'Idle')}
+                ? (t?.('gw.notListening') ?? '已开但没监听')
+                : '已关闭'}
           </span>
-        </>}
-        actions={(
-          <>
-            <button
-              type="button"
-              className="btn"
-              disabled={busy || !enabled}
-              onClick={() => { void restart() }}
-            >
-              {t?.('gw.restart') ?? '重启'}
-            </button>
-          </>
-        )}
-      />
+        </div>
+        <div className="mhead-actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={busy || !enabled}
+            onClick={() => { void restart() }}
+          >
+            {t?.('gw.restart') ?? '重启'}
+          </button>
+          {enabled
+            ? (
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={busy}
+                onClick={() => { void write({ enabled: false }) }}
+              >
+                关闭网关
+              </button>
+            )
+            : (
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => { void write({ enabled: true }) }}
+              >
+                开启网关
+              </button>
+            )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={baseUrl === ''}
+            title={t?.('gw.copyV1Hint') ?? '要填完整前缀时用这个，例如 OPENAI_BASE_URL。'}
+            onClick={() => { void copy('baseV1', baseUrl) }}
+          >
+            {copiedField === 'baseV1'
+              ? (t?.('gw.copied') ?? '已复制')
+              : (t?.('gw.copyAddress') ?? '复制地址')}
+          </button>
+        </div>
+      </header>
 
       <div className="mbody">
+        {/* 网关转过什么。计数是这个进程自己的，重启归零。 */}
+        <div className="kpis">
+          <div className="kpi">
+            <span className="kpi-k">请求（本次启动）</span>
+            <span className="kpi-v num">{String(status?.stats?.requests ?? 0)}</span>
+            <span className="kpi-sub">{failed === 0 ? '没有失败' : `失败 ${String(failed)}`}</span>
+          </div>
+          <div className="kpi">
+            <span className="kpi-k">平均延迟</span>
+            <span className="kpi-v num">
+              {latency}
+              {latencyUnit === '' ? null : <span className="kpi-u">{latencyUnit}</span>}
+            </span>
+            <span className="kpi-sub">首 token</span>
+          </div>
+          <div className="kpi">
+            <span className="kpi-k">输入</span>
+            <span className="kpi-v num">
+              {inputNum}
+              {inputUnit === '' ? null : <span className="kpi-u">{inputUnit}</span>}
+            </span>
+            <span className="kpi-sub">token</span>
+          </div>
+          <div className="kpi">
+            <span className="kpi-k">输出</span>
+            <span className="kpi-v num">
+              {outputNum}
+              {outputUnit === '' ? null : <span className="kpi-u">{outputUnit}</span>}
+            </span>
+            <span className="kpi-sub">token</span>
+          </div>
+        </div>
 
-      {/*
-        网关转过什么：四格。
-
-        「今日请求 / 多少失败 / 平均延迟 / 输入输出」——
-        没有这四格，读者看不出网关是不是在工作。
-      */}
-      <div className="kpis">
-        <div className="kpi">
-          <span className="kpi-k">今日请求</span>
-          <span className="kpi-v">{String(status?.stats?.requests ?? 0)}</span>
-          <span className="kpi-sub">
-            {(status?.stats?.failed ?? 0) === 0 ? '没有失败' : `失败 ${String(status?.stats?.failed ?? 0)}`}
-          </span>
-        </div>
-        <div className="kpi">
-          <span className="kpi-k">平均延迟</span>
-          <span className="kpi-v">
-            {status?.stats?.avgLatencyMs === undefined
-              ? '—'
-              : `${String(Math.round(status.stats.avgLatencyMs))}ms`}
-          </span>
-          <span className="kpi-sub">首 token</span>
-        </div>
-        <div className="kpi">
-          <span className="kpi-k">输入</span>
-          <span className="kpi-v">{String(status?.stats?.inputTokens ?? 0)}</span>
-          <span className="kpi-sub">tokens</span>
-        </div>
-        <div className="kpi">
-          <span className="kpi-k">输出</span>
-          <span className="kpi-v">{String(status?.stats?.outputTokens ?? 0)}</span>
-          <span className="kpi-sub">tokens</span>
-        </div>
-      </div>
-
-      {error !== undefined
-        ? <p className="hint">{error}</p>
-        : null}
-      {flash !== undefined
-        ? <p className="hint">{flash}</p>
-        : null}
-      {status?.error !== undefined && status.error !== ''
-        ? <p className="hint">{status.error}</p>
-        : null}
-      {status === undefined && error === undefined
-        ? <p className="hint">{t?.('gw.loading') ?? 'Reading…'}</p>
-        : null}
-      <div className="sec">
-        <p className="sec-title">{t?.('gw.switch') ?? 'Relay'}</p>
-        <div>
-          <button
-            type="button"
-            className="btn"
-            data-on={enabled ? 'true' : 'false'}
-            disabled={busy}
-            onClick={() => { void write({ enabled: !enabled }) }}
-          >
-            {enabled ? (t?.('gw.turnOff') ?? 'Turn off') : (t?.('gw.turnOn') ?? 'Turn on')}
-          </button>
-        </div>
-        <p className="note">{t?.('gw.switchHint') ?? ''}</p>
-      </div>
-      <div className="sec">
-        <p className="sec-title">{t?.('gw.address') ?? 'Address'}</p>
-        <label className="row">
-          <span>{t?.('gw.host') ?? 'Bind address'}</span>
-          <select value={host} disabled={busy} onChange={event => { setHost(event.target.value) }}>
-            {HOSTS.map(option => (
-              <option key={option.value} value={option.value}>
-                {option.value} — {t?.('gw.hostFallback', { fallback: option.fallback }) ?? option.fallback}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="row">
-          <span>{t?.('gw.port') ?? 'Port'}</span>
-          <input
-            type="number"
-            min={1}
-            max={65535}
-            value={port}
-            disabled={busy}
-            onChange={event => { setPort(event.target.value) }}
-          />
-        </label>
-        <div>
-          <button
-            type="button"
-            className="btn"
-            data-on="false"
-            disabled={busy || !portUsable}
-            onClick={() => { void write({ host, port: parsedPort }) }}
-          >
-            {t?.('gw.saveAddress') ?? 'Save address'}
-          </button>
-        </div>
-        {portUsable ? null : <p className="pill">{t?.('gw.portInvalid') ?? ''}</p>}
-        {listening && status?.endpoint !== undefined && status.endpoint !== ''
-          ? (
-            <>
-              <p className="note">
-                {t?.('gw.endpoint', { endpoint: status.endpoint }) ?? status.endpoint}
-              </p>
-              {/* Two forms, because clients disagree about who appends `/v1` —
-                  see the `origin` comment above. Each button names the client
-                  behaviour it suits so the reader picks, instead of guessing and
-                  getting a 404 that blames the relay. */}
-              <div className="hint">
-                <button
-                  type="button"
-                  className="btn"
-                  data-on={copiedField === 'base' ? 'true' : 'false'}
-                  onClick={() => { void copy('base', origin) }}
-                  title={t?.('gw.copyOriginHint') ?? '客户端自己会补 /v1 时用这个（大多数 SDK）'}
-                >
-                  {copiedField === 'base'
-                    ? (t?.('gw.copied') ?? 'Copied')
-                    : (t?.('gw.copyOrigin') ?? 'Copy base URL')}
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  data-on={copiedField === 'baseV1' ? 'true' : 'false'}
-                  onClick={() => { void copy('baseV1', baseUrl) }}
-                  title={t?.('gw.copyV1Hint') ?? '要填完整前缀时用这个（含 /v1）'}
-                >
-                  {copiedField === 'baseV1'
-                    ? (t?.('gw.copied') ?? 'Copied')
-                    : (t?.('gw.copyV1') ?? 'Copy with /v1')}
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  data-on={copiedField === 'all' ? 'true' : 'false'}
-                  onClick={() => { void copy('all', configSnippet) }}
-                  title={t?.('gw.copyAllHint') ?? 'base URL + key，可直接粘进客户端'}
-                >
-                  {copiedField === 'all'
-                    ? (t?.('gw.copied') ?? 'Copied')
-                    : (t?.('gw.copyAll') ?? 'Copy both')}
-                </button>
-              </div>
-              {/* The wire this relay speaks, stated plainly. A client set to the
-                  Responses API asks for `/v1/responses`, which is NOT forwarded —
-                  saying so here is cheaper than the 404 that says it later. */}
-              <p className="note">
-                {t?.('gw.wire') ?? '只支持 Chat Completions（/v1/chat/completions 与 /v1/models）。若客户端用 Responses 或 Anthropic 协议，请改成 Chat Completions。'}
-              </p>
-            </>
-          )
+        {status === undefined && error === undefined
+          ? <div className="hint"><span>{t?.('gw.loading') ?? '正在读取中继状态……'}</span></div>
           : null}
-      </div>
-      <div className="sec">
-        <p className="sec-title">{t?.('gw.key') ?? 'Key'}</p>
-        <p className="mono">
-          {key === '' ? (t?.('gw.noKey') ?? 'No key yet') : revealed ? key : maskOf(key)}
-        </p>
-        <div className="hint">
-          <button
-            type="button"
-            className="btn"
-            data-on={copiedField === 'key' ? 'true' : 'false'}
-            disabled={busy || key === ''}
-            // Copies the REAL key even while it is masked on screen: the mask is a
-            // shoulder-surfing guard, not a statement that the value is unavailable,
-            // and forcing a reveal-then-copy would undo the guard it exists for.
-            onClick={() => { void copy('key', key) }}
-          >
-            {copiedField === 'key'
-              ? (t?.('gw.copied') ?? 'Copied')
-              : (t?.('gw.copyKey') ?? 'Copy key')}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            data-on="false"
-            disabled={busy || key === ''}
-            onClick={() => { setRevealed(current => !current) }}
-          >
-            {revealed ? (t?.('gw.hideKey') ?? 'Hide') : (t?.('gw.showKey') ?? 'Show')}
-          </button>
-          <button
-            type="button"
-            className="btn"
-            data-on="false"
-            disabled={busy}
-            onClick={() => { void write({ key: '' }) }}
-          >
-            {t?.('gw.rotate') ?? 'Rotate'}
-          </button>
-        </div>
-        <p className="note">{t?.('gw.keyHint') ?? ''}</p>
-      </div>
-      <div className="sec">
-        <p className="sec-title">{t?.('gw.share') ?? 'Shared models'}</p>
-        <p className="note">{t?.('gw.shareHint') ?? ''}</p>
-        {candidates.length === 0
-          ? <p className="note">{t?.('gw.shareNone') ?? ''}</p>
-          : (
-            <>
-              <div className="hint">
-                <button
-                  type="button"
-                  className="btn"
-                  data-on="false"
-                  disabled={busy}
-                  onClick={() => { setAllShared(true) }}
-                >
-                  {t?.('gw.shareAll') ?? 'Select all'}
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  data-on="false"
-                  disabled={busy}
-                  onClick={() => { setAllShared(false) }}
-                >
-                  {t?.('gw.shareNoneBtn') ?? 'Select none'}
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  data-on="true"
-                  disabled={busy || !sharedDirty}
-                  onClick={() => {
-                    void write({ models: [...shared] }).then(() => { setDraftShared(undefined) })
-                  }}
-                >
-                  {t?.('gw.shareSave') ?? 'Save'}
-                </button>
-              </div>
-              {sharedDirty
-                ? <p className="pill">{t?.('gw.shareDirty') ?? ''}</p>
-                : null}
-              {/* Grouped by lane, because the same model name appears under
-                  several channels and a flat list of 140 rows cannot say which
-                  one a tick actually enables. */}
-              {[...new Set(candidates.map(row => row.source))].map(source => (
-                <div className="sec" key={source}>
-                  <p className="sec-title">{source}</p>
-                  {candidates.filter(row => row.source === source).map(row => (
-                    <label className="td" key={row.id}>
-                      <input
-                        type="checkbox"
-                        checked={shared.has(row.id)}
-                        disabled={busy}
-                        onChange={() => { toggleShared(row.id) }}
-                      />
-                      {/* The display name first and the wire id second: the name
-                          is how the user picks, and the id is what they then have
-                          to type into the client. `qfmodel` alone would make this
-                          list unreadable. */}
-                      <span className="td-name">{row.name}</span>
-                      {/*
-                        The id is a BUTTON, not text.
+        {error !== undefined
+          ? <div className="hint"><b>读取失败</b><span>{zhError(error)}</span></div>
+          : null}
+        {flash !== undefined
+          ? <div className="hint"><b>提示</b><span>{flash}</span></div>
+          : null}
 
-                        Transcribing it by hand is how a client ends up asking for
-                        `DeepSeek-V4.1-Flash` while the gateway only knows
-                        `trae:deepseek-v4.1-flash` — the reported 403. The two are
-                        the same model to a human and different strings to the relay,
-                        and nothing on the card used to bridge that gap.
-
-                        Only the id is copied (never the display name): the name is
-                        for reading, and copying the wrong one would reproduce the
-                        exact failure this fixes.
-                      */}
+        <section className="sec">
+          <div className="sec-head"><span className="sec-title">连接信息</span></div>
+          <div className="card stack">
+            <dl className="kv">
+              <dt>地址</dt>
+              <dd>
+                <div className="row">
+                  <span className="mono">{baseUrl === '' ? (enabled ? '等待监听…' : '网关未开启') : baseUrl}</span>
+                  <button
+                    type="button"
+                    className="tiny"
+                    disabled={origin === ''}
+                    title={t?.('gw.copyOriginHint') ?? '客户端自己会补 /v1 时用这个（大多数 SDK）。'}
+                    onClick={() => { void copy('base', origin) }}
+                  >
+                    {copiedField === 'base' ? (t?.('gw.copied') ?? '已复制') : '复制不含 /v1'}
+                  </button>
+                </div>
+              </dd>
+              <dt>鉴权</dt>
+              <dd>
+                <div className="row">
+                  <span className="mono">
+                    {key === '' ? (t?.('gw.noKey') ?? '还没有密钥 —— 打开网关时会顺手生成一把。') : `Bearer ${revealed ? key : maskOf(key)}`}
+                  </span>
+                  {key === ''
+                    ? null
+                    : (
                       <button
                         type="button"
-                        className="mono"
-                        data-on={copiedField === `id:${row.id}` ? 'true' : 'false'}
-                        title={t?.('gw.copyModelIdHint') ?? '复制模型 id —— 客户端里要填的就是这个'}
-                        onClick={(event) => {
-                          // The row is a <label>: without this the click would also
-                          // toggle the checkbox, unsharing the model the user just
-                          // copied the id of.
-                          event.preventDefault()
-                          event.stopPropagation()
-                          void copy(`id:${row.id}`, row.id)
-                        }}
+                        className="tiny"
+                        onClick={() => { setRevealed(current => !current) }}
                       >
-                        {copiedField === `id:${row.id}`
-                          ? (t?.('gw.copied') ?? 'Copied')
-                          : row.id}
+                        {revealed ? (t?.('gw.hideKey') ?? '隐藏') : (t?.('gw.showKey') ?? '显示')}
                       </button>
-                    </label>
-                  ))}
+                    )}
                 </div>
-              ))}
-            </>
-          )}
+              </dd>
+              <dt>监听</dt>
+              <dd>
+                <div className="row">
+                  <select
+                    className="select"
+                    style={{ width: 'auto' }}
+                    aria-label={t?.('gw.host') ?? '绑定地址'}
+                    value={host}
+                    disabled={busy}
+                    onChange={event => { setHost(event.target.value) }}
+                  >
+                    {HOSTS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}（{option.value}）
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="input"
+                    style={{ width: 96 }}
+                    type="number"
+                    aria-label={t?.('gw.port') ?? '端口'}
+                    min={1}
+                    max={65535}
+                    value={port}
+                    disabled={busy}
+                    onChange={event => { setPort(event.target.value) }}
+                  />
+                  <button
+                    type="button"
+                    className="tiny"
+                    disabled={busy || !portUsable}
+                    onClick={() => { void write({ host, port: parsedPort }) }}
+                  >
+                    {t?.('gw.saveAddress') ?? '保存地址'}
+                  </button>
+                  {portUsable ? null : <span className="pill" data-tone="warn">端口要在 1–65535 之间</span>}
+                </div>
+              </dd>
+              <dt>模型</dt>
+              <dd>
+                <div className="row">
+                  <div className="seg" role="group" aria-label={t?.('gw.share') ?? '共享哪些模型'}>
+                    <button
+                      type="button"
+                      aria-pressed={mode === 'pool' ? 'true' : 'false'}
+                      disabled={busy}
+                      onClick={() => { setDraftMode('pool') }}
+                    >
+                      按账号池启用列表
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={mode === 'custom' ? 'true' : 'false'}
+                      disabled={busy}
+                      onClick={() => { setDraftMode('custom') }}
+                    >
+                      自定义
+                    </button>
+                  </div>
+                  <span className="pick-sum">
+                    {mode === 'pool'
+                      ? `共 ${String(candidates.length)} 个可用模型`
+                      : (t?.('gw.shareCount', { shared: sharedCount, total: candidates.length }) ?? `已共享 ${String(sharedCount)} / ${String(candidates.length)}`)}
+                  </span>
+                </div>
+              </dd>
+            </dl>
+            <div className="row">
+              <button
+                type="button"
+                className="btn"
+                disabled={configSnippet === ''}
+                title={t?.('gw.copyAllHint') ?? 'Base URL 和密钥分两行带标签，可直接粘进客户端。'}
+                onClick={() => { void copy('all', configSnippet) }}
+              >
+                {copiedField === 'all' ? (t?.('gw.copied') ?? '已复制') : (t?.('gw.copyAll') ?? '复制全部')}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={busy || key === ''}
+                // 打码时复制的也是真实密钥：打码防的是旁人偷看，不是防用户自己。
+                onClick={() => { void copy('key', key) }}
+              >
+                {copiedField === 'key'
+                  ? (t?.('gw.copied') ?? '已复制')
+                  : (t?.('gw.copyKey') ?? '复制密钥')}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                title={t?.('gw.keyHint') ?? '这把密钥在 DSH 重启后仍然有效。'}
+                onClick={() => { void write({ key: '' }) }}
+              >
+                重置密钥
+              </button>
+              {enabled
+                ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    disabled={busy}
+                    onClick={() => { void write({ enabled: false }) }}
+                  >
+                    停止服务
+                  </button>
+                )
+                : (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={busy}
+                    onClick={() => { void write({ enabled: true }) }}
+                  >
+                    启动服务
+                  </button>
+                )}
+            </div>
+            {bindError === ''
+              ? null
+              : <div className="hint"><b>未监听</b><span>{bindError}</span></div>}
+            <div className="hint">
+              <b>注意</b>
+              <span>
+                {enabled
+                  ? '停止后，正在用这个网关的客户端会立刻断开。账号池本身不受影响，重新启动就恢复。重置密钥会让所有还在用旧密钥的设备断线。'
+                  : (t?.('gw.switchHint') ?? '打开后会为你的设备生成一把密钥，并绑定一个端口。')}
+              </span>
+            </div>
+
+            {/* 共享哪些模型：并在连接信息里。自定义 = 按渠道勾选。 */}
+            {mode === 'pool'
+              ? (
+                <p className="note">
+                  账号池和已登录渠道里启用的模型全部可以通过网关调用；以后新启用的模型也会自动放行。
+                </p>
+              )
+              : candidates.length === 0
+                ? <p className="note">{t?.('gw.shareNone') ?? '暂时没有可共享的模型。'}</p>
+                : (
+                  <div className="stack" style={{ minWidth: 0 }}>
+                    <div className="row">
+                      <span className="pick-hint" style={{ flex: '1 1 160px' }}>
+                        按渠道勾选要共享的模型，没勾的模型网关会直接拒绝。
+                      </span>
+                      <input
+                        className="search"
+                        type="search"
+                        placeholder="搜索模型"
+                        value={query}
+                        onChange={event => { setQuery(event.target.value) }}
+                      />
+                      <button
+                        type="button"
+                        className="tiny"
+                        disabled={busy}
+                        onClick={() => { setManyShared(candidates.map(row => row.id), true) }}
+                      >
+                        {t?.('gw.shareAll') ?? '全选'}
+                      </button>
+                      <button
+                        type="button"
+                        className="tiny"
+                        disabled={busy}
+                        onClick={() => { setManyShared(candidates.map(row => row.id), false) }}
+                      >
+                        {t?.('gw.shareNoneBtn') ?? '全不选'}
+                      </button>
+                    </div>
+                    {/* 长列表在区块内滚动，不撑高页面。 */}
+                    <div
+                      style={{
+                        maxHeight: 360,
+                        overflowY: 'auto',
+                        overflowX: 'hidden',
+                        minWidth: 0,
+                        border: '1px solid var(--line)',
+                        borderRadius: 'var(--r-md)',
+                        padding: 'var(--s1) var(--s2) var(--s2)',
+                        background: 'var(--bg)',
+                      }}
+                    >
+                      {groups.length === 0
+                        ? <p className="note" style={{ padding: 'var(--s2)' }}>没有匹配的模型</p>
+                        : groups.map(group => {
+                          const ids = group.rows.map(row => row.id)
+                          const on = ids.filter(id => shared.has(id)).length
+                          return (
+                            <div key={group.source} style={{ minWidth: 0 }}>
+                              <div
+                                className="row"
+                                style={{
+                                  position: 'sticky',
+                                  top: 0,
+                                  zIndex: 1,
+                                  background: 'var(--bg)',
+                                  padding: 'var(--s2) var(--s2) 4px',
+                                  flexWrap: 'nowrap',
+                                }}
+                              >
+                                <span style={{ fontSize: 'var(--fs-xs)', fontWeight: 600, color: 'var(--muted)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {sourceName(group.source)}
+                                </span>
+                                <span className="pick-sum">{String(on)} / {String(ids.length)}</span>
+                                <span style={{ marginLeft: 'auto', display: 'flex', gap: 'var(--s1)' }}>
+                                  <button
+                                    type="button"
+                                    className="tiny"
+                                    disabled={busy || on === ids.length}
+                                    onClick={() => { setManyShared(ids, true) }}
+                                  >
+                                    全选
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="tiny"
+                                    disabled={busy || on === 0}
+                                    onClick={() => { setManyShared(ids, false) }}
+                                  >
+                                    清空
+                                  </button>
+                                </span>
+                              </div>
+                              {group.rows.map(row => (
+                                <label className="mp-row" key={row.id}>
+                                  <input
+                                    type="checkbox"
+                                    checked={shared.has(row.id)}
+                                    disabled={busy}
+                                    onChange={() => { toggleShared(row.id) }}
+                                  />
+                                  <span className="mp-main">
+                                    {/* 先显示名（用户靠它挑），再是 id（客户端里要填的）。 */}
+                                    <span className="mp-name">{row.name}</span>
+                                    {/* id 是按钮：手抄 id 是 403 的来源。只复制 id，不复制显示名。 */}
+                                    <button
+                                      type="button"
+                                      className="mp-id"
+                                      style={{ border: 0, background: 'transparent', padding: 0, textAlign: 'left', cursor: 'copy', maxWidth: '100%' }}
+                                      title={t?.('gw.copyModelIdHint') ?? '复制模型 id'}
+                                      onClick={(event) => {
+                                        // 行是 <label>：不拦的话点击会顺带切换勾选。
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        void copy(`id:${row.id}`, row.id)
+                                      }}
+                                    >
+                                      {copiedField === `id:${row.id}`
+                                        ? (t?.('gw.copied') ?? '已复制')
+                                        : row.id}
+                                    </button>
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          )
+                        })}
+                    </div>
+                  </div>
+                )}
+            {shareDirty
+              ? (
+                <div className="row">
+                  <span className="pill" data-tone="warn">
+                    {mode === 'custom'
+                      ? (t?.('gw.shareDirty') ?? '尚未保存。')
+                      : '尚未保存：保存后不再按勾选限制模型。'}
+                  </span>
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 'var(--s2)' }}>
+                    <button type="button" className="btn" disabled={busy} onClick={discardShare}>
+                      撤销
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={busy}
+                      onClick={() => { void saveShare() }}
+                    >
+                      {t?.('gw.shareSave') ?? '保存共享设置'}
+                    </button>
+                  </span>
+                </div>
+              )
+              : null}
+          </div>
+        </section>
+
+        <section className="sec">
+          <div className="sec-head">
+            <span className="sec-title">客户端配置</span>
+            <div className="sec-actions">
+              <button
+                type="button"
+                className="tiny"
+                disabled={jsonSnippet === ''}
+                onClick={() => { void copy('json', jsonSnippet) }}
+              >
+                {copiedField === 'json' ? (t?.('gw.copied') ?? '已复制') : '复制'}
+              </button>
+            </div>
+          </div>
+          <div className="code">
+            {'{\n  '}
+            <b>"baseURL"</b>
+            {`: "${baseUrl === '' ? 'http://127.0.0.1:端口/v1' : baseUrl}",\n  `}
+            <b>"apiKey"</b>
+            {`: "${key === '' ? '你的密钥' : maskOf(key)}",\n  `}
+            <b>"model"</b>
+            {`: "${sampleModel}"\n}`}
+          </div>
+          <div className="hint">
+            <b>说明</b>
+            <span>
+              把这段填到任何支持 OpenAI 协议的客户端里即可，「复制」会带上真实密钥。模型名用上面已共享的任意一个 id。
+              {t?.('gw.wire') ?? '只支持 Chat Completions（/v1/chat/completions 与 /v1/models）。'}
+            </span>
+          </div>
+        </section>
+
+        <section className="sec">
+          <div className="sec-head"><span className="sec-title">健康检查</span></div>
+          <div className="table">
+            <div className="tr tr-head" style={HEALTH_COLS}>
+              <span className="td">检查项</span><span className="td">详情</span><span className="td td-num">结果</span>
+            </div>
+            <div className="tr" style={HEALTH_COLS}>
+              <span className="td">端口监听</span>
+              <span className="td td-mono">{listening ? endpoint : enabled ? (bindError === '' ? '正在绑定' : bindError) : '网关未开启'}</span>
+              <span className="td td-num">
+                <span className="pill" data-tone={listening ? 'ok' : enabled ? 'err' : 'off'}>
+                  {listening ? '通过' : enabled ? '失败' : '未启用'}
+                </span>
+              </span>
+            </div>
+            <div className="tr" style={HEALTH_COLS}>
+              <span className="td">访问密钥</span>
+              <span className="td td-mono">{key === '' ? '尚未生成' : maskOf(key)}</span>
+              <span className="td td-num">
+                <span className="pill" data-tone={key === '' ? 'warn' : 'ok'}>{key === '' ? '缺失' : '通过'}</span>
+              </span>
+            </div>
+            <div className="tr" style={HEALTH_COLS}>
+              <span className="td">账号池可读</span>
+              <span className="td td-mono">{status === undefined ? '读取中' : `${String(candidates.length)} 个模型`}</span>
+              <span className="td td-num">
+                <span className="pill" data-tone={candidates.length > 0 ? 'ok' : 'warn'}>{candidates.length > 0 ? '通过' : '无模型'}</span>
+              </span>
+            </div>
+            <div className="tr" style={HEALTH_COLS}>
+              <span className="td">共享范围</span>
+              <span className="td td-mono">
+                {serverMode === 'pool'
+                  ? '按账号池启用列表'
+                  : `自定义 · ${String(candidates.filter(row => (status?.shared ?? []).includes(row.id)).length)} 个`}
+              </span>
+              <span className="td td-num">
+                <span
+                  className="pill"
+                  data-tone={serverMode === 'custom' && (status?.shared ?? []).length === 0 ? 'warn' : 'ok'}
+                >
+                  {serverMode === 'custom' && (status?.shared ?? []).length === 0 ? '全部拒绝' : '通过'}
+                </span>
+              </span>
+            </div>
+          </div>
+        </section>
       </div>
-      <div className="sec">
-        <p className="sec-title">{t?.('gw.usage') ?? 'Using it'}</p>
-        <p className="note">{t?.('gw.usageHint') ?? ''}</p>
-      </div>
-      </div>
-    </div>
+    </main>
   )
 }

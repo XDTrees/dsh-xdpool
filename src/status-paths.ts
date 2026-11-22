@@ -552,6 +552,19 @@ export interface PoolWebAggregateProvider {
    * vocabulary so both kinds of card present one idea one way.
    */
   distribution?: string
+  /**
+   * 注册表里写明的模型信息（显示名 / 识图 / 推理），按模型 id 索引。
+   *
+   * 只含注册表声明过的模型；「发现模型」拉回来的 id 不在这里，卡片对它们只显示 id。
+   * 聚合页的模型行和「选择模型」浮层用它显示模型名和标签。
+   */
+  modelMeta?: Readonly<Record<string, PoolWebAggregateModelMeta>>
+}
+/** 一个注册表模型的显示信息。字段缺省表示注册表没写。 */
+export interface PoolWebAggregateModelMeta {
+  name: string
+  vision?: boolean
+  reasoning?: boolean
 }
 /** The document {@link POOL_AGGREGATE_PATH} answers with. */
 export interface PoolWebAggregateStatus {
@@ -723,6 +736,8 @@ export interface PoolWebRelayPatch {
    * leaves the gateway open.
    */
   models?: string[]
+  /** 模型共享方式：'pool' 按账号池启用列表，'custom' 只放行 models。 */
+  modelsMode?: 'pool' | 'custom'
 }
 /**
  * What {@link POOL_RELAY_PATH} answers with.
@@ -749,6 +764,8 @@ export interface PoolWebRelayStatus {
   key: string
   /** Why nothing is bound; '' when there is nothing to explain. */
   error: string
+  /** 当前的模型共享方式；旧后端不返回这个字段。 */
+  modelsMode?: 'pool' | 'custom'
   /**
    * 网关转发了什么。
    *

@@ -27,7 +27,7 @@
  * @module dsh-xdpool/client/ChannelPoolSection
  */
 
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { BrandTile } from './brand-tile.tsx'
 import { channelIcon, channelInitials } from './channel-icons.ts'
 import { ModelFactsRow } from './model-facts-row.tsx'
@@ -74,6 +74,7 @@ import {
   POOL_MAGICREW_CN_CHECKIN_PATH,
   POOL_MAGICREW_INTL_CHECKIN_PATH,
   POOL_ACCOUNT_PREFER_PATH,
+  POOL_CHANNEL_USAGE_PATH,
 } from '../status-paths.ts'
 
 import {
@@ -82,13 +83,15 @@ import {
   POOL_DOUBAO_MODELS_PATH,
   POOL_DOUBAO_QUOTA_PATH,
   POOL_DOUBAO_SESSION_PATH,
+  POOL_MARVIS_SESSION_PATH,
+  POOL_MARVIS_WALLET_PATH,
 } from '../status-paths.ts'
 // The DATA module, not `doubao-llm.ts`: the latter reaches `node:fs`/`node:child_process`
 // through the auth module, and a client bundle containing those does not load at all.
 import { doubaoListing } from '../doubao-models.ts'
 import { REGISTERED_CHANNELS } from '../channel-roster.ts'
 import { DoubaoAutomationPane } from './DoubaoAutomationPane.tsx'
-import type { PoolWebChannel, PoolWebChannelModel } from '../status-paths.ts'
+import type { PoolDistribution, PoolWebChannel, PoolWebChannelModel } from '../status-paths.ts'
 import type { XdPoolSettingsKey } from './locales.ts'
 
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
@@ -281,6 +284,29 @@ const RETRY_INTERVAL_MS = 2_000
  */
 const MODEL_SEARCH_THRESHOLD = 8
 
+/** 设计稿 policies 分段按钮的顺序：优先 · 轮换 · 均衡 · 粘住 · 按到期。 */
+const MODE_ORDER: readonly PoolDistribution[] = ['priority', 'round-robin', 'balanced', 'sticky', 'expiry']
+/** 五种策略的中文名。 */
+const MODE_LABEL: Record<PoolDistribution, (tr?: Translate) => string> = {
+  priority: tr => tr?.('channelpool.modePrefer') ?? '优先',
+  'round-robin': tr => tr?.('channelpool.modeRoundRobin') ?? '轮换',
+  balanced: tr => tr?.('channelpool.modeBalanced') ?? '均衡',
+  sticky: tr => tr?.('channelpool.modeSticky') ?? '粘住',
+  expiry: tr => tr?.('channelpool.modeExpiry') ?? '按到期',
+}
+function modeHint(tr: Translate | undefined, mode: PoolDistribution): string {
+  if (mode === 'round-robin') return tr?.('channelpool.modeRoundRobinHint') ?? '轮换：每次请求依次用下一个账号。'
+  if (mode === 'balanced') return tr?.('channelpool.modeBalancedHint') ?? '均衡：在还有额度的账号里随机挑。'
+  if (mode === 'sticky') return tr?.('channelpool.modeStickyHint') ?? '粘住：一直用同一个，直到它不行了。'
+  if (mode === 'expiry') return tr?.('channelpool.modeExpiryHint') ?? '按到期：先用即将到期的账号。'
+  return tr?.('channelpool.modePreferHint') ?? '优先：总用排在前面的账号，它限流了才换下一个。'
+}
+/** channels/usage 路由的回答。 */
+interface ChannelUsageState {
+  pool?: string
+  channels?: Record<string, string>
+}
+
 /**
  * The window a channel model is capped to when the user does not ask for more.
  *
@@ -467,6 +493,262 @@ async function readDoubaoBalance(): Promise<readonly ChannelBalance[]> {
     return []
   }
 }
+/* ---------------------------------------------------------------
+   腾讯 Marvis：按 token 计的渠道（设计稿 marvis.html）。
+
+   pack 没有 Marvis 适配器，account.list / model.list / credits.balances 都会答
+   "unknown provider"，所以和豆包一样走插件自己的路由：
+     - POOL_MARVIS_SESSION_PATH：存下的账号（openid / nickname / loginType）和模型
+     - POOL_MARVIS_WALLET_PATH：每个账号自己的 token 钱包（accounts 数组，一号一行）
+   每个账号每天有自己的 1000 万计费 token，卡片上画的是「已用 / 总量 + 重置时间」，
+   不是渠道级别的汇总。
+   --------------------------------------------------------------- */
+
+/** 一个 Marvis 账号今天的 token 用量。 */
+interface MarvisQuota {
+  openid: string
+  nickname?: string | undefined
+  used: number
+  total: number
+  available: number
+  /** 今日额度重置的时刻（epoch ms）；后端没给就是 undefined。 */
+  resetAt?: number | undefined
+  /** 读不到时的原因（已转成中文）。 */
+  error?: string | undefined
+}
+
+/** 上一次读到的用量，放在组件外面：切页回来第一帧就有数，不闪「…」。 */
+let marvisQuotaSnapshot: readonly MarvisQuota[] | undefined
+
+/* ---------------------------------------------------------------
+   整份账号池快照，存在本机（localStorage）。
+
+   为什么：每次打开 DSH，账号池都要等 provider.status 把二十多家的账号池走一遍、
+   再逐家 account.list / model.list，冷启动要好几秒，读者看到的是一排「—」。
+   而上一次读到的账号和模型，99% 的情况下和这一次一样。
+
+   所以：第一帧直接画上一次的真实数据（账号名、模型、余额），后台照常重读，
+   读完再无声替换。读者感觉是「瞬时」的，数据也不会因此变旧 —— 旧的只多活几秒。
+
+   存什么：只存显示用的字段。账号只留 id / 昵称 / 开关 / 到期时间 / 首选，
+   不含任何 token 或 cookie（accountsFrom 本来就不带凭据，这里再白名单一遍）。
+   版本号 v2：结构变了就换 key，旧 blob 不会喂给新代码。
+   --------------------------------------------------------------- */
+const POOL_STORE_KEY = 'dsh-xdpool.pool-snapshot.v2'
+/** 太旧的快照不用：一周没打开过，账号很可能已经变了，宁可显示占位。 */
+const POOL_STORE_MAX_AGE_MS = 7 * 24 * 3_600_000
+
+interface StoredPool {
+  v: 2
+  at: number
+  entries: readonly ChannelEntry[]
+  marvis?: readonly MarvisQuota[] | undefined
+}
+
+let storedPoolCache: StoredPool | null | undefined
+/** 读一次就记住：初始化 entries 和 Marvis 用量都要它，不读两遍 localStorage。 */
+function storedPoolOnce(): StoredPool | undefined {
+  if (storedPoolCache !== undefined) return storedPoolCache ?? undefined
+  storedPoolCache = readStoredPool() ?? null
+  return storedPoolCache ?? undefined
+}
+
+function readStoredPool(): StoredPool | undefined {
+  try {
+    const raw = globalThis.localStorage?.getItem(POOL_STORE_KEY)
+    if (raw === null || raw === undefined) return undefined
+    const parsed = JSON.parse(raw) as Partial<StoredPool> | null
+    if (parsed === null || parsed.v !== 2 || typeof parsed.at !== 'number') return undefined
+    if (Date.now() - parsed.at > POOL_STORE_MAX_AGE_MS) return undefined
+    if (!Array.isArray(parsed.entries)) return undefined
+    const entries: ChannelEntry[] = []
+    for (const row of parsed.entries as unknown[]) {
+      if (row === null || typeof row !== 'object') continue
+      const entry = row as Partial<ChannelEntry>
+      if (typeof entry.channel?.id !== 'string') continue
+      entries.push({
+        channel: entry.channel,
+        accounts: Array.isArray(entry.accounts) ? entry.accounts : [],
+        models: Array.isArray(entry.models) ? entry.models : [],
+        facts: new Map(),
+        balances: Array.isArray(entry.balances) ? entry.balances : [],
+        statuses: Array.isArray(entry.statuses) ? entry.statuses : [],
+        // 存下来的余额就是答案，不再画「…」；后台重读到了会替换
+        balancePending: false,
+        balanceError: undefined,
+        modelError: undefined,
+        status: entry.status,
+      })
+    }
+    if (entries.length === 0) return undefined
+    return {
+      v: 2,
+      at: parsed.at,
+      entries,
+      ...(Array.isArray(parsed.marvis) ? { marvis: parsed.marvis } : {}),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/** 写快照。配额满了、隐私模式都静默失败：缓存写不进去不能让卡片坏掉。 */
+function writeStoredPool(entries: readonly ChannelEntry[], marvis: readonly MarvisQuota[] | undefined): void {
+  try {
+    const slim = entries.map(entry => ({
+      channel: entry.channel,
+      accounts: entry.accounts.map(account => ({
+        id: account.id,
+        provider: account.provider,
+        ...(account.nickname === undefined ? {} : { nickname: account.nickname }),
+        ...(account.enabled === undefined ? {} : { enabled: account.enabled }),
+        ...(account.expiresAt === undefined ? {} : { expiresAt: account.expiresAt }),
+        ...(account.refreshable === true ? { refreshable: true } : {}),
+        ...(account.preferred === true ? { preferred: true } : {}),
+      })),
+      // 介绍太长的截一下，整份快照控制在几百 KB 以内
+      models: entry.models.map(model => (model.description !== undefined && model.description.length > 160
+        ? { ...model, description: model.description.slice(0, 160) }
+        : model)),
+      balances: entry.balances,
+      statuses: entry.statuses,
+      ...(entry.status === undefined ? {} : { status: entry.status }),
+    }))
+    const blob: StoredPool = { v: 2, at: Date.now(), entries: slim as unknown as ChannelEntry[], ...(marvis === undefined ? {} : { marvis }) }
+    globalThis.localStorage?.setItem(POOL_STORE_KEY, JSON.stringify(blob))
+  } catch {
+    // 写不进去就算了，下次照常从后端读
+  }
+}
+
+/** Marvis 的账号与模型。没登录 / 读不到都答 undefined。 */
+async function readMarvisSession(): Promise<
+  { accounts: readonly ChannelAccount[]; models: readonly { id: string; name: string }[] } | undefined
+> {
+  try {
+    const response = await fetch(POOL_MARVIS_SESSION_PATH, { credentials: 'same-origin' })
+    const body = await response.json().catch(() => undefined) as
+      | {
+        signedIn?: boolean
+        accounts?: readonly { openid?: unknown; nickname?: unknown; loginType?: unknown }[]
+        models?: readonly { id?: unknown; name?: unknown }[]
+      }
+      | undefined
+    if (body?.signedIn !== true || !Array.isArray(body.accounts)) return undefined
+    const accounts: ChannelAccount[] = []
+    for (const row of body.accounts) {
+      if (typeof row.openid !== 'string' || row.openid === '') continue
+      accounts.push({
+        id: row.openid,
+        provider: 'marvis',
+        ...(typeof row.nickname === 'string' && row.nickname !== '' ? { nickname: row.nickname } : {}),
+        enabled: true,
+      })
+    }
+    const models = (Array.isArray(body.models) ? body.models : [])
+      .filter((model): model is { id: string; name: string } =>
+        typeof model.id === 'string' && model.id !== '' && typeof model.name === 'string')
+    return { accounts, models }
+  } catch {
+    return undefined
+  }
+}
+
+/** 后端给的英文错误换成中文；认不出来的就说一句通用的，不把英文原样摆出来。 */
+function marvisErrorText(raw: string): string {
+  const status = /HTTP\s+(\d{3})/u.exec(raw)?.[1]
+  if (status === '401') return '登录已失效，请重新登录这个账号'
+  if (status === '403') return '今日额度已用完或账号受限'
+  if (status !== undefined) return `用量读取失败（${status}）`
+  if (/timeout|aborted|timed out/iu.test(raw)) return '用量读取超时'
+  if (/[\u4e00-\u9fff]/u.test(raw)) return raw
+  return '用量读取失败'
+}
+
+/** 每个账号自己的 token 用量。整个请求失败答空数组，卡片上显示「—」。 */
+async function readMarvisQuotas(): Promise<readonly MarvisQuota[]> {
+  try {
+    const response = await fetch(POOL_MARVIS_WALLET_PATH, { credentials: 'same-origin' })
+    const body = await response.json().catch(() => undefined) as
+      | {
+        signedIn?: boolean
+        accounts?: readonly {
+          openid?: unknown
+          nickname?: unknown
+          used?: unknown
+          total?: unknown
+          available?: unknown
+          resetAt?: unknown
+          error?: unknown
+        }[]
+      }
+      | undefined
+    if (body?.signedIn !== true || !Array.isArray(body.accounts)) return []
+    const num = (value: unknown): number => typeof value === 'number' && Number.isFinite(value) ? value : 0
+    const rows: MarvisQuota[] = []
+    for (const row of body.accounts) {
+      if (typeof row.openid !== 'string' || row.openid === '') continue
+      const used = num(row.used)
+      const total = num(row.total)
+      rows.push({
+        openid: row.openid,
+        nickname: typeof row.nickname === 'string' && row.nickname !== '' ? row.nickname : undefined,
+        used,
+        total,
+        available: typeof row.available === 'number' ? num(row.available) : Math.max(0, total - used),
+        resetAt: typeof row.resetAt === 'number' && Number.isFinite(row.resetAt) ? row.resetAt : undefined,
+        error: typeof row.error === 'string' && row.error !== '' ? marvisErrorText(row.error) : undefined,
+      })
+    }
+    return rows
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 「今天 24:00 重置」「8 小时后重置」「3 天后重置」。
+ *
+ * 不到一小时说分钟，不到一天说小时；今天之内并且整点落在午夜的，直接说「今天 24:00」。
+ */
+function marvisResetText(resetAt: number | undefined, now: number = Date.now()): string {
+  if (resetAt === undefined) return '每天重置'
+  const left = resetAt - now
+  if (left <= 0) return '即将重置'
+  const minutes = Math.ceil(left / 60_000)
+  if (minutes < 60) return `${String(minutes)} 分钟后重置`
+  const hours = Math.round(left / 3_600_000)
+  if (hours < 24) return `${String(hours)} 小时后重置`
+  const days = Math.round(left / 86_400_000)
+  return `${String(days)} 天后重置`
+}
+
+/** 鼠标悬停时给出的绝对时间：「今天 24:00 重置」「11月25日 00:00 重置」。 */
+function marvisResetTitle(resetAt: number | undefined, now: number = Date.now()): string | undefined {
+  if (resetAt === undefined) return undefined
+  const at = new Date(resetAt)
+  const today = new Date(now)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  const sameDay = (a: Date, b: Date): boolean =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  const tomorrow = new Date(now + 86_400_000)
+  /* 落在明天 0 点的，就是「今天 24:00」 */
+  if (sameDay(at, tomorrow) && at.getHours() === 0 && at.getMinutes() === 0) return '今天 24:00 重置'
+  const clock = `${pad(at.getHours())}:${pad(at.getMinutes())}`
+  if (sameDay(at, today)) return `今天 ${clock} 重置`
+  return `${String(at.getMonth() + 1)}月${String(at.getDate())}日 ${clock} 重置`
+}
+
+/** 1234567 → 「1,234,567」。 */
+function groupDigits(value: number): string {
+  return Math.round(value).toLocaleString('en-US')
+}
+
+/** 2000_0000 → 「2,000」（单位万）。 */
+function wanDigits(value: number): string {
+  return (value / 10_000).toLocaleString('en-US', { maximumFractionDigits: 1 })
+}
+
 /**
  * The catalogue as cards, with no counts.
  *
@@ -574,11 +856,11 @@ function expiryText(
   const remainingMs = expiresAt - Date.now()
   if (remainingMs <= 0) return t?.('channelpool.expiryExpired') ?? 'expired'
   const minutes = Math.floor(remainingMs / 60_000)
-  if (minutes < 60) return minutes <= 1 ? '<1m' : `${String(minutes)}m`
+  if (minutes < 60) return minutes <= 1 ? '不到 1 分钟后过期' : `${String(minutes)} 分钟后过期`
   const hours = Math.floor(remainingMs / 3_600_000)
-  if (hours < 24) return `${String(hours)}h`
+  if (hours < 24) return `${String(hours)} 小时后过期`
   const days = Math.floor(remainingMs / 86_400_000)
-  return days === 1 ? '1d' : `${String(days)}d`
+  return `${String(days)} 天后过期`
 }
 
 /** The vendor's currency, spelled the way that vendor spells it. */
@@ -605,6 +887,63 @@ function accountLabel(account: { id?: unknown; nickname?: unknown }): string {
   if (typeof account.id === 'number') return String(account.id)
   return '（未命名账号）'
 }
+
+/**
+ * 名字是不是一串机器 id（openid / uuid / 随机串），而不是人能认的名字。
+ *
+ * Marvis 的 openid（83F37C07…952B）、pack 登录前占位的随机 id、uuid 都会被当成昵称存下来，
+ * 卡片上于是是一长串十六进制。邮箱、手机号（含打码）、带中文或空格的名字都算「人名」。
+ */
+function looksLikeMachineId(text: string): boolean {
+  const value = text.trim()
+  if (value === '') return true
+  if (/[\u4e00-\u9fff\s@]/u.test(value)) return false
+  if (/^\+?[\d*]{7,15}$/u.test(value)) return false            // 手机号 / 打码手机号
+  if (/^[0-9a-f-]{16,}$/iu.test(value)) return true              // hex / uuid
+  if (value.length >= 20 && !/[aeiou]{2}/iu.test(value) && /\d/u.test(value)) return true
+  if (/^[A-Za-z0-9_-]{22,}$/u.test(value) && /[A-Z]/u.test(value) && /[a-z]/u.test(value) && /\d/u.test(value)) return true
+  return false
+}
+
+/**
+ * 卡片上显示的账号名。
+ *
+ *   - 有像样的昵称 / 邮箱 / 手机号 → 原样；
+ *   - 只有机器 id → 「腾讯 Marvis 账号 1」，id 的末四位放在副标题里方便区分；
+ *   - 鼠标悬停（title）永远给完整的原始 id。
+ */
+function accountDisplay(
+  account: { id?: unknown; nickname?: unknown },
+  channelName: string,
+  index: number,
+): { name: string; tail?: string; full: string } {
+  const raw = accountLabel(account)
+  const id = typeof account.id === 'string' ? account.id : raw
+  const full = raw === id ? raw : `${raw}（${id}）`
+  if (!looksLikeMachineId(raw)) return { name: raw, full }
+  const tail = id.replace(/[^A-Za-z0-9]/gu, '').slice(-4)
+  return { name: `${channelName} 账号 ${String(index + 1)}`, ...(tail === '' ? {} : { tail }), full }
+}
+
+/**
+ * 余额 / 配额读取失败的原因，换成中文且一句话说清该怎么办。
+ *
+ * 上游原文常是「配额查询被拒（HTTP 403）（VALIDATION_REQUIRED）：Verify your account to continue.」
+ * 这种中英混排的长串，卡片放不下也看不懂。认得出的给出处理办法，认不出的保留中文部分、去掉英文。
+ */
+function balanceErrorText(raw: string): string {
+  if (/VALIDATION_REQUIRED|verify your account/iu.test(raw)) return '需要先在浏览器里验证这个 Google 账号，验证后点「重新检测账号」'
+  if (/HTTP\s*401|unauthori[sz]ed|token.*(expired|invalid)|expired/iu.test(raw)) return '登录已失效，请重新登录这个账号'
+  if (/HTTP\s*429|rate.?limit|too many/iu.test(raw)) return '请求太频繁，稍后再试'
+  if (/HTTP\s*403|forbidden/iu.test(raw)) return '查询被拒（403），可能需要重新登录'
+  if (/timeout|timed out|aborted/iu.test(raw)) return '查询超时'
+  if (/HTTP\s*5\d\d/iu.test(raw)) return '厂商服务暂时不可用'
+  const chinese = raw.replace(/[（(][^）)]*[A-Za-z][^）)]*[）)]/gu, '').split(/[：:]/u)[0]?.trim() ?? ''
+  return /[\u4e00-\u9fff]/u.test(chinese) ? chinese : '余额读取失败'
+}
+
+/** Marvis 每个账号每天的计费 token 额度（设计稿 marvis.html 写明 1,000 万）。后端答了总量就用后端的。 */
+const MARVIS_DAILY_TOKENS = 10_000_000
 
 function amount(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2)
@@ -762,10 +1101,18 @@ async function fetchOwnSession(channel: string): Promise<
  * `active` 为空时（首次进入、或选中的渠道被移除）退回第一家，这样右栏
  * 永远不会是空的。
  */
-export function ChannelPoolSection({ t, active }: {
+export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoClaimBusy, onAutoClaim, banner }: {
   readonly t?: Translate | undefined
   /** 中栏选中的渠道 id；空则显示第一家。 */
   readonly active?: string | undefined
+  /** 「添加账号」/ 点未登录渠道：去登录通道。 */
+  readonly onAddAccount?: (() => void) | undefined
+  /** 积分自动化（全局调度器）当前是否开着。 */
+  readonly autoClaim?: boolean | undefined
+  readonly autoClaimBusy?: boolean | undefined
+  readonly onAutoClaim?: ((on: boolean) => void) | undefined
+  /** 外层的提示条，放进详情列 mbody 顶部（不能落在 .app 网格里）。 */
+  readonly banner?: ReactNode | undefined
 }): ReactElement {
   /*
     选中哪一家。外部传了就用外部的（中栏在别的组件里时），
@@ -797,6 +1144,9 @@ export function ChannelPoolSection({ t, active }: {
   const [entries, setEntries] = useState<readonly ChannelEntry[]>(() => {
     const snapshot = poolSnapshot?.entries
     if (snapshot !== undefined && snapshot.length > 0) return snapshot
+    /* 进程里没有（刚启动 DSH）→ 用上一次存在本机的真实数据，第一帧就有账号和模型 */
+    const stored = storedPoolOnce()
+    if (stored !== undefined) return stored.entries
     return placeholderEntries()
   })
   const wanted = active === undefined || active === '' ? ownActive : active
@@ -817,7 +1167,13 @@ export function ChannelPoolSection({ t, active }: {
    * back empty, `scanProviders` is empty and the old code returned `<></>` with
    * `error === undefined`. Silence was indistinguishable from "no accounts".
    */
-  const [loading, setLoading] = useState<boolean>(() => poolSnapshot === undefined)
+  const [loading, setLoading] = useState<boolean>(() => poolSnapshot === undefined && storedPoolOnce() === undefined)
+  /** 后台正在重读（第一帧画的是缓存）—— 中栏标题旁边转一个小圈，告诉读者数字马上会更新。 */
+  const [refreshing, setRefreshing] = useState(false)
+  /** 第一次真实读取完成后才开始写快照，避免把占位数据写回本机。 */
+  const persistReady = useRef(false)
+  /** pack 冷启动时自动重读的次数（见 load 里的合并规则）。 */
+  const coldRetries = useRef(0)
   const [notice, setNotice] = useState<string | undefined>(undefined)
   /** provider → the open list, or `undefined` for a card with both folded. */
   const [folds, setFolds] = useState<ReadonlyMap<string, Fold | undefined>>(new Map())
@@ -854,6 +1210,55 @@ export function ChannelPoolSection({ t, active }: {
     mountedRef.current = true
     return () => { mountedRef.current = false }
   }, [])
+
+  /**
+   * 每个渠道自己的「账号使用方式」，读写 channels/usage 路由。
+   *
+   * 之前这里是一个只存在内存里的草稿（点了按钮会变色，但后端从来没收到），
+   * 而且那个 useState 写在提前 return 之后 —— 违反 hook 顺序规则。
+   * 现在挪到所有 return 之前，并真的写进后端。没单独设过的渠道跟随全局。
+   */
+  const [usage, setUsage] = useState<ChannelUsageState | undefined>(undefined)
+  /** Marvis 每个账号自己的 token 用量（marvis.html 的 .quota）。 */
+  const [marvisQuotas, setMarvisQuotas] = useState<readonly MarvisQuota[] | undefined>(
+    () => marvisQuotaSnapshot ?? storedPoolOnce()?.marvis)
+  const [usageBusy, setUsageBusy] = useState(false)
+  useEffect(() => {
+    let live = true
+    void (async () => {
+      try {
+        const response = await fetch(POOL_CHANNEL_USAGE_PATH, { credentials: 'same-origin' })
+        const body = await response.json().catch(() => undefined) as ChannelUsageState | undefined
+        if (live && body !== undefined) setUsage(body)
+      } catch {
+        // 读不到就按「优先」画；下一次写入会带回真实状态
+      }
+    })()
+    return () => { live = false }
+  }, [])
+  const modeOf = (provider: string): PoolDistribution => {
+    const picked = usage?.channels?.[provider] ?? usage?.pool ?? 'priority'
+    return MODE_ORDER.find(option => option === picked) ?? 'priority'
+  }
+  const modeIsOwn = (provider: string): boolean => usage?.channels?.[provider] !== undefined
+  const setChannelMode = async (provider: string, next: PoolDistribution): Promise<void> => {
+    setUsageBusy(true)
+    try {
+      const response = await fetch(POOL_CHANNEL_USAGE_PATH, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ channel: provider, strategy: next }),
+      })
+      const body = await response.json().catch(() => undefined) as (ChannelUsageState & { error?: string }) | undefined
+      if (!response.ok) throw new Error(body?.error ?? `HTTP ${String(response.status)}`)
+      if (mountedRef.current && body !== undefined) setUsage(body)
+    } catch (cause: unknown) {
+      if (mountedRef.current) setNotice(`账号使用方式没保存上：${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      if (mountedRef.current) setUsageBusy(false)
+    }
+  }
 
   const markBusy = (provider: string, on: boolean): void => {
     setBusy(previous => {
@@ -895,8 +1300,23 @@ export function ChannelPoolSection({ t, active }: {
 
   const load = async (): Promise<void> => {
     loadSeq.current += 1
+    setRefreshing(true)
     try {
-      const channels = (await fetchChannels()).filter(channel => !REGION_OWNED_CHANNELS.has(channel.id))
+      /*
+        第一波四个请求并行发：渠道名册、各家账号数、豆包会话、Marvis 会话互不依赖。
+        原来是一个等一个，冷启动时四段等待叠在一起。各家账号数用编译期名册的 id 去问
+        （和后端名册是同一份常量），不用先等名册回来。
+      */
+      const rosterIds = REGISTERED_CHANNELS
+        .filter(channel => !REGION_OWNED_CHANNELS.has(channel.id))
+        .map(channel => channel.id)
+      const [channelsRaw, firstStatus, doubaoAccount, marvisSession] = await Promise.all([
+        fetchChannels(),
+        cachedProviderStatus(rosterIds),
+        readDoubaoAccount(),
+        readMarvisSession(),
+      ])
+      const channels = channelsRaw.filter(channel => !REGION_OWNED_CHANNELS.has(channel.id))
       // `account.list` filters by provider on its very first line
       // (pool.listAccounts), so an empty payload matches nothing and answers
       // "no accounts" for a channel that has three. The cheap way to learn
@@ -910,7 +1330,11 @@ export function ChannelPoolSection({ t, active }: {
       // pays that cost again for numbers that cannot have moved — which is why it
       // "loads slowly every time" while the login page (static metadata, no
       // counting) appears instantly.
-      const statusAnswer = await cachedProviderStatus(channels.map(channel => channel.id))
+      /* 后端名册里多出编译期名册没有的渠道（新版后端 + 旧版前端缓存）时，再问一次全集 */
+      const extra = channels.some(channel => !rosterIds.includes(channel.id))
+      const statusAnswer = extra
+        ? await cachedProviderStatus(channels.map(channel => channel.id))
+        : firstStatus
       const statuses = providerStatusesFrom(statusAnswer)
       /**
        * Doubao is added to the scan list by hand.
@@ -920,11 +1344,12 @@ export function ChannelPoolSection({ t, active }: {
        * channel before anything can be drawn. A signed-in Doubao session would then exist,
        * work, and appear nowhere on this page.
        */
-      const doubaoAccount = await readDoubaoAccount()
+      /* doubaoAccount / marvisSession 已在上面并行读好。Marvis 同理：pack 不认识它，账号只在插件自己的 session 路由里 */
       const scanProviders = channels
         .map(channel => channel.id)
         .filter(id => (statuses.get(id)?.accountsTotal ?? 0) > 0
-          || (id === 'doubao' && doubaoAccount !== undefined))
+          || (id === 'doubao' && doubaoAccount !== undefined)
+          || (id === 'marvis' && (marvisSession?.accounts.length ?? 0) > 0))
       // Facts are fetched AFTER the model lists below, not before: the host's
       // own listing is gated per provider, and a gated channel answers "no
       // models" even while its card shows nine. The ids this page just rendered
@@ -954,10 +1379,14 @@ export function ChannelPoolSection({ t, active }: {
          */
         const accountsPromise = provider === 'doubao'
           ? Promise.resolve({ ok: true, value: { accounts: doubaoAccount === undefined ? [] : [doubaoAccount] } } as ChannelRpcEnvelope)
-          : callPack('account.list', { provider })
+          : provider === 'marvis'
+            ? Promise.resolve({ ok: true, value: { accounts: marvisSession?.accounts ?? [] } } as ChannelRpcEnvelope)
+            : callPack('account.list', { provider })
         const modelsPromise = provider === 'doubao'
           ? readDoubaoModels().then(models => ({ ok: true, value: { models } } as ChannelRpcEnvelope))
-          : callPack('model.list', { provider })
+          : provider === 'marvis'
+            ? Promise.resolve({ ok: true, value: { models: marvisSession?.models ?? [] } } as ChannelRpcEnvelope)
+            : callPack('model.list', { provider })
         // `callPack` answers an `ok: false` envelope as a value rather than a
         // rejection, so the catch arms only cover the transport itself.
         const [accounts, models] = await Promise.all([
@@ -1035,12 +1464,65 @@ export function ChannelPoolSection({ t, active }: {
               loginKind: channel.login,
               ownedByPool: channel.ownedByPool === true,
             }) as PoolWebChannel)
+      /*
+        和屏幕上已有的数据合并，而不是整份替换。
+
+        第一帧画的是本机缓存（上一次的账号、模型、余额）。第一波读取里余额还没回来
+        （第二波才读），冷启动时 pack 也常常还没装好：model.list 答「拒绝」、
+        provider.status 把每家都数成 0。原来直接用这份答案整个替换，于是缓存里的
+        余额、模型、甚至账号一进来就被抹成「—」，读者看到的还是一排杠在加载。
+
+        规则：
+          - 余额 / 签到状态：第一波一律沿用屏幕上的，第二波真读到了再换；
+          - 模型：这次读失败（或 pack 冷启动）就沿用上一次的，读成功就用新的；
+          - 账号：pack 冷启动（全部数成 0 但上一次明明有号）时沿用上一次，
+            并在 2 秒后重读，最多 5 次；之后仍是 0 才算真没有。
+          - 名册占位行（id 以 cached- 开头）不算数据，不沿用。
+      */
+      const previousById = new Map(entriesRef.current.map(entry => [entry.channel.id, entry]))
+      const realAccounts = (entry: ChannelEntry | undefined): readonly ChannelAccount[] =>
+        (entry?.accounts ?? []).filter(account => !account.id.startsWith('cached-'))
+      const realModels = (entry: ChannelEntry | undefined): readonly ChannelModel[] =>
+        (entry?.models ?? []).filter(model => !model.id.startsWith('cached-'))
+      const packCounted = [...statuses.values()].reduce((sum, row) => sum + (row.accountsTotal ?? 0), 0)
+      const hadPackAccounts = entriesRef.current.some(entry =>
+        entry.channel.id !== 'doubao' && entry.channel.id !== 'marvis' && realAccounts(entry).length > 0)
+      const packCold = hadPackAccounts && (!statusAnswer.ok || packCounted === 0)
+      if (packCold) {
+        // 冷启动那次的 0 被缓存 30 秒的话，重读也只会拿到同一个 0
+        providerStatusCache = undefined
+        if (coldRetries.current < 5) {
+          coldRetries.current += 1
+          window.setTimeout(() => { if (mountedRef.current) void load() }, 2_000)
+        }
+      } else {
+        coldRetries.current = 0
+      }
       const next = roster
-        .map(channel => ({
-          channel,
-          ...(byProvider.get(channel.id) ?? EMPTY_ENTRY),
-          status: statuses.get(channel.id),
-        }))
+        .map((channel): ChannelEntry => {
+          const fresh = byProvider.get(channel.id)
+          const previous = previousById.get(channel.id)
+          const status = statuses.get(channel.id) ?? previous?.status
+          if (fresh === undefined) {
+            if (packCold && previous !== undefined && realAccounts(previous).length > 0) {
+              return { ...previous, channel, balancePending: false, status }
+            }
+            return { channel, ...EMPTY_ENTRY, status } as ChannelEntry
+          }
+          const keepModels = fresh.models.length === 0
+            && (fresh.modelError !== undefined || packCold)
+            && realModels(previous).length > 0
+          return {
+            channel,
+            ...fresh,
+            models: keepModels ? realModels(previous) : fresh.models,
+            modelError: keepModels ? undefined : fresh.modelError,
+            facts: previous !== undefined && previous.facts.size > 0 ? previous.facts : fresh.facts,
+            balances: previous?.balances ?? fresh.balances,
+            statuses: previous?.statuses ?? fresh.statuses,
+            status,
+          }
+        })
       // Wave 1 lands here. The store is written FIRST and unconditionally: this
       // answer is correct whether or not the component is still mounted, and a
       // result discarded because the reader happened to switch tabs mid-flight
@@ -1056,6 +1538,7 @@ export function ChannelPoolSection({ t, active }: {
       // The fact sweep (`/channels/models`, which resolves every model against
       // the host's adapters) measured 16.5 seconds on a cold host, so the cards
       // land first and the facts merge in when they arrive.
+      persistReady.current = true
       setEntries(next)
       setError(undefined)
       setLoading(false)
@@ -1103,6 +1586,8 @@ export function ChannelPoolSection({ t, active }: {
       if (!mountedRef.current) return
       setError(message)
       setLoading(false)
+    } finally {
+      if (mountedRef.current) setRefreshing(false)
     }
   }
 
@@ -1122,6 +1607,13 @@ export function ChannelPoolSection({ t, active }: {
   }
 
   useEffect(() => { void loadWithRetry() }, [])
+
+  /* 数据有变化就（防抖）写一次本机快照，下次打开 DSH 第一帧用它 */
+  useEffect(() => {
+    if (!persistReady.current) return undefined
+    const timer = window.setTimeout(() => { writeStoredPool(entries, marvisQuotas) }, 500)
+    return () => { window.clearTimeout(timer) }
+  }, [entries, marvisQuotas])
 
   const foldFor = (provider: string): Fold | undefined => folds.get(provider)
   const toggleFold = (provider: string, fold: Fold): void => {
@@ -1347,6 +1839,29 @@ export function ChannelPoolSection({ t, active }: {
        * `credits.balances` is a pack RPC with no Doubao adapter, so it answers "unsupported
        * provider" and the card printed "no balance reported" under a signed-in account.
        */
+      /*
+        Marvis：每个账号一行 token 钱包。余额行只留「可用」给汇总用，
+        卡片画的是 marvisQuotas 里的「已用 / 总量 + 重置时间」。
+      */
+      if (provider === 'marvis') {
+        const quotas = await readMarvisQuotas()
+        marvisQuotaSnapshot = quotas
+        if (!mountedRef.current) return
+        setMarvisQuotas(quotas)
+        setEntries(previous => previous.map(entry =>
+          entry.channel.id === provider
+            ? {
+                ...entry,
+                balancePending: false,
+                balanceError: undefined,
+                balances: quotas.map(row => ({
+                  accountId: row.openid,
+                  ...(row.error === undefined ? { balance: { total: row.available } } : { error: row.error }),
+                })),
+              }
+            : entry))
+        return
+      }
       if (provider === 'doubao') {
         const rows = await readDoubaoBalance()
         setEntries(previous => previous.map(entry =>
@@ -1597,6 +2112,29 @@ export function ChannelPoolSection({ t, active }: {
         setNotice(action === 'delete' ? '已删除豆包会话' : '已刷新')
         return
       }
+      /*
+        Marvis 的账号在插件自己的存储里：删除走 session 路由的 DELETE（带 openid，只删这一个），
+        刷新就是重读这个渠道的 token 钱包。没有启用/停用开关 —— 存储里没有这个字段，画了也是假的。
+      */
+      if (provider === 'marvis') {
+        if (action === 'delete') {
+          const response = await fetch(POOL_MARVIS_SESSION_PATH, {
+            method: 'DELETE',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ openid: accountId }),
+          })
+          if (!mountedRef.current) return
+          if (!response.ok) { setNotice('没能删除这个账号'); return }
+          invalidatePoolSnapshot()
+          await load()
+          setNotice('已删除这个 Marvis 账号')
+          return
+        }
+        await refreshBalances(provider, true, true)
+        if (mountedRef.current) setNotice('已刷新 token 用量')
+        return
+      }
       const entry = entries.find(item => item.channel.id === provider)
       const enabledNow = entry?.accounts.find(account => account.id === accountId)?.enabled !== false
       const method = action === 'refresh' ? 'account.refresh'
@@ -1647,799 +2185,787 @@ export function ChannelPoolSection({ t, active }: {
     )
   }
   /*
-    详情列 kpis / policies 要用的派生值。
+    ---------------------------------------------------------------
+    以下是渲染。结构逐块对照 xdpool-design/pool.html：
 
-    放在渲染之前算一次：JSX 里现算会让每个 kpi 各自 filter 一遍。
+      nav.list   list-head（标题 + 三格汇总）→ list-scroll（已登录 / 未登录两组 .ch）
+      main.main  mhead（名字 · 厂商 · 状态 pill · 添加账号）
+                 mbody → note → kpis → policies → sec 账号（.accts > .acct）→ sec 模型（.models > .model）
+
+    注意：这里已经在提前 return 之后，不能再调用任何 hook（useState / useEffect）——
+    之前「分配策略」的 useState 写在这下面，条目从 0 变成非 0 时 React 会因为
+    hook 数量变化直接报错，整页白掉。
+    ---------------------------------------------------------------
   */
-  /** 后端的五种分配策略。 */
-  type PoolMode = 'priority' | 'round-robin' | 'balanced' | 'sticky' | 'expiry'
-  const chosenEntry = entries.find(entry => entry.channel.id === chosen)
-  const chosenEntryEnabled = (entry: ChannelEntry, modelId: string): boolean =>
-    enabledFor(entry.channel.id, entry.models).has(modelId)
-  const chosenBalanceTotal = chosenEntry === undefined || chosenEntry.channel.credits === undefined
-    ? undefined
-    : balancesTotal(chosenEntry.balances)
-  const chosenCredit = chosenEntry === undefined
-    ? '–'
-    : chosenEntry.balancePending && chosenBalanceTotal === undefined
-      ? (t?.('channelpool.balanceLoading') ?? '…')
-      : chosenBalanceTotal === undefined
-        ? (t?.('channelpool.balanceNone') ?? '–')
-        : amount(chosenBalanceTotal)
-  const chosenUnit = chosenEntry === undefined ? '' : creditUnitLabel(chosenEntry.channel, t)
-  const chosenBusy = chosenEntry === undefined ? false : busy.has(chosenEntry.channel.id)
-  /* 自动领取是全局开关（后端只有这一份状态），这里显示它影响了多少个号 */
-  /* 分配策略：后端按 provider 存的，这里先读它已知的值。 */
-  const [modeDraft, setModeDraft] = useState<Record<string, PoolMode>>({})
-  const chosenMode: PoolMode = modeDraft[chosen] ?? 'priority'
-  const setChannelMode = async (providerId: string, mode: PoolMode): Promise<void> => {
-    setModeDraft(prev => ({ ...prev, [providerId]: mode }))
-  }
-  const setChannelAutoClaim = async (providerId: string, on: boolean): Promise<void> => {
-    void providerId
-    void on
-  }
-  const chosenClaimTotal = chosenEntry === undefined
-    ? 0
-    : chosenEntry.accounts.filter(a => a.enabled !== false).length
-  const chosenClaimed = chosenEntry === undefined
-    ? 0
-    : chosenEntry.accounts.filter(a =>
-        a.enabled !== false
-        && chosenEntry.statuses.find(row => row.accountId === a.id)?.todayCheckedIn === true,
-      ).length
-  const chosenAutoClaim = chosenClaimed > 0
-  /** 五种策略的中文名。 */
-  const MODE_LABEL: Record<PoolMode, (tr?: Translate) => string> = {
-    priority: tr => tr?.('channelpool.modePrefer') ?? '优先',
-    'round-robin': tr => tr?.('channelpool.modeRoundRobin') ?? '轮换',
-    balanced: tr => tr?.('channelpool.modeBalanced') ?? '均衡',
-    sticky: tr => tr?.('channelpool.modeSticky') ?? '粘住',
-    expiry: tr => tr?.('channelpool.modeExpiry') ?? '按到期',
-  }
-  const modeHint = (tr: Translate | undefined, mode: PoolMode): string => {
-    if (mode === 'round-robin') return tr?.('channelpool.modeRoundRobinHint') ?? '轮换：每次请求依次用下一个账号。'
-    if (mode === 'balanced') return tr?.('channelpool.modeBalancedHint') ?? '均衡：在还有额度的账号里随机挑。'
-    if (mode === 'sticky') return tr?.('channelpool.modeStickyHint') ?? '粘住：一直用同一个，直到它不行了。'
-    if (mode === 'expiry') return tr?.('channelpool.modeExpiryHint') ?? '按到期：先用即将到期的账号。'
-    return tr?.('channelpool.modePreferHint') ?? '优先：总用排在前面的账号，它限流了才换下一个。'
+  const chosenEntry = entries.find(entry => entry.channel.id === chosen) ?? entries[0]
+
+  /* 中栏三格：账号总数 / 已连（启用中的账号）/ 积分（只加「积分」单位的渠道，美元、token、百分比不混进来） */
+  const totalAccounts = entries.reduce((sum, entry) => sum + entry.accounts.length, 0)
+  const liveAccounts = entries.reduce(
+    (sum, entry) => sum + entry.accounts.filter(account => account.enabled !== false).length, 0)
+  const totalCredits = entries.reduce((sum, entry) => {
+    const credits = entry.channel.credits
+    if (credits === undefined || credits.unit !== undefined || credits.quota === true) return sum
+    const value = balancesTotal(entry.balances)
+    return value === undefined ? sum : sum + value
+  }, 0)
+  const anyCredits = entries.some(entry => entry.channel.credits !== undefined
+    && entry.channel.credits.unit === undefined && entry.channel.credits.quota !== true
+    && balancesTotal(entry.balances) !== undefined)
+  const bound = entries.filter(entry => entry.accounts.length > 0)
+  const unbound = entries.filter(entry => entry.accounts.length === 0)
+
+  /** 中栏一行。未登录的那组去色，点了直接去登录通道（设计稿 href="login.html"）。 */
+  const channelRow = (entry: ChannelEntry, isBound: boolean): ReactElement => {
+    const icon = channelIcon(entry.channel.id)
+    const isOn = chosenEntry !== undefined && entry.channel.id === chosenEntry.channel.id
+    return (
+      <button
+        key={entry.channel.id}
+        type="button"
+        className="ch"
+        title={entry.channel.name}
+        data-bound={isBound ? undefined : 'false'}
+        aria-current={isOn ? 'true' : undefined}
+        onClick={() => {
+          if (!isBound && onAddAccount !== undefined) { onAddAccount(); return }
+          setOwnActive(entry.channel.id)
+        }}
+      >
+        {icon === undefined
+          ? <span className="ch-mark" data-letters={channelInitials(entry.channel.name)}>{channelInitials(entry.channel.name)}</span>
+          /* css:--icon-xxx 是「用设计稿的 CSS 变量」，不能包进 url() */
+          : <span className="ch-mark" style={{
+              backgroundImage: icon.startsWith('css:') ? `var(${icon.slice(4)})` : `url("${icon}")`,
+            }} />}
+        <span className="ch-name">{entry.channel.name}</span>
+        {isBound ? <span className="ch-n num">{String(entry.accounts.length)}</span> : null}
+      </button>
+    )
   }
 
-  /*
-    两列：条目栏 + 详情。
-
-    设计稿的 .list 是渠道列表（选中项高亮），.main 是选中那一个的详情。
-    这两栏必须一起出现在 .app 的网格里 —— 分开渲染的话第三列拿不到元素。
-
-    dsm-xdpool-cpool 保留在 main 上作锚点（几处测试按它定位），不承载样式。
-  */
-  return (
-    <>
+  const list = (
     <nav className="list" aria-label={t?.('channelpool.title') ?? 'Channels'}>
-      {/*
-        汇总三格：账号总数 / 已连 / 积分 —— 设计稿中间栏的第一屏。
-      */}
       <div className="list-head">
-        <div className="list-title">{t?.('channelpool.title') ?? '渠道'}</div>
+        <div className="list-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {t?.('shell.tabPool') ?? '账号池'}
+          {refreshing ? (
+            <span className="spinner" role="status" aria-label="正在刷新" title="正在刷新账号和模型"
+              style={{ width: 10, height: 10, borderWidth: 1.5 }} />
+          ) : null}
+        </div>
         <div className="list-stats">
           <div className="ls">
-            <span className="ls-v">{String(entries.length)}</span>
+            <span className="ls-v num">{String(totalAccounts)}</span>
             <span className="ls-k">账号总数</span>
           </div>
           <div className="ls">
-            <span className="ls-v">{String(entries.filter(e => e.accounts.length > 0).length)}</span>
+            <span className="ls-v num">{String(liveAccounts)}</span>
             <span className="ls-k">已连</span>
           </div>
           <div className="ls">
-            <span className="ls-v">—</span>
+            {anyCredits ? <WanNumber value={totalCredits} /> : <span className="ls-v num">—</span>}
             <span className="ls-k">积分</span>
           </div>
         </div>
       </div>
       <div className="list-scroll">
-        {(['bound', 'unbound'] as const).map(kind => {
-          const group = entries.filter(e => (kind === 'bound') === (e.accounts.length > 0))
-          if (group.length === 0) return null
-          return (
-            <div key={kind}>
-              <div className="list-group">
-                {kind === 'bound' ? '已登录' : '未登录'}
-                <span className="list-group-n">{String(group.length)}</span>
-              </div>
-              {group.map(entry => {
-                const icon = channelIcon(entry.channel.id)
-                const isOn = entry.channel.id === chosen
-                return (
-                  <button
-                    key={entry.channel.id}
-                    type="button"
-                    className="ch"
-                    data-active={isOn ? 'true' : false}
-                    aria-current={isOn ? 'true' : undefined}
-                    onClick={() => { setOwnActive(entry.channel.id) }}
-                  >
-                    {icon === undefined
-                      ? <span className="ch-mark" data-letters={channelInitials(entry.channel.name)}>{channelInitials(entry.channel.name)}</span>
-                      /* css:--icon-xxx 是「用设计稿的 CSS 变量」，不能包进 url() */
-                      : <span className="ch-mark" style={{
-                          backgroundImage: icon.startsWith('css:') ? `var(${icon.slice(4)})` : `url("${icon}")`,
-                        }} />}
-                    <span className="ch-name">{entry.channel.name}</span>
-                    <span className="ch-n">{entry.accounts.length === 0 ? '' : String(entry.accounts.length)}</span>
-                  </button>
-                )
-              })}
-            </div>
-          )
-        })}
+        {bound.length === 0 ? null : (
+          <>
+            <div className="list-group">已登录<span className="list-group-n num">{String(bound.length)}</span></div>
+            {bound.map(entry => channelRow(entry, true))}
+          </>
+        )}
+        {unbound.length === 0 ? null : (
+          <>
+            <div className="list-group" data-empty="true">未登录<span className="list-group-n num">{String(unbound.length)}</span></div>
+            {unbound.map(entry => channelRow(entry, false))}
+          </>
+        )}
       </div>
     </nav>
+  )
 
-    <main className="main dsm-xdpool-cpool dsm-xdpool-regions" aria-label={t?.('channelpool.title') ?? 'Channels'}>
-      {error === undefined ? null
-        : <p className="hint">{t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}</p>}
-      {notice === undefined ? null : <p className="note">{notice}</p>}
-      {/*
-        页头 —— 设计稿每页的 main 都是 mhead + mbody。
-        这里显示选中的那个渠道的名字与厂商，中栏切换时它跟着变。
-      */}
-      <header className="mhead">
-        <div className="mhead-title">
-          <span className="mhead-name">
-            {entries.find(e => e.channel.id === chosen)?.channel.name ?? (t?.('channelpool.title') ?? '渠道')}
-          </span>
-          <span className="mhead-org">
-            {entries.find(e => e.channel.id === chosen)?.channel.org ?? ''}
-          </span>
-        </div>
-      </header>
-      {/*
-        正文容器 —— 设计稿每页的 main 都是 mhead + mbody。
-
-        少了这一层，区块之间没有 gap、没有内边距，内容会贴在页头下面。
-      */}
-      <div className="mbody">
-      {/*
-        正文第一段 —— 设计稿的 note / kpis / policies。
-
-        设计稿的账号详情是：
-          note      一句话说明这个渠道是什么
-          kpis      账号 / 模型 / 剩余积分 三格
-          policies  账号使用方式（分段按钮）+ 积分自动化（开关）
-        然后才是「账号」和「模型」两个 sec。
-
-        原来这里是 facts 三行 + 一排按钮，形状完全不是设计稿的样子。
-      */}
-      {chosenEntry === undefined ? null : (
-        <>
-          <p className="note">{chosenEntry.channel.note}</p>
-          <div className="kpis">
-            <div className="kpi">
-              <span className="kpi-k">{t?.('channelpool.statAccounts') ?? '账号'}</span>
-              <span className="kpi-v num">
-                {String(chosenEntry.accounts.filter(a => a.enabled !== false).length)}
-              </span>
-            </div>
-            <div className="kpi">
-              <span className="kpi-k">{t?.('channelpool.statModels') ?? '模型'}</span>
-              <span className="kpi-v num">
-                {String(chosenEntry.models.filter(m => chosenEntryEnabled(chosenEntry, m.id)).length)}
-                <span className="kpi-u">/{String(chosenEntry.models.length)}</span>
-              </span>
-            </div>
-            {chosenEntry.channel.credits === undefined ? null : (
-              <div className="kpi">
-                <span className="kpi-k">{t?.('channelpool.statCredit') ?? '剩余积分'}</span>
-                <span className="kpi-v num">{chosenCredit}</span>
-                <span className="kpi-u">{chosenUnit}</span>
-              </div>
+  if (chosenEntry === undefined) {
+    return (
+      <>
+        {list}
+        <main className="main dsm-xdpool-cpool dsm-xdpool-regions" aria-label={t?.('channelpool.title') ?? 'Channels'}>
+          <div className="mbody" style={{ paddingTop: 'var(--s5)' }}>
+            {banner}
+            {error === undefined ? null : (
+              <p className="hint">
+                {t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}
+                <button type="button" className="tiny" style={{ marginLeft: 'auto' }}
+                  onClick={() => { setEnabled(new Map()); void load() }}>
+                  {t?.('channelpool.retry') ?? '重试'}
+                </button>
+              </p>
             )}
           </div>
-          {/*
-            账号使用方式 + 积分自动化 —— 设计稿的 .policies。
+        </main>
+      </>
+    )
+  }
 
-            这两项都是「这个渠道怎么用」的设置，不是账号本身的数据，
-            所以放在 kpis 之下、账号列表之上。
-          */}
-          <div className="policies">
-            <div className="policy">
-              <span className="policy-k">{t?.('channelpool.usageMode') ?? '账号使用方式'}</span>
-              <div className="seg">
-                {(['priority', 'round-robin', 'balanced', 'sticky', 'expiry'] as const).map(mode => (
-                  <button
-                    key={mode}
-                    type="button"
-                    aria-pressed={chosenMode === mode}
-                    disabled={chosenBusy}
-                    onClick={() => { void setChannelMode(chosenEntry.channel.id, mode) }}
-                  >
-                    {MODE_LABEL[mode](t)}
-                  </button>
-                ))}
-              </div>
-              <span className="policy-hint">{modeHint(t, chosenMode)}</span>
+  const { channel, accounts, models, facts, balances, statuses, status } = chosenEntry
+  const enabledIds = enabledFor(channel.id, models)
+  const isBusy = busy.has(channel.id)
+  const unit = creditUnitLabel(channel, t)
+  const chosenBalanceTotal = channel.credits === undefined ? undefined : balancesTotal(balances)
+  const chosenCredit = chosenEntry.balancePending && chosenBalanceTotal === undefined
+    ? (t?.('channelpool.balanceLoading') ?? '…')
+    : chosenBalanceTotal === undefined
+      ? '—'
+      : amount(chosenBalanceTotal)
+  const modelsEnabled = models.filter(model => enabledIds.has(model.id)).length
+  const statusOf = (accountId: string): ChannelCreditStatus | undefined =>
+    statuses.find(row => row.accountId === accountId)
+  const balanceOf = (accountId: string): ChannelBalance | undefined =>
+    balances.find(row => row.accountId === accountId)
+  const enabledAccounts = accounts.filter(account => account.enabled !== false)
+  // An unknown status is treated as "not yet" so the button stays claimable
+  // until the first refresh lands; a zero-account channel never reads as
+  // "all claimed", because there is nothing to have claimed.
+  const allClaimedToday = enabledAccounts.length > 0
+    && enabledAccounts.every(account => statusOf(account.id)?.todayCheckedIn === true)
+  const claimedToday = enabledAccounts.filter(account => statusOf(account.id)?.todayCheckedIn === true).length
+  /* 有签到路径的渠道才画「全部领取」：pack 的 credits.claimAll，或插件自己的签到路由 */
+  const canClaim = channel.credits?.claim === true || OWN_CHECKIN_CHANNELS[channel.id] !== undefined
+  const query = queryFor(channel.id)
+  const visibleModels = modelsMatching(chosenEntry, query)
+  const mode = modeOf(channel.id)
+  /*
+    积分自动化：后台调度器是全局一份、只跑 WorkBuddy 国内版的签到（国际版网关没有积分体系），
+    所以只在 buddy 这一家显示。给别的渠道也画一个开关会是假的 —— 点了不会去领它们的积分。
+  */
+  const showAutomation = channel.id === 'buddy' && onAutoClaim !== undefined
+
+  /*
+    腾讯 Marvis：按 token 计，不是积分（设计稿 marvis.html）。
+    banner 代替 note，kpis 换成「账号 / 今日用量 / 今日可用」，账号卡画每个账号自己的 .quota。
+    没有 policies：Marvis 的请求由插件自己的适配器发，不走账号池的分配策略。
+  */
+  const isMarvis = channel.id === 'marvis'
+  const quotaOf = (accountId: string): MarvisQuota | undefined =>
+    marvisQuotas?.find(row => row.openid === accountId)
+  const marvisRows = accounts
+    .map(account => quotaOf(account.id))
+    .filter((row): row is MarvisQuota => row !== undefined && row.error === undefined)
+  const marvisUsed = marvisRows.reduce((sum, row) => sum + row.used, 0)
+  const marvisAvailable = marvisRows.reduce((sum, row) => sum + row.available, 0)
+  /** 今日总额度：读到的按后端，没读到的账号按每天 1,000 万算 */
+  const marvisTotal = accounts.reduce((sum, account) => {
+    const row = marvisQuotas?.find(quota => quota.openid === account.id)
+    return sum + (row !== undefined && row.error === undefined && row.total > 0 ? row.total : MARVIS_DAILY_TOKENS)
+  }, 0)
+  const marvisUsedCount = marvisRows.filter(row => row.used > 0).length
+  const marvisReset = marvisRows.reduce<number | undefined>((soonest, row) =>
+    row.resetAt === undefined ? soonest : soonest === undefined ? row.resetAt : Math.min(soonest, row.resetAt), undefined)
+  const marvisPending = marvisQuotas === undefined || (chosenEntry.balancePending && marvisRows.length === 0)
+  /** 「全部刷新」：重读每个账号的 token 钱包。 */
+  const refreshMarvis = async (): Promise<void> => {
+    markBusy('marvis', true)
+    try {
+      await refreshBalances('marvis', true, true)
+      if (mountedRef.current) setNotice('已刷新全部账号的 token 用量')
+    } finally {
+      if (mountedRef.current) markBusy('marvis', false)
+    }
+  }
+
+  /** 「全部领取」：自有签到路由的几家走插件路由，其余走 pack。 */
+  const claimAllFor = async (provider: string): Promise<void> => {
+    if (OWN_CHECKIN_CHANNELS[provider] === undefined) { await claim(provider); return }
+    markBusy(provider, true)
+    try {
+      const said = await ownCheckin(provider)
+      if (!mountedRef.current) return
+      if (said !== undefined) setNotice(said)
+      await refreshBalances(provider, true)
+    } finally {
+      if (mountedRef.current) markBusy(provider, false)
+    }
+  }
+  /** 「重新检测账号」：丢掉缓存，重读账号与余额。 */
+  const recheck = async (provider: string): Promise<void> => {
+    invalidatePoolSnapshot()
+    setEnabled(new Map())
+    await load()
+    await refreshBalances(provider, true)
+  }
+
+  return (
+    <>
+    {list}
+    <main className="main dsm-xdpool-cpool dsm-xdpool-regions" aria-label={t?.('channelpool.title') ?? 'Channels'}>
+      <header className="mhead">
+        <div className="mhead-title">
+          <span className="mhead-name">{channel.name}</span>
+          <span className="mhead-org">
+            {channel.domain === undefined || channel.domain === '' ? channel.org : `${channel.org} · ${channel.domain}`}
+          </span>
+          {accounts.length > 0
+            ? <span className="pill" data-tone="ok">{t?.('channelpool.stateReady') ?? '已连接'}</span>
+            : <span className="pill">{t?.('channelpool.stateNone') ?? '未登录'}</span>}
+        </div>
+        {onAddAccount === undefined ? null : (
+          <div className="mhead-actions">
+            {/* addAccount —— 加号就在账号旁边：去登录通道再登一个 */}
+            <button type="button" className="btn btn-primary" onClick={() => { onAddAccount() }}>
+              添加账号
+            </button>
+          </div>
+        )}
+      </header>
+
+      <div className="mbody">
+        {banner}
+        {error === undefined ? null : (
+          <p className="hint">
+            {t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}
+            <button type="button" className="tiny" style={{ marginLeft: 'auto' }}
+              onClick={() => { setEnabled(new Map()); void load() }}>
+              {t?.('channelpool.retry') ?? '重试'}
+            </button>
+          </p>
+        )}
+        {notice === undefined ? null : <p className="hint" role="status"><b>提示</b><span>{notice}</span></p>}
+
+        {isMarvis ? (
+          <div className="banner">
+            <span className="banner-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 3v12M8 11l4 4 4-4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
+            </span>
+            <span className="banner-body">
+              <span className="banner-t">这个渠道按 token 计，不是积分</span>
+              <span className="banner-d">
+                {`每个账号每天 1,000 万 token，${marvisResetText(marvisReset)}。所以卡片上画的是 token 用量条，不是积分数字。`}
+              </span>
+            </span>
+          </div>
+        ) : channel.note === '' ? null : <p className="note">{channel.note}</p>}
+
+        {/* kpis：账号 / 模型 / 剩余积分。没有积分的渠道只有两格，列数跟着格数走，不留空格子 */}
+        {isMarvis ? (
+          <div className="kpis">
+            <div className="kpi">
+              <span className="kpi-k">账号</span>
+              <span className="kpi-v num">{String(accounts.length)}</span>
             </div>
+            <div className="kpi">
+              <span className="kpi-k">今日用量</span>
+              <span className="kpi-v num">
+                {marvisPending ? '…' : groupDigits(marvisUsed)}
+                <span className="kpi-u">token</span>
+              </span>
+              {marvisPending ? null : (
+                <span className="kpi-sub">
+                  {marvisRows.length === 0
+                    ? '用量还没读到'
+                    : marvisUsedCount === 0
+                      ? `${String(marvisRows.length)} 个账号都还没用`
+                      : `${String(marvisUsedCount)}/${String(marvisRows.length)} 个账号已用`}
+                </span>
+              )}
+            </div>
+            <div className="kpi">
+              <span className="kpi-k">今日可用</span>
+              <span className="kpi-v num">
+                {marvisPending ? '…' : marvisRows.length === 0 ? '—' : wanDigits(marvisAvailable)}
+                <span className="kpi-u">{`/ ${wanDigits(marvisTotal)} 万`}</span>
+              </span>
+              {marvisPending ? null : (
+                <span className="kpi-sub" title={marvisResetTitle(marvisReset)}>{marvisResetText(marvisReset)}</span>
+              )}
+            </div>
+          </div>
+        ) : (
+        <div className="kpis" style={{
+          gridTemplateColumns: `repeat(${channel.credits === undefined ? '2' : '3'},minmax(0,1fr))`,
+        }}>
+          <div className="kpi">
+            <span className="kpi-k">{t?.('channelpool.statAccounts') ?? '账号'}</span>
+            <span className="kpi-v num">{String(enabledAccounts.length)}</span>
+          </div>
+          <div className="kpi">
+            <span className="kpi-k">{t?.('channelpool.statModels') ?? '模型'}</span>
+            <span className="kpi-v num">
+              {String(modelsEnabled)}
+              <span className="kpi-u">/{String(models.length)}</span>
+            </span>
+          </div>
+          {channel.credits === undefined ? null : (
+            <div className="kpi">
+              <span className="kpi-k">{t?.('channelpool.statCredit') ?? '剩余积分'}</span>
+              <span className="kpi-v num">
+                {chosenCredit}
+                <span className="kpi-u">{unit}</span>
+              </span>
+            </div>
+          )}
+        </div>
+        )}
+
+        {/* policies：账号使用方式（真的写进后端 channels/usage）+ 积分自动化 */}
+        {isMarvis ? null : (
+        <div className="policies">
+          <div className="policy">
+            <span className="policy-k">
+              {t?.('channelpool.usageMode') ?? '账号使用方式'}
+              {modeIsOwn(channel.id) ? '' : '（跟随全局）'}
+            </span>
+            <div className="seg">
+              {MODE_ORDER.map(option => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={mode === option}
+                  disabled={usageBusy}
+                  onClick={() => { void setChannelMode(channel.id, option) }}
+                >
+                  {MODE_LABEL[option](t)}
+                </button>
+              ))}
+            </div>
+            <span className="policy-hint">
+              {accounts.length <= 1
+                ? '这个渠道只有一个账号，使用方式不影响选号。'
+                : modeHint(t, mode)}
+            </span>
+          </div>
+          {!showAutomation ? null : (
             <div className="policy">
               <span className="policy-k">{t?.('channelpool.autoClaim') ?? '积分自动化'}</span>
               <div className="policy-v">
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={chosenAutoClaim}
+                  className="sw"
+                  aria-checked={autoClaim === true}
                   aria-label={t?.('channelpool.autoClaim') ?? '积分自动化'}
-                  className={`sw${chosenAutoClaim ? ' is-on' : ''}`}
-                  disabled={chosenBusy}
-                  onClick={() => { void setChannelAutoClaim(chosenEntry.channel.id, !chosenAutoClaim) }}
+                  disabled={autoClaimBusy === true}
+                  onClick={() => { onAutoClaim?.(autoClaim !== true) }}
                 />
                 <span>
-                  {t?.('channelpool.claimedToday', { done: chosenClaimed, total: chosenClaimTotal })
-                    ?? `今日已领 ${String(chosenClaimed)}/${String(chosenClaimTotal)}`}
+                  {`${t?.('channelpool.claimedToday') ?? '今日已领'} ${String(claimedToday)}/${String(enabledAccounts.length)}`}
                 </span>
               </div>
               <span className="policy-hint">
                 {t?.('channelpool.autoClaimHint') ?? '开着就会在后台领每天的积分，不用手动点。'}
               </span>
             </div>
-          </div>
-        </>
-      )}
-      {/*
-        只画选中的那一个渠道。
+          )}
+        </div>
+        )}
 
-        设计稿的右栏是一个渠道的详情（mhead + kpis + 账号 + 模型），
-        中栏的 .ch 行负责切换。原来这里 map 了全部二十家，平铺成网格 ——
-        那不是这个页面的形状。
-      */}
-      <div className="cpool-detail">
-        {((): readonly ChannelEntry[] => {
-          if (entries.length === 0) return []
-          const picked = entries.find(entry => entry.channel.id === chosen)
-          // 选中的渠道还没到（或已被移除）时退回第一家，右栏不留空
-          return [picked ?? entries[0]].filter((e): e is ChannelEntry => e !== undefined)
-        })().map(entry => {
-          const { channel, accounts, models, facts, balances, statuses, status } = entry
-          const icon = channelIcon(channel.id)
-          const tileMark = icon === undefined ? { initials: channelInitials(channel.name) } : { icon }
-          const fold = foldFor(channel.id)
-          const enabledIds = enabledFor(channel.id, models)
-          const isBusy = busy.has(channel.id)
-          const unit = creditUnitLabel(channel, t)
-          const total = channel.credits === undefined ? undefined : balancesTotal(balances)
-          const modelsEnabled = models.filter(model => enabledIds.has(model.id)).length
-          const statusOf = (accountId: string): ChannelCreditStatus | undefined =>
-            statuses.find(row => row.accountId === accountId)
-          // Whether every enabled account on this channel has already claimed
-          // its daily credit. An unknown status is treated as "not yet" so the
-          // button stays in the claimable state until the first refresh lands;
-          // a zero-account channel never reads as "all claimed", because there
-          // is nothing to have claimed.
-          const enabledAccounts = accounts.filter(account => account.enabled !== false)
-          const allClaimedToday = enabledAccounts.length > 0
-            && enabledAccounts.every(account => statusOf(account.id)?.todayCheckedIn === true)
-          const balanceOf = (accountId: string): ChannelBalance | undefined =>
-            balances.find(row => row.accountId === accountId)
-          const query = queryFor(channel.id)
-          const visibleModels = modelsMatching(entry, query)
-          return (
-            <article
-              key={channel.id}
-              className="card"
-              /**
-               * `ok` / `idle`, matching the WorkBuddy cards.
-               *
-               * The status pill's colours are selected by the ARTICLE's `data-state`, so a card
-               * that said `on` drew a grey pill with a green "connected" label — the same
-               * component in two different states depending on which list rendered it.
-               */
-              data-state={accounts.length > 0 ? 'ok' : 'idle'}
-              style={{ '--dsm-xdpool-cpool-accent': channel.accent } as Record<string, string>}
-            >
-              {/*
-                The header and the stat row are the SAME markup the WorkBuddy cards use.
-                Two card designs for one job was the reason a channel's layout depended on
-                which list it happened to be in, and the reason the model picker carried a
-                duplicate group: two renderers owned one account pool.
-              */}
-
-              {/* 账号区块标题 —— 设计稿的 .sec-head：标题 + 数量 */}
-              <div className="sec-head">
-                <span className="sec-title">{t?.('channelpool.accountsTitle') ?? '账号'}</span>
-                <span className="sec-n num">{String(accounts.length)}</span>
-              </div>
-              <div className="sec-actions">
-                {/* Only rendered when the pack really has a claim path for this
-                    vendor. Drawing it for the others would put a button on the
-                    card that answers `unsupported provider` every time it is
-                    pressed, which reads as a broken feature, not a missing one.
-                    The claim button leads and is the only solid one on the row:
-                    it is the single action here that pays the reader back, so it
-                    should not have to compete with "reload the number". */}
-                {/*
-                  Re-read the catalogue. Each adapter caches its model list for the life of the
-                  process, so a renamed model — and the multiplier is part of the NAME — only
-                  reached the card after a restart until this existed.
-                */}
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={catalogBusy.has(channel.id)}
-                  onClick={() => { void refreshChannelModels(channel.id) }}
-                  title={t?.('channelpool.reloadModelsHint')
-                    ?? '从上游重新读取这个渠道的模型列表（含倍率）'}
-                >
-                  {catalogBusy.has(channel.id)
-                    ? (t?.('channelpool.reloadModelsBusy') ?? '正在读取…')
-                    : (t?.('channelpool.reloadModels') ?? '重新加载模型')}
+        {/* ---------- 账号（Marvis：每个账号自己的 token 用量） ---------- */}
+        {isMarvis ? (
+          <section className="sec">
+            <div className="sec-head">
+              <span className="sec-title">账号</span>
+              <span className="sec-n num">{String(accounts.length)}</span>
+              <span className="sec-actions">
+                <button type="button" className="btn" disabled={isBusy}
+                  onClick={() => { void recheck(channel.id) }}>
+                  重新检测账号
                 </button>
-                {/* One-off rewards live behind their own endpoint, so they get
-                    their own button rather than being folded into the daily claim.
-                    Raccoon is the case that made this necessary: its daily points
-                    arrive by themselves, so `credits.claimAll` correctly answers
-                    "not supported", and the login bonus was therefore unreachable
-                    from the card even though the pack has implemented the claim
-                    for it all along. */}
-                {ONBOARDING_CHANNELS.has(channel.id) && (
-                  <button
-                    type="button"
-                    className="btn"
-                    data-tone="primary"
-                    disabled={isBusy}
-                    onClick={() => { void claimOnboarding(channel.id, enabledAccounts) }}
-                    title={t?.('channelpool.onboardingHint')
-                      ?? '一次性奖励（登录奖励 / 新手任务），每号只能领一次'}
-                  >
-                    {isBusy
-                      ? (t?.('channelpool.claiming') ?? 'Claiming…')
-                      : (t?.('channelpool.onboarding') ?? '领取一次性奖励')}
-                  </button>
-                )}
-                {channel.credits?.claim === true && (
-                  <button
-                    type="button"
-                    className="btn"
-                    data-tone={allClaimedToday ? 'claimed' : 'primary'}
-                    disabled={isBusy || allClaimedToday}
-                    onClick={() => { void claim(channel.id) }}
-                  >
-                    {isBusy
-                      ? (t?.('channelpool.claiming') ?? 'Claiming…')
-                      : allClaimedToday
-                        ? (t?.('channelpool.claimClaimed') ?? '今日已领取')
-                        : (t?.('channelpool.claim') ?? 'Claim credits')}
-                  </button>
-                )}
-                {channel.credits !== undefined && (
-                  <button
-                    type="button"
-                    className="btn"
-                    data-tone="quiet"
-                    disabled={isBusy}
-                    onClick={() => { void refreshBalances(channel.id, true) }}
-                  >
-                    {t?.('channelpool.refreshBalance') ?? 'Refresh balances'}
-                  </button>
-                )}
-                {/* The two lists are this card's real navigation, so they are
-                    pushed to the far edge: reading order runs credit → refresh →
-                    accounts → models, and the model list is what most readers
-                    came for in the first place. */}
-                {/*
-                  The same segmented triggers the WorkBuddy cards use: a caret, a word, and
-                  the count as its own small chip. The previous `账号 (2)` / `模型 (3/13)` text
-                  read as a caption rather than as a control, and it sat at the far edge where
-                  the other cards put nothing.
-                */}
+                <button type="button" className="btn" disabled={isBusy}
+                  onClick={() => { void refreshMarvis() }}>
+                  {isBusy ? '刷新中…' : '刷新用量'}
+                </button>
+              </span>
+            </div>
+            {accounts.length === 0 ? (
+              <p className="hint">这个渠道还没有登录的账号。</p>
+            ) : (
+              <div className="accts">
+                {accounts.map((account, index) => {
+                  const quota = quotaOf(account.id)
+                  const shown = accountDisplay(account, channel.name, index)
+                  const name = shown.name
+                  /* 总量：后端读到就用后端的；没读到按每天 1,000 万，用量条照样画出刻度 */
+                  const total = quota !== undefined && quota.error === undefined && quota.total > 0 ? quota.total : MARVIS_DAILY_TOKENS
+                  const usedPct = total > 0 && quota !== undefined
+                    ? Math.max(0, Math.min(100, Math.round(quota.used / total * 100)))
+                    : 0
+                  /* 剩不到一成就换警示色：今天快用完了 */
+                  const low = quota !== undefined && quota.error === undefined && total > 0
+                    && quota.available / total < 0.1
+                  return (
+                    <article key={account.id} className="acct">
+                      <div className="acct-head">
+                        <span className="acct-dot" aria-hidden="true"
+                          style={quota?.error === undefined ? undefined : { background: 'var(--warn)' }} />
+                        <span className="acct-name" title={shown.full}>{name}</span>
+                        {shown.tail === undefined ? null : (
+                          <span className="num" style={{ fontSize: 'var(--fs-xs)', color: 'var(--faint)', flex: '0 0 auto' }}>
+                            {`…${shown.tail}`}
+                          </span>
+                        )}
+                        <span className="login-kind">Marvis 令牌</span>
+                      </div>
+                      <div className="quota">
+                        <div className="quota-bar" data-low={low ? 'true' : undefined}>
+                          <span style={{ width: `${String(Math.max(usedPct, 1))}%` }} />
+                        </div>
+                        <div className="quota-text">
+                          {quota?.error !== undefined ? (
+                            <span className="acct-k" data-tone="err" title={quota.error}
+                              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+                              {quota.error}
+                            </span>
+                          ) : (
+                            <>
+                              <span className="quota-used" style={{ color: 'var(--text)', fontWeight: 600 }}>
+                                {quota === undefined ? (marvisPending ? '…' : '—') : wanDigits(quota.used)}
+                              </span>
+                              <span className="quota-total">{`/ ${wanDigits(total)} 万 token`}</span>
+                            </>
+                          )}
+                          <span className="quota-reset" title={marvisResetTitle(quota?.resetAt)}>
+                            {marvisResetText(quota?.resetAt)}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="acct-more">
+                        <button type="button" className="tiny" disabled={isBusy}
+                          onClick={() => { void accountAction(channel.id, account.id, 'refresh') }}>
+                          刷新用量
+                        </button>
+                        <button type="button" className="tiny" disabled={isBusy}
+                          style={{ color: 'var(--danger)' }}
+                          onClick={() => { void accountAction(channel.id, account.id, 'delete') }}>
+                          删除
+                        </button>
+                      </div>
+                    </article>
+                  )
+                })}
               </div>
-              {entry.balanceError !== undefined && (
-                <p className="hint" role="status">
-                  {entry.balanceError}
-                </p>
+            )}
+          </section>
+        ) : (
+        <section className="sec">
+          <div className="sec-head">
+            <span className="sec-title">{t?.('channelpool.accountsTitle') ?? '账号'}</span>
+            <span className="sec-n num">{String(accounts.length)}</span>
+            <span className="sec-actions">
+              <button type="button" className="btn" disabled={isBusy}
+                onClick={() => { void recheck(channel.id) }}>
+                重新检测账号
+              </button>
+              {/* 一次性奖励（Raccoon 登录奖励 / Loomy 新手任务）有自己的端点，不并进每日签到 */}
+              {ONBOARDING_CHANNELS.has(channel.id) && (
+                <button type="button" className="btn" disabled={isBusy}
+                  title={t?.('channelpool.onboardingHint') ?? '一次性奖励（登录奖励 / 新手任务），每号只能领一次'}
+                  onClick={() => { void claimOnboarding(channel.id, enabledAccounts) }}>
+                  {t?.('channelpool.onboarding') ?? '领取一次性奖励'}
+                </button>
               )}
-              {true && (
-                <div className="accts">
-                  {accounts.map(account => {
-                    const balance = balanceOf(account.id)
-                    const amount1 = balance === undefined ? undefined : balanceAmount(balance.balance)
-                    const checkin = statusOf(account.id)
-                    const buckets = balance === undefined ? [] : balancePackages(balance.balance)
-                    const disabled = account.enabled === false
-                    return (
-                      /*
-                        账号卡 —— 设计稿的 .acct。
-
-                        之前这里是一个 <li class="ch"> 加几段纯文本：
-                        名字、状态、余额挤在一行里。设计稿画的是卡片：
-                        在线点 + 名字 + 开关 / 大字余额 + 单位 + 重置时间 /
-                        进度条 / 可展开的明细。
-
-                        账号是整个账号池里读者最常看的东西（「我哪个号还有钱」），
-                        做成一行文本要逐行读；做成卡片一眼扫过去。
-                      */
-                      <article key={account.id} className="acct" data-off={disabled}>
-                        <div className="acct-head">
-                          <span className="acct-dot" data-on={checkin?.todayCheckedIn === true ? 'true' : 'false'} aria-hidden="true" />
-                          <span className="acct-name">{accountLabel(account)}</span>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={!disabled}
-                            aria-label={accountLabel(account)}
-                            className={`sw${disabled ? '' : ' is-on'}`}
-                            disabled={isBusy}
-                            onClick={() => { void accountAction(channel.id, account.id, 'toggle') }}
-                          />
-                        </div>
-                        <div className="acct-total">
-                          {balance?.error !== undefined
-                            ? <span className="acct-total-v" data-tone="err">{balance.error}</span>
-                            : amount1 !== undefined
-                              ? <>
-                                  <span className="acct-total-v num">{amount(amount1)}</span>
-                                  <span className="acct-total-u">{unit}</span>
-                                </>
-                              : <span className="acct-total-v">—</span>}
-                          {expiryText(account.expiresAt, t) === undefined ? null
-                            : <span className="acct-soon">{expiryText(account.expiresAt, t)}</span>}
-                        </div>
-                        {buckets.length > 0 && (
-                          <div className="acct-bar" title={buckets.map(b => `${b.name} ${String(Math.round(b.remaining ?? 0))}%`).join(' · ')}>
-                            <span style={{ width: `${String(Math.max(0, Math.min(100, Math.round(buckets[0]?.remaining ?? 0))))}%` }} />
+              {canClaim && (
+                <button type="button" className="btn" disabled={isBusy || allClaimedToday}
+                  onClick={() => { void claimAllFor(channel.id) }}>
+                  {isBusy
+                    ? (t?.('channelpool.claiming') ?? '领取中…')
+                    : allClaimedToday
+                      ? (t?.('channelpool.claimClaimed') ?? '今日已领取')
+                      : '全部领取'}
+                </button>
+              )}
+            </span>
+          </div>
+          {chosenEntry.balanceError === undefined ? null : (
+            <p className="hint" role="status">{chosenEntry.balanceError}</p>
+          )}
+          {accounts.length === 0 ? (
+            <p className="hint">
+              {t?.('channelpool.accountsEmpty') ?? '这个渠道还没有登录的账号。'}
+            </p>
+          ) : (
+            <div className="accts">
+              {accounts.map((account, index) => {
+                const shown = accountDisplay(account, channel.name, index)
+                const balance = balanceOf(account.id)
+                const value = balance === undefined ? undefined : balanceAmount(balance.balance)
+                const checkin = statusOf(account.id)
+                const buckets = balance === undefined ? [] : balancePackages(balance.balance)
+                const disabled = account.enabled === false
+                const soon = expiryText(account.expiresAt, t)
+                /* 进度条：有分包就用第一包的剩余百分比；没有就不画（不编一个数） */
+                const pct = buckets[0]?.remaining
+                return (
+                  <article key={account.id} className="acct" data-off={disabled}>
+                    <div className="acct-head">
+                      <span className="acct-dot" aria-hidden="true"
+                        style={disabled ? { background: 'var(--line-3)' } : undefined} />
+                      <span className="acct-name" title={shown.full}>{shown.name}</span>
+                      {shown.tail === undefined ? null : (
+                        <span className="num" style={{ fontSize: 'var(--fs-xs)', color: 'var(--faint)', flex: '0 0 auto' }}>
+                          {`…${shown.tail}`}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        role="switch"
+                        className="sw"
+                        aria-checked={!disabled}
+                        aria-label={shown.name}
+                        disabled={isBusy}
+                        onClick={() => { void accountAction(channel.id, account.id, 'toggle') }}
+                      />
+                    </div>
+                    <div className="acct-total" style={balance?.error !== undefined ? { flexWrap: 'wrap', alignItems: 'flex-start' } : undefined}>
+                      {balance?.error !== undefined
+                        ? <span className="acct-k" data-tone="err" title={balance.error}
+                            style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                              overflow: 'hidden', color: 'var(--warn)', lineHeight: 1.5, minWidth: 0, flex: '1 1 auto' }}>
+                            {balanceErrorText(balance.error)}
+                          </span>
+                        : value !== undefined
+                          ? <>
+                              <span className="acct-total-v num">{amount(value)}</span>
+                              <span className="acct-total-u">{unit}</span>
+                            </>
+                          : <span className="acct-total-v">{chosenEntry.balancePending ? '…' : '—'}</span>}
+                      {soon === undefined ? null : <span className="acct-soon">{soon}</span>}
+                    </div>
+                    {pct === undefined ? null : (
+                      <div className="acct-bar" title={buckets.map(b => `${b.name} ${String(Math.round(b.remaining ?? 0))}%`).join(' · ')}>
+                        <span style={{ width: `${String(Math.max(0, Math.min(100, Math.round(pct))))}%` }} />
+                      </div>
+                    )}
+                    <details className="acct-detail">
+                      <summary>{t?.('channelpool.accountDetail') ?? '积分明细'}</summary>
+                      <dl className="facts">
+                        {buckets.map((b, i) => (
+                          <div className="fact" key={`${b.name}-${String(i)}`}>
+                            <dt>{b.name}</dt>
+                            {/* 设计稿写的是「398 / 500」—— 剩余 / 总量 */}
+                            <dd>
+                              {typeof b.total === 'number'
+                                ? <>
+                                    {typeof b.remaining === 'number'
+                                      ? amount(Math.round(b.total * b.remaining / 100))
+                                      : (typeof b.amount === 'number' ? amount(b.amount) : '—')}
+                                    {' / '}
+                                    {amount(b.total)}
+                                  </>
+                                : typeof b.remaining === 'number'
+                                  ? `剩余 ${String(Math.round(b.remaining))}%`
+                                  : '—'}
+                            </dd>
+                          </div>
+                        ))}
+                        {channel.credits?.status !== true && checkin === undefined ? null : (
+                          <div className="fact">
+                            <dt>{t?.('channelpool.todayClaimed') ?? '今日签到'}</dt>
+                            {checkin?.todayCheckedIn === true
+                              ? <dd style={{ color: 'var(--accent)' }}>
+                                  已领{typeof checkin.todayCredit === 'number' ? ` +${amount(checkin.todayCredit)}` : ''}
+                                </dd>
+                              : <dd>{t?.('channelpool.notClaimed') ?? '未领'}</dd>}
                           </div>
                         )}
-                        <details className="acct-detail">
-                          <summary>{t?.('channelpool.accountDetail') ?? '积分明细'}</summary>
-                          <dl className="facts">
-                            {checkin?.todayCheckedIn === true && (
-                              <div className="fact">
-                                <dt>{t?.('channelpool.todayClaimed') ?? '今日签到'}</dt>
-                                <dd style={{ color: 'var(--accent)' }}>
-                                  {t?.('channelpool.claim') ?? '已领'}
-                                  {typeof checkin.todayCredit === 'number' ? ` +${amount(checkin.todayCredit)}` : ''}
-                                </dd>
-                              </div>
-                            )}
-                            {buckets.map((b, i) => (
-                              <div className="fact" key={`${b.name}-${String(i)}`}>
-                                <dt>{b.name}</dt>
-                                {/*
-                                  设计稿写的是「398 / 500」—— 已用 / 总量。
-                                  原来显示「92% / 500」，把百分比和总量混在一起，
-                                  读者算不出还剩多少。
-                                */}
-                                <dd>
-                                  {typeof b.total === 'number'
-                                    ? <>
-                                        {typeof b.remaining === 'number'
-                                          ? amount(Math.round(b.total * (100 - b.remaining) / 100))
-                                          : (typeof b.amount === 'number' ? amount(b.amount) : '—')}
-                                        {' / '}
-                                        {amount(b.total)}
-                                      </>
-                                    : typeof b.remaining === 'number'
-                                      ? `${String(Math.round(b.remaining))}% 剩余`
-                                      : '—'}
-                                </dd>
-                              </div>
-                            ))}
-                            <div className="fact">
-                              <dt>{t?.('channelpool.accountState') ?? '状态'}</dt>
-                              <dd>{disabled ? (t?.('channelpool.disableAccount') ?? 'disabled') : (t?.('channelpool.enableAccount') ?? 'enabled')}</dd>
-                            </div>
-                          </dl>
-                          {/*
-                            单行动作 —— 设计稿把它们放在「积分明细」展开之后，
-                            而不是摊在卡片上。一张卡上五个按钮会把「我这个号还有多少钱」
-                            这个主要问题淹没掉。
-                          */}
-                          <div className="acct-actions">
-                            {channel.id === 'doubao' && (
-                              <button
-                                type="button"
-                                className="tiny"
-                                disabled={isBusy}
-                                onClick={() => { void accountAction(channel.id, account.id, 'claim') }}
-                              >
-                                {t?.('channelpool.claimCredits') ?? '领取积分'}
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="tiny"
-                              disabled={isBusy}
-                              onClick={() => { void accountAction(channel.id, account.id, 'test') }}
-                            >
-                              {t?.('channelpool.testAccount') ?? '测试'}
-                            </button>
-                            <button
-                              type="button"
-                              className="tiny"
-                              disabled={isBusy || account.preferred === true}
-                              title={t?.('channelpool.preferHint') ?? '优先用这个账号接下一次请求'}
-                              onClick={() => { void preferAccount(channel.id, account.id) }}
-                            >
-                              {account.preferred === true
-                                ? (t?.('channelpool.preferred') ?? '首选')
-                                : (t?.('channelpool.prefer') ?? '设为首选')}
-                            </button>
-                            <button
-                              type="button"
-                              className="tiny"
-                              disabled={isBusy}
-                              onClick={() => { void accountAction(channel.id, account.id, 'refresh') }}
-                            >
-                              {t?.('channelpool.refreshAccount') ?? '刷新凭据'}
-                            </button>
-                            <button
-                              type="button"
-                              className="tiny"
-                              disabled={isBusy}
-                              onClick={() => { void accountAction(channel.id, account.id, 'toggle') }}
-                            >
-                              {disabled
-                                ? (t?.('channelpool.enableAccount') ?? '启用')
-                                : (t?.('channelpool.disableAccount') ?? '停用')}
-                            </button>
-                            <button
-                              type="button"
-                              className="tiny"
-                              data-tone="danger"
-                              disabled={isBusy}
-                              onClick={() => { void accountAction(channel.id, account.id, 'delete') }}
-                            >
-                              {t?.('channelpool.deleteAccount') ?? '删除'}
-                            </button>
-                          </div>
-                        </details>
-                      </article>
-                    )
-                  })}
-                </div>
+                      </dl>
+                      {/* 单号操作放在「积分明细」展开之后，不摊在卡面上 */}
+                      <div className="acct-more">
+                        {channel.id === 'doubao' && (
+                          <button type="button" className="tiny" disabled={isBusy}
+                            onClick={() => { void accountAction(channel.id, account.id, 'claim') }}>
+                            {t?.('channelpool.claimCredits') ?? '领取积分'}
+                          </button>
+                        )}
+                        <button type="button" className="tiny" disabled={isBusy}
+                          onClick={() => { void accountAction(channel.id, account.id, 'test') }}>
+                          {t?.('channelpool.testAccount') ?? '测试'}
+                        </button>
+                        <button type="button" className="tiny"
+                          disabled={isBusy || account.preferred === true}
+                          title={t?.('channelpool.preferHint') ?? '优先用这个账号接下一次请求'}
+                          onClick={() => { void preferAccount(channel.id, account.id) }}>
+                          {account.preferred === true
+                            ? (t?.('channelpool.preferred') ?? '首选')
+                            : (t?.('channelpool.prefer') ?? '设为首选')}
+                        </button>
+                        <button type="button" className="tiny" disabled={isBusy}
+                          onClick={() => { void accountAction(channel.id, account.id, 'refresh') }}>
+                          {t?.('channelpool.refreshAccount') ?? '刷新凭据'}
+                        </button>
+                        <button type="button" className="tiny" disabled={isBusy}
+                          style={{ color: 'var(--danger)' }}
+                          onClick={() => { void accountAction(channel.id, account.id, 'delete') }}>
+                          {t?.('channelpool.deleteAccount') ?? '删除'}
+                        </button>
+                      </div>
+                    </details>
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </section>
+        )}
+
+        {/* ---------- 模型 ---------- */}
+        <section className="sec">
+          <div className="sec-head">
+            <span className="sec-title">{t?.('channelpool.modelsTitle') ?? '模型'}</span>
+            <span className="sec-n num">{`${String(modelsEnabled)}/${String(models.length)}`}</span>
+            <span className="sec-actions">
+              <button type="button" className="btn"
+                disabled={catalogBusy.has(channel.id)}
+                title={t?.('channelpool.reloadModelsHint') ?? '从上游重新读取这个渠道的模型列表（含倍率）'}
+                onClick={() => { void refreshChannelModels(channel.id) }}>
+                {catalogBusy.has(channel.id)
+                  ? (t?.('channelpool.reloadModelsBusy') ?? '正在读取…')
+                  : '重新获取模型'}
+              </button>
+              {!isMarvis && models.length < MODEL_SEARCH_THRESHOLD ? null : (
+                <input
+                  type="search"
+                  className="search"
+                  value={query}
+                  placeholder={t?.('channelpool.searchModels') ?? '搜索模型'}
+                  aria-label={t?.('channelpool.searchModels') ?? '搜索模型'}
+                  onChange={event => { setQuery(channel.id, event.target.value) }}
+                />
               )}
-              {/*
-                模型区块 —— 设计稿的 section.sec：标题「模型 4/21」+ 动作，下面才是列表。
-                原来是 .models + .model-top，没有区块标题层级。
-              */}
-              {true && (
-                <section className="sec">
-                  <div className="sec-head">
-                    <span className="sec-title">{t?.('row.modelsTitle') ?? '模型'}</span>
-                    <span className="sec-n num">
-                      {`${String(modelsEnabled)}/${String(models.length)}`}
-                    </span>
-                    <div className="sec-actions">
-                      <button
-                        type="button"
-                        className="tiny"
-                        disabled={isBusy || models.length === 0}
-                        onClick={() => { void setAllModels(channel.id, true) }}
-                      >
-                        {t?.('channelpool.allModels') ?? 'Enable all'}
-                      </button>
-                      <button
-                        type="button"
-                        className="tiny"
-                        disabled={isBusy || models.length === 0}
-                        onClick={() => { void setAllModels(channel.id, false) }}
-                      >
-                        {t?.('channelpool.noModelsAll') ?? 'Disable all'}
-                      </button>
+              {/* Marvis 的模型由插件适配器直接发布，没有黑名单可写，「全开 / 全关」画了也不生效 */}
+              {isMarvis ? null : (
+              <>
+              <button type="button" className="btn" disabled={isBusy || models.length === 0}
+                onClick={() => { void setAllModels(channel.id, true) }}>
+                {t?.('channelpool.allOn') ?? '全开'}
+              </button>
+              <button type="button" className="btn" disabled={isBusy || models.length === 0}
+                onClick={() => { void setAllModels(channel.id, false) }}>
+                {t?.('channelpool.allOff') ?? '全关'}
+              </button>
+              </>
+              )}
+            </span>
+          </div>
+          {models.length === 0 ? (
+            <p className="hint">
+              {chosenEntry.modelError === undefined
+                ? (t?.('channelpool.noModels') ?? '这个渠道还没有公布模型。')
+                // A refusal and an empty catalogue look identical on the wire,
+                // but only one of them is a bug the user can act on.
+                : (t?.('channelpool.modelError', { message: chosenEntry.modelError })
+                  ?? `Could not list models: ${chosenEntry.modelError}`)}
+            </p>
+          ) : visibleModels.length === 0 ? (
+            <p className="hint">
+              {t?.('channelpool.searchNone', { query: query.trim() }) ?? `没有匹配「${query.trim()}」的模型。`}
+            </p>
+          ) : (
+            <div className="models">
+              {visibleModels.map(model => {
+                const fact = facts.get(model.id)
+                const on = enabledIds.has(model.id)
+                const modalities = model.inputModalities ?? fact?.inputModalities
+                const vision = modalities?.includes('image') === true || modalities?.includes('images') === true
+                const mult = multiplierOf(model.name)
+                const free = model.isFree === true || (mult !== undefined && multiplierTone(mult) === 'free')
+                const description = model.description ?? fact?.description
+                /*
+                  上下文窗口选择：设计稿是每行右侧一个小下拉。
+                  只有原生窗口比默认上限大时才有得选（原生 / 默认上限）；
+                  否则就是一个只读的窗口大小。
+                */
+                const native = model.nativeContextWindow ?? model.contextWindow ?? fact?.contextWindow
+                const capped = native !== undefined && native > CONTEXT_BUDGET_DEFAULT
+                const budget = model.contextBudget ?? native
+                return (
+                  <div key={model.id} className="model" data-off={on ? undefined : 'true'}>
+                    <button
+                      type="button"
+                      role="switch"
+                      className="sw"
+                      aria-checked={isMarvis ? true : on}
+                      aria-label={baseName(model.name ?? model.id)}
+                      title={isMarvis ? 'Marvis 的模型都由服务端提供，不能单独关闭' : undefined}
+                      disabled={isBusy || isMarvis}
+                      onClick={() => { if (!isMarvis) void toggleModel(channel.id, model.id, !on) }}
+                    />
+                    <div className="model-main">
+                      <div className="model-top">
+                        <span className="model-name"
+                          title={description === undefined || description === '' ? model.id : `${model.id}\n${description}`}>
+                          {baseName(model.name ?? model.id)}
+                        </span>
+                        {free ? <span className="badge" data-kind="free">{t?.('channelpool.badgeFree') ?? '免费'}</span> : null}
+                        {vision ? <span className="badge" data-kind="vision">{t?.('channelpool.badgeVision') ?? '图像'}</span> : null}
+                        {model.dead === true ? <span className="badge">{t?.('channelpool.modelDead') ?? '不可用'}</span> : null}
+                      </div>
+                      {mult === undefined || /免费/u.test(mult) ? null : (
+                        <div className="model-sub">
+                          <span className="model-mult num" data-free={free ? 'true' : undefined}>
+                            {mult.replace(/x\s*/giu, '×')}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="model-side">
+                      {native === undefined ? null : capped ? (
+                        <select
+                          className="ctx-select"
+                          aria-label={`${baseName(model.name ?? model.id)} ${t?.('channelpool.modelBudget') ?? '上下文大小'}`}
+                          value={String(budget === CONTEXT_BUDGET_DEFAULT ? CONTEXT_BUDGET_DEFAULT : native)}
+                          disabled={isBusy || !on}
+                          onChange={event => {
+                            const next = Number(event.target.value)
+                            void setContextBudget(channel.id, model.id, next === native ? undefined : CONTEXT_BUDGET_DEFAULT)
+                          }}
+                        >
+                          <option value={String(native)}>{formatModelCapacity(native)}</option>
+                          <option value={String(CONTEXT_BUDGET_DEFAULT)}>{formatModelCapacity(CONTEXT_BUDGET_DEFAULT)}</option>
+                        </select>
+                      ) : (
+                        <span className="model-mult num">{formatModelCapacity(native)}</span>
+                      )}
                     </div>
                   </div>
-                  {/*
-                    A catalogue of thirty rows is a wall of checkboxes with no
-                    way to find the one model the reader wants. The box only
-                    appears once the list is long enough to need it — a search
-                    field over two rows is noise, and it costs a keystroke of
-                    attention on every card.
-                  */}
-                  {models.length >= MODEL_SEARCH_THRESHOLD && (
-                    /* .search 是输入框自己的样式；外面那层不能也叫 .search，否则画两层边框 */
-                    <div className="search-wrap">
-                      <input
-                        type="search"
-                        className="search"
-                        value={query}
-                        placeholder={t?.('channelpool.searchModels') ?? 'Search models'}
-                        aria-label={t?.('channelpool.searchModels') ?? 'Search models'}
-                        onChange={event => { setQuery(channel.id, event.target.value) }}
-                      />
-                      <span className="hint" role="status">
-                        {query === ''
-                          ? (t?.('channelpool.searchHint') ?? 'Matches name, id, description and image input')
-                          : (t?.('channelpool.searchHit', { count: visibleModels.length })
-                            ?? `${visibleModels.length} of ${models.length}`)}
-                      </span>
-                    </div>
-                  )}
-                  {visibleModels.length === 0 && models.length > 0 ? (
-                    <p className="hint">
-                      {t?.('channelpool.searchNone', { query: query.trim() })
-                        ?? `No model matches “${query.trim()}”.`}
-                    </p>
-                  ) : models.length === 0 ? (
-                    <p className="hint">
-                      {entry.modelError === undefined
-                        ? (t?.('channelpool.noModels') ?? 'No models published yet.')
-                        // A refusal and an empty catalogue look identical on the
-                        // wire (no rows), but only one of them is a bug the user
-                        // can act on, so the reason is shown instead of a
-                        // plausible-sounding "nothing published yet".
-                        : (t?.('channelpool.modelError', { message: entry.modelError })
-                          ?? `Could not list models: ${entry.modelError}`)}
-                    </p>
-                  ) : (
-                    <ul className="models">
-                      {visibleModels.map(model => {
-                        const fact = facts.get(model.id)
-                        const on = enabledIds.has(model.id)
-                        /*
-                          Facts come from two places and are merged rather than
-                          chosen between: the pack now answers `model.list` with
-                          the adapter's own `resolveModel` result (window, image
-                          input, output ceiling, reasoning), and the host
-                          catalogue adds a vendor-written description. The pack
-                          wins on every figure because it does not pass through
-                          the host's "hide models without a valid credential"
-                          gate, which is what used to leave eight of nine channels
-                          with no numbers at all; the description is taken from
-                          the host because the pack does not carry one.
-                        */
-                        const modalities = model.inputModalities ?? fact?.inputModalities
-                        const merged = modelFactsFor({
-                          contextWindow: model.contextWindow ?? fact?.contextWindow,
-                          maxOutputTokens: model.maxTokens ?? fact?.maxTokens,
-                          vision: modalities?.includes('image') === true
-                            || modalities?.includes('images') === true,
-                          supportedEfforts: model.reasoning === true ? ['thinking'] : undefined,
-                          description: model.description ?? fact?.description,
-                        })
-                        // A recommended-use line, when the merged facts prove
-                        // enough to base one on. Free and metered models alike
-                        // get it; the helper returns undefined (nothing printed)
-                        // when the upstream published no context window, image
-                        // input or thinking levels to reason from.
-                        const recuse = recommendUse(merged)
-                        /*
-                          The native window is only ever different from the
-                          advertised one when the user already capped this
-                          model, and the picker needs both to render "full" next
-                          to "cap it".
-                        */
-                        const native = model.nativeContextWindow ?? model.contextWindow
-                        const capped = native !== undefined && native > CONTEXT_BUDGET_DEFAULT
-                        /*
-                          The APPLIED budget, not the default one.
+                )
+              })}
+            </div>
+          )}
+          {/*
+            `closed` is the pack's own word for "this channel has models but
+            every one of them is in the blacklist".
+          */}
+          {status?.closed === true && (
+            <p className="note">
+              {t?.('channelpool.everyModelOff', { total: status.modelsTotal })
+                ?? `All ${status.modelsTotal} models are switched off.`}
+            </p>
+          )}
+          {isMarvis ? null : (
+            <div className="hint"><b>提示</b><span>只勾选要用的模型即可。倍率是相对积分消耗，越小越省。</span></div>
+          )}
+        </section>
 
-                          This used to fall back to CONTEXT_BUDGET_DEFAULT
-                          whenever the model was merely *eligible* to be capped,
-                          which made the radio claim a cap that had never been
-                          saved — and worse, made the pair unclickable in one
-                          direction: choosing "full" clears the stored budget,
-                          after which the fallback computed the capped value
-                          again and the selection snapped straight back to the
-                          first radio. No stored budget means the native window
-                          is what actually applies, so that is what to show.
-                        */
-                        const budget = model.contextBudget ?? native
-                        return (
-                          <li key={model.id} className="model" data-off={!on}>
-                            <label className="sw">
-                              <input
-                                type="checkbox"
-                                checked={on}
-                                disabled={isBusy}
-                                onChange={() => { void toggleModel(channel.id, model.id, !on) }}
-                              />
-                              <span className="model-name" title={model.id}>
-                                {baseName(model.name ?? model.id)}
-                              </span>
-                              {/*
-                                The multiplier as its own badge.
-
-                                Every vendor here writes the price INTO the model name —
-                                `DeepSeek-V4.1-Flash · x0.11`, `Hy3 · x0.00`, `Qwen3.8-Flash ·
-                                免费` — so a reader comparing two channels had to read a sentence
-                                to find the number that decides which one they can afford. Split
-                                out, the price is the thing the eye lands on.
-                              */}
-                              {multiplierOf(model.name) === undefined ? null : (
-                                <span
-                                  className="lane"
-                                  data-tone={multiplierTone(multiplierOf(model.name) ?? '')}
-                                >
-                                  {multiplierOf(model.name)}
-                                </span>
-                              )}
-                              {model.isFree === true && (
-                                <span className="lane" data-tone="free">
-                                  {t?.('channelpool.modelFree') ?? 'free'}
-                                </span>
-                              )}
-                              {model.dead === true && (
-                                <span className="lane" data-tone="dead">
-                                  {t?.('channelpool.modelDead') ?? 'dead'}
-                                </span>
-                              )}
-                            </label>
-                            {/*
-                              ModelFactsRow prints the context window, the output
-                              ceiling, the image-input flag and the description,
-                              and returns null when the vendor published none —
-                              so a thin row stays thin instead of growing dashes.
-                            */}
-                            <ModelFactsRow facts={merged} className="facts" t={t} />
-                            {recuse === undefined ? null : (
-                              <p className="hint">
-                                <span className="hint">{t?.('recuse.label') ?? '推荐用途'}</span>
-                                {recuse}
-                              </p>
-                            )}
-                            {capped && (
-                              <fieldset
-                                className="badge"
-                                aria-label={t?.('channelpool.modelBudget') ?? 'Context window'}
-                              >
-                                <label>
-                                  <input
-                                    type="radio"
-                                    name={`cpool-budget-${channel.id}-${model.id}`}
-                                    checked={budget === CONTEXT_BUDGET_DEFAULT}
-                                    disabled={isBusy}
-                                    onChange={() => {
-                                      void setContextBudget(channel.id, model.id, CONTEXT_BUDGET_DEFAULT)
-                                    }}
-                                  />
-                                  <span>{formatModelCapacity(CONTEXT_BUDGET_DEFAULT)}</span>
-                                </label>
-                                <label>
-                                  <input
-                                    type="radio"
-                                    name={`cpool-budget-${channel.id}-${model.id}`}
-                                    checked={budget === native}
-                                    disabled={isBusy}
-                                    onChange={() => { void setContextBudget(channel.id, model.id, undefined) }}
-                                  />
-                                  <span>{formatModelCapacity(native)}</span>
-                                </label>
-                              </fieldset>
-                            )}
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  )}
-                </section>
-              )}
-              {/*
-                `closed` is the pack's own word for "this channel has models but
-                every one of them is in the blacklist" — its status row answers
-                a question the per-model list cannot: not "which ones did I pick"
-                but "are any of them available at all".
-              */}
-              {status?.closed === true && (
-                <p className="note">
-                  {t?.('channelpool.everyModelOff', { total: status.modelsTotal })
-                    ?? `All ${status.modelsTotal} models are switched off.`}
-                </p>
-              )}
-              {/* Doubao's credits come from campaign tasks, so its automation pane sits at
-                  the bottom of the card — the same place, and the same shape, as WorkBuddy's. */}
-              {channel.id === 'doubao' && <DoubaoAutomationPane t={t} />}
-            </article>
-          )
-        })}
-        <div className="sec-actions">
-          <button
-            type="button"
-            className="btn"
-            onClick={() => { setEnabled(new Map()); void load() }}
-          >
-            {t?.('channelpool.retry') ?? 'Reload'}
-          </button>
-        </div>
-      </div>
+        {/* Doubao's credits come from campaign tasks; its automation pane sits at the bottom. */}
+        {channel.id === 'doubao' && <DoubaoAutomationPane t={t} />}
       </div>
     </main>
     </>
   )
+}
+
+/**
+ * 「47.4万」这种写法：上万就按万显示，单位用小一号的字（设计稿的 .ls-u）。
+ */
+function WanNumber({ value }: { value: number }): ReactElement {
+  if (Math.abs(value) >= 10_000) {
+    const wan = value / 10_000
+    return (
+      <span className="ls-v num">
+        {wan >= 100 ? String(Math.round(wan)) : wan.toFixed(1)}
+        <span className="ls-u">万</span>
+      </span>
+    )
+  }
+  return <span className="ls-v num">{amount(Math.round(value))}</span>
 }

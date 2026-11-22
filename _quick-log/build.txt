@@ -1,0 +1,52 @@
+ℹ tsdown v0.23.0 powered by rolldown v1.2.7
+ℹ config file: D:\dsh-home\_xdpool-src\tsdown.config.ts 
+ℹ entry: src/index.ts
+ℹ target: node22
+ℹ tsconfig: tsconfig.json
+ℹ entry: src/client/index.tsx
+ℹ target: node22.19.0
+ℹ tsconfig: tsconfig.json
+ℹ entry: src/bin.ts
+ℹ target: node22
+ℹ tsconfig: tsconfig.json
+ℹ Build start
+
+ WARN  We recommend using the ESM format instead of CommonJS.
+The ESM format is compatible with modern platforms and runtimes, and most new libraries are now distributed only in ESM format.
+Learn more at https://nodejs.org/en/learn/modules/publishing-a-package#how-did-we-get-here
+
+ℹ Cleaning 5 files
+
+ WARN  TypeScript 7.0 does not yet have a stable API and is experimental. Some options will be unavailable.
+
+ℹ Emit types with typescript@7.0.2
+ℹ [CJS] lib\client.js  1.09 MB
+ℹ [CJS] 1 files, total: 1.09 MB
+ℹ [ESM] lib\bin.js  446.99 kB │ gzip: 120.67 kB
+ℹ [ESM] 1 files, total: 446.99 kB
+✔ Build complete in 1464ms
+src\client\CreditDot.tsx (34:29) [33m[UNRESOLVED_IMPORT] [0mCould not resolve 'react-dom' in src/client/CreditDot.tsx
+    [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m src/client/CreditDot.tsx:34:30 [38;5;246m][0m
+    [38;5;246m│[0m
+ [38;5;246m34 │[0m [38;5;249mi[0m[38;5;249mm[0m[38;5;249mp[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mt[0m[38;5;249m [0m[38;5;249m{[0m[38;5;249m [0m[38;5;249mc[0m[38;5;249mr[0m[38;5;249me[0m[38;5;249ma[0m[38;5;249mt[0m[38;5;249me[0m[38;5;249mP[0m[38;5;249mo[0m[38;5;249mr[0m[38;5;249mt[0m[38;5;249ma[0m[38;5;249ml[0m[38;5;249m [0m[38;5;249m}[0m[38;5;249m [0m[38;5;249mf[0m[38;5;249mr[0m[38;5;249mo[0m[38;5;249mm[0m[38;5;249m [0m'react-dom'
+ [38;5;240m   │[0m                              ─────┬─────  
+ [38;5;240m   │[0m                                   ╰─────── Module not found, treating it as an external dependency
+[38;5;246m────╯[0m
+
+✔ Build complete in 1549ms
+ℹ [ESM] lib\index.js      1.36 MB
+ℹ [ESM] lib\index.d.ts  215.11 kB │ gzip: 70.01 kB
+ℹ [ESM] 2 files, total: 1.58 MB
+[33m[PLUGIN_TIMINGS] [0mPlugin hooks ran for 5.2s of this 5.4s build (98%).
+The slowest hooks, timed inside each callback (the wait before a callback starts is excluded, the time it awaits is included):
+  - rolldown-plugin-dts:generate buildStart (91%, 4.9s, 1 call)
+Additional hook time came from the hooks below and from hooks under 1s.
+4 hooks are listed without a time. Their calls overlapped, so the time inside one call includes work from other calls. To find their cost, profile the build with `node --cpu-prof`:
+  - tsdown:deps resolveId (286 calls)
+  - rolldown-plugin-dts:resolver resolveId (160 calls)
+  - rolldown-plugin-dts:generate load (24 calls)
+  … and 1 more
+See https://rolldown.rs/reference/InputOptions.checks#plugintimings for more details.
+
+✔ Build complete in 5849ms
+exit=0

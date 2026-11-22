@@ -487,6 +487,8 @@ export async function relayDocumentOf(input: {
   status: () => Promise<PoolRelayStatus>
   shared: () => readonly string[] | undefined
   roster: () => Promise<readonly GatewayModelEntry[]>
+  /** 模型共享方式；不传就不在文档里写这个字段（旧调用方不受影响）。 */
+  mode?: () => 'pool' | 'custom' | undefined
   warn?: (error: unknown) => void
 }): Promise<PoolWebRelayStatus> {
   const status = await input.status()
@@ -501,9 +503,11 @@ export async function relayDocumentOf(input: {
     candidates = []
   }
   const shared = input.shared()
+  const mode = input.mode?.()
   return {
     ...status,
     candidates,
     ...(shared === undefined ? {} : { shared }),
+    ...(mode === undefined ? {} : { modelsMode: mode }),
   }
 }

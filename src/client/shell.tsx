@@ -31,11 +31,13 @@
  * @module dsh-xdpool/client/shell
  */
 import { POOL_NAV_ICON_MASK_URL } from './nav-icon.ts'
-import { UpdatePanel } from './UpdatePanel.tsx'
+import { UpdatePanel, type UpdateStatus } from './UpdatePanel.tsx'
+import { POOL_UPDATE_CHECK_PATH } from '../status-paths.ts'
+import { compareVersions } from '../update-check.ts'
 import type { ReactElement } from 'react'
 import { RAIL_ICONS, type RailIconName } from './rail-icons.ts'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import type { XdPoolSettingsKey } from './locales.ts'
 import { COMMUNITY_QR_QQ, COMMUNITY_QR_WECHAT } from './community-qr.ts'
 /** The translator the settings section injects. */
@@ -117,7 +119,7 @@ function rememberTab(id: string): void {
   }
 }
 /** A single statistic above the usage tables. */
-function RailIcon({ name }: { name: RailIconName }): ReactElement {
+export function RailIcon({ name }: { name: RailIconName }): ReactElement {
   return (
     <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
       strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
@@ -182,6 +184,12 @@ export function PageHero({
  * after that the parent is the only thing allowed to move the selection, so a
  * `storage` event from another window cannot fight a click in this one.
  */
+/** 浮层在 .app 里的位置（相对 .app 左上角）。 */
+interface PopAnchor {
+  left: number
+  top?: number
+  bottom?: number
+}
 export function PoolShell({
   t,
   version,
@@ -195,32 +203,147 @@ export function PoolShell({
   footer,
   children,
 }: PoolShellProps) {
-  /** Measured box of the active tab's button, in tab-strip coordinates. */
-  const [glider, setGlider] = useState<{ left: number; top: number; width: number; height: number } | undefined>(undefined)
-  /** Whether the group-invite dialog is open. Local: nothing outside needs it. */
-  const [groupOpen, setGroupOpen] = useState(false)
   /**
-   * Close the dialog on Escape.
+   * 当前打开的浮层：检查更新 / 交流群，同一时间只开一个。
    *
-   * The overlay's own click handler covers the pointer, but a keyboard user who
-   * opened this with Enter has no other way out — and a modal with no key exit
-   * is a trap. Bound only while open, so the listener is not paid for on every
-   * page of a card that is mostly not showing a dialog.
+   * 两个浮层都用 position:absolute 钉在 .app 里、贴着触发按钮弹出（设计稿
+   * group.html / update.html 的写法是「贴着侧栏弹出，点外面关闭」）。
+   *
+   * 之前的坑：设计稿页面里的 .pop 是 position:relative（那是为了在示例页里居中），
+   * 提取进插件后覆盖了 app.css 的 absolute —— 交流群浮层作为 .app 的直接子元素
+   * 就占了一个网格格子，三列被挤成四块。现在位置写在 inline style 上，任何 CSS 都盖不掉。
+   */
+  const [pop, setPop] = useState<'update' | 'group' | undefined>(undefined)
+  const [popAt, setPopAt] = useState<PopAnchor | undefined>(undefined)
+  /**
+   * 后台悄悄查一次有没有新版（后端缓存 10 分钟，打开设置不会反复请求 npm）。
+   * 有新版就在版本号旁边亮一个绿点 —— 不弹窗、不打断，读者想更新时点一下就能一键更新。
+   */
+  const [latest, setLatest] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    let live = true
+    void (async () => {
+      try {
+        const response = await fetch(POOL_UPDATE_CHECK_PATH, { credentials: 'same-origin' })
+        const body = await response.json().catch(() => undefined) as UpdateStatus | undefined
+        if (live && body?.error === undefined && typeof body?.latest === 'string') setLatest(body.latest)
+      } catch {
+        // 查不到就不亮点；点开小窗会再查一次并说清楚原因
+      }
+    })()
+    return () => { live = false }
+  }, [])
+  const hasUpdate = latest !== undefined && version !== undefined && version !== ''
+    && compareVersions(latest, version) > 0
+  const onUpdateStatus = useCallback((status: UpdateStatus): void => {
+    if (status.error === undefined && typeof status.latest === 'string') setLatest(status.latest)
+  }, [])
+  const appRef = useRef<HTMLDivElement | null>(null)
+  /**
+   * 插件自己的宽度档位（wide / mid / narrow / phone），写到 .app[data-w] 上。
+   *
+   * 按插件宽度而不是屏幕宽度：插件常开在 DSH 的设置对话框里，屏幕 1920 宽、插件只有
+   * 600 像素，按屏幕的 @media 永远不触发，三列硬挤，详情列文字一个字一行。
+   * 规则在 responsive-css.ts。
+   *
+   * 同时把 .app 的高度贴合到可见区域：原来写死 100vh，放进对话框后底部（点 Star /
+   * 交流群）被裁掉，外面还多出一条滚动条。
+   */
+  const [tier, setTier] = useState<'wide' | 'mid' | 'narrow' | 'phone'>('wide')
+  useLayoutEffect(() => {
+    const el = appRef.current
+    if (el === null || typeof window === 'undefined') return undefined
+    const measure = (): void => {
+      const box = el.getBoundingClientRect()
+      const width = box.width
+      if (width <= 0) return
+      setTier(width >= 1100 ? 'wide' : width >= 820 ? 'mid' : width >= 560 ? 'narrow' : 'phone')
+      // 往上找第一个会裁切 / 滚动的祖先，.app 的底边贴到它的可见底边
+      let parent = el.parentElement
+      for (let hops = 0; parent !== null && hops < 12; hops += 1) {
+        const overflow = window.getComputedStyle(parent).overflowY
+        if (overflow === 'auto' || overflow === 'scroll' || overflow === 'hidden') break
+        parent = parent.parentElement
+      }
+      const limit = parent === null
+        ? window.innerHeight
+        : Math.min(window.innerHeight,
+          parent.getBoundingClientRect().bottom - (Number.parseFloat(window.getComputedStyle(parent).paddingBottom) || 0))
+      const height = Math.floor(limit - box.top)
+      const next = height >= 360 ? `${String(height)}px` : ''
+      if (el.style.height !== next) el.style.height = next
+    }
+    measure()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(() => { measure() })
+    observer?.observe(el)
+    if (el.parentElement !== null) observer?.observe(el.parentElement)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [])
+  const popRef = useRef<HTMLDivElement | null>(null)
+  /** 按钮在 .app 坐标系里的位置 → 浮层放哪。 */
+  const anchorFrom = (target: HTMLElement, side: 'below' | 'beside'): PopAnchor => {
+    const box = appRef.current?.getBoundingClientRect()
+    const r = target.getBoundingClientRect()
+    const ox = box?.left ?? 0
+    const oy = box?.top ?? 0
+    const height = box?.height ?? window.innerHeight
+    const width = box?.width ?? window.innerWidth
+    // 小窗最宽 420，左边不许超出插件右边缘
+    const clampLeft = (left: number): number => Math.max(8, Math.min(left, width - 428))
+    // 版本号在下半屏（手机档的底部 dock）时往上弹，否则在它下面
+    if (side === 'below') {
+      return r.top - oy > height / 2
+        ? { left: clampLeft(r.left - ox), bottom: Math.max(8, height - (r.top - oy) + 6) }
+        : { left: clampLeft(r.left - ox), top: r.bottom - oy + 6 }
+    }
+    // 交流群：贴在功能页栏右边、底边对齐；手机档按钮在 dock 里时同样往上弹
+    if (r.right - ox > width - 40) return { left: clampLeft(r.left - ox), bottom: Math.max(8, height - (r.top - oy) + 6) }
+    return { left: clampLeft(r.right - ox + 8), bottom: Math.max(8, height - (r.bottom - oy)) }
+  }
+  const openPop = (which: 'update' | 'group', target: HTMLElement): void => {
+    if (pop === which) { setPop(undefined); return }
+    setPopAt(anchorFrom(target, which === 'update' ? 'below' : 'beside'))
+    setPop(which)
+  }
+  /**
+   * Close the dialog on Escape, or on a press outside it.
+   *
+   * The press must be OUTSIDE: the old listener closed on every mousedown,
+   * so clicking inside the dialog (selecting the invite text, pressing the
+   * update button) dismissed it before the click could land.
    */
   useEffect(() => {
-    if (!groupOpen) return undefined
+    if (pop === undefined) return undefined
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setGroupOpen(false)
+      if (event.key === 'Escape') setPop(undefined)
+    }
+    const onDown = (event: MouseEvent): void => {
+      const target = event.target as Node | null
+      if (target !== null && popRef.current?.contains(target) === true) return
+      // 触发按钮自己会切换开关，这里不抢
+      if (target instanceof Element && target.closest('[data-pop-trigger]') !== null) return
+      setPop(undefined)
     }
     window.addEventListener('keydown', onKey)
-    return () => { window.removeEventListener('keydown', onKey) }
-  }, [groupOpen])
-  useEffect(() => {
-    if (!groupOpen) return undefined
-    const onDown = (event: MouseEvent): void => { setGroupOpen(false) }
     window.addEventListener('mousedown', onDown)
-    return () => { window.removeEventListener('mousedown', onDown) }
-  }, [groupOpen])
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('mousedown', onDown)
+    }
+  }, [pop])
+  const popStyle = (width: number): CSSProperties => ({
+    position: 'absolute',
+    zIndex: 60,
+    width: `min(${String(width)}px, calc(100% - 32px))`,
+    left: popAt?.left ?? 16,
+    ...(popAt?.top === undefined ? {} : { top: popAt.top }),
+    ...(popAt?.bottom === undefined ? {} : { bottom: popAt.bottom }),
+    ...(popAt?.top === undefined && popAt?.bottom === undefined ? { top: 16 } : {}),
+  })
   /** 品牌区，结构照设计稿的 .rail-brand。 */
   const brand = (
     <div className="rail-brand">
@@ -237,16 +360,27 @@ export function PoolShell({
       <span>
         <div className="rail-name">{t?.('shell.brand') ?? 'XD Pool'}</div>
         {version === undefined || version === '' ? null : (
-          <button type="button" className="rail-ver"
-            title={'检查更新'}
-            onClick={() => { setUpdateOpen(true) }}>
+          /* 设计稿：版本号 + 一个刷新小圆圈，点开是「检查更新」小窗 */
+          <button type="button" className="rail-ver" data-pop-trigger="update"
+            title={hasUpdate ? `发现新版本 v${latest ?? ''}，点击更新` : '检查更新'}
+            aria-haspopup="dialog"
+            style={hasUpdate ? { color: 'var(--accent)', position: 'relative' } : { position: 'relative' }}
+            onClick={event => { openPop('update', event.currentTarget) }}>
             v{version}
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <path d="M21 12a9 9 0 11-3-6.7M21 4v5h-5" />
+            </svg>
+            {hasUpdate ? (
+              <span aria-label="有新版本" style={{
+                width: 6, height: 6, borderRadius: '50%', background: 'var(--accent)',
+                boxShadow: '0 0 0 2px var(--bg)', marginLeft: 1,
+              }} />
+            ) : null}
           </button>
         )}
       </span>
     </div>
   )
-  const [updateOpen, setUpdateOpen] = useState(false)
   const railRef = useRef<HTMLElement | null>(null)
   const select = useCallback((id: string): void => {
     rememberTab(id)
@@ -262,17 +396,21 @@ export function PoolShell({
   }, [active, select, tabs])
 
   return (
-    <div className={wide ? 'app app-wide' : 'app'}>
+    <div ref={appRef} className={wide ? 'app app-wide' : 'app'} data-w={tier} style={{ position: 'relative' }}>
       <nav className="rail" aria-label={'Pages'} ref={railRef} onKeyDown={onKeyDown}>
         {brand}
         {tabs.map(tab => (
+          /*
+            选中态：设计稿的 CSS 认的是 aria-current="page"（左侧竖条 + 图标变绿）。
+            之前只写了 aria-selected，于是左栏永远没有选中高亮。
+          */
           <button
             key={tab.id}
             type="button"
-            role="tab"
-            aria-selected={tab.id === active}
             className="rail-item"
-            onClick={() => { onSelect(tab.id) }}
+            title={tab.label}
+            aria-current={tab.id === active ? 'page' : undefined}
+            onClick={() => { select(tab.id) }}
           >
             {RAIL_ICONS[tab.id as RailIconName] === undefined ? null : (
               <RailIcon name={tab.id as RailIconName} />
@@ -286,35 +424,41 @@ export function PoolShell({
             <RailIcon name="star" />
             <span>{t?.('shell.star') ?? '点 Star'}</span>
           </a>
-          <button type="button" className="rail-item"
+          <button type="button" className="rail-item" data-pop-trigger="group"
             title={t?.('shell.groupHint') ?? '扫码加入 XD 交流群'}
-            onClick={() => { setGroupOpen(true) }}>
+            aria-haspopup="dialog"
+            aria-expanded={pop === 'group'}
+            onClick={event => { openPop('group', event.currentTarget) }}>
             <RailIcon name="group" />
             <span>{t?.('shell.group') ?? '交流群'}</span>
           </button>
           {links}
         </div>
-        {updateOpen ? (
-          <div className="pop" role="dialog" aria-label={t?.('update.title') ?? '检查更新'}>
-            <div className="pop-head">
-              <span className="pop-name">{t?.('update.title') ?? '检查更新'}</span>
-              <button type="button" className="pop-close"
-                aria-label={'关闭'}
-                onClick={() => { setUpdateOpen(false) }}>×</button>
-            </div>
-            <UpdatePanel t={t} />
-          </div>
-        ) : null}
       </nav>
 
-      {!groupOpen ? null : (
-        <div className="pop" role="dialog" aria-modal="false"
-          aria-label={t?.('shell.groupTitle') ?? 'XD 交流群'}>
+      {pop !== 'update' ? null : (
+        <div ref={popRef} className="pop" role="dialog" aria-label={t?.('update.title') ?? '检查更新'}
+          style={popStyle(360)}>
+          <div className="pop-head">
+            <span className="pop-name">{t?.('update.title') ?? '检查更新'}</span>
+            <button type="button" className="pop-close"
+              aria-label={t?.('shell.groupClose') ?? '关闭'}
+              onClick={() => { setPop(undefined) }}>×</button>
+          </div>
+          <UpdatePanel t={t} clientVersion={version} onStatus={onUpdateStatus}
+            onClose={() => { setPop(undefined) }} />
+        </div>
+      )}
+
+      {pop !== 'group' ? null : (
+        <div ref={popRef} className="pop" role="dialog" aria-modal="false"
+          aria-label={t?.('shell.groupTitle') ?? 'XD 交流群'}
+          style={popStyle(420)}>
           <div className="pop-head">
             <span className="pop-name">{t?.('shell.groupTitle') ?? 'XD 交流群'}</span>
             <button type="button" className="pop-close"
               aria-label={t?.('shell.groupClose') ?? '关闭'}
-              onClick={() => { setGroupOpen(false) }}>×</button>
+              onClick={() => { setPop(undefined) }}>×</button>
           </div>
           <div className="qr-grid">
             <div className="qr-item">
@@ -339,15 +483,10 @@ export function PoolShell({
       )}
 
       {/*
-        .app 的直接子元素必须正好是 rail / list / main。这一层 display:contents
-        不参与布局，只承载 dsm-xdpool-body 这个测试锚点。
-      */}
-      {/*
-        hero 与 children 都放进这一层。
-
-        它们都是 .app 的网格内容：hero 是页头、children 是 list + main。
-        任何一个留在 .app 的直接子层，就会自己占掉一整列 ——
-        三列网格会因此多出格子，整页塌成一片。
+        .app 的直接子元素必须正好是 rail / list / main（浮层是 absolute，不占格子）。
+        这一层 display:contents 不参与布局，只承载 dsm-xdpool-body 这个测试锚点。
+        hero 与 children 都放进这一层：任何一个留在 .app 的直接子层，
+        就会自己占掉一整列 —— 三列网格会因此多出格子，整页塌成一片。
       */}
       <div className="dsm-xdpool-body" style={{ display: 'contents' }}>
         {hero}

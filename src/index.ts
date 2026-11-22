@@ -274,6 +274,7 @@ import {
   unignoreAccount,
 } from './ignored.ts'
 import { adoptLegacyDataDir, describeProviderIdRename } from './migrate.ts'
+import { runCompatMigrations } from './compat-migrate.ts'
 import { fileURLToPath } from 'node:url'
 /**
  * This plugin's install root, the tree its own provider is assembled from.
@@ -823,6 +824,13 @@ export function apply(ctx: Context, config: Config = {}): void {
   } else if (migration.skipped === 'failed') {
     recordStartupNote(`could not adopt pre-rename state into ${migration.to}; continuing with current data`)
   }
+  // 2.7.x 老数据的兼容迁移（src/compat-migrate.ts）：目前是把豆包的单会话文件落盘成多账号
+  // 格式，旧文件原样保留。异步、尽力而为、永不抛错 —— 读豆包账号的一侧本来就会合并旧文件，
+  // 所以这一步晚几毫秒完成也不会让任何账号「暂时消失」。
+  void runCompatMigrations().then(
+    notes => { for (const note of notes) recordStartupNote(note) },
+    () => { /* runCompatMigrations never rejects; this is belt and braces */ },
+  )
   // The permanent ignore list, read ONCE here (synchronously) and kept live.
   //
   // Loaded at apply time rather than on the first scan because `apply()` is
@@ -1379,7 +1387,14 @@ function canonicalJson(value: unknown): string {
    * `relaySettingsOf` is what preserves that, since the relay's own settings
    * object has no reason to carry a list it never consults.
    */
-  const lanModelsOf = (): readonly string[] | undefined => readAggregateSettingsSync().relay?.models
+  /*
+    「按账号池启用列表」时不限制（返回 undefined = 全放行账号池启用的模型），
+    「自定义」时只放行存下的列表。旧配置没有 modelsMode，按原来的规则走 models。
+  */
+  const lanModelsOf = (): readonly string[] | undefined => {
+    const saved = readAggregateSettingsSync().relay
+    return saved?.modelsMode === 'pool' ? undefined : saved?.models
+  }
   /**
    * The login channels' models, as the route editor needs them.
    *
@@ -1499,6 +1514,10 @@ function canonicalJson(value: unknown): string {
     status: () => relay.status(),
     shared: () => readAggregateSettingsSync().relay?.models,
     roster: () => shim.roster(),
+    mode: () => {
+      const saved = readAggregateSettingsSync().relay
+      return saved?.modelsMode ?? (saved?.models === undefined ? 'pool' : 'custom')
+    },
     warn: error => ctx.logger.warn('dsh-xdpool: gateway roster failed', error),
   })
   /**
@@ -2051,6 +2070,7 @@ function canonicalJson(value: unknown): string {
         // Passed through as written: an empty array is "share nothing", a
         // decision, not an absence. The store trims and de-duplicates on the way in.
         ...(patch.models === undefined ? {} : { models: patch.models }),
+        ...(patch.modelsMode === undefined ? {} : { modelsMode: patch.modelsMode }),
       }
       await writeRelaySetting(wanted)
       // Re-evaluate the listener from what was actually persisted, not from the

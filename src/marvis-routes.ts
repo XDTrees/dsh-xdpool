@@ -175,7 +175,12 @@ export function registerMarvisRoutes(ctx: Context, deps: MarvisRouteOptions): vo
       },
     })
 
-    /** The wallet: charged tokens used and left. */
+    /**
+     * The wallet: charged tokens used and left — PER ACCOUNT.
+     *
+     * Every account has its own daily allowance, so `accounts` carries one row each. The
+     * top-level fields stay the first account's, for readers written before the list existed.
+     */
     const disposeWallet = ctx.webServer.register({
       kind: 'exact',
       path: POOL_MARVIS_WALLET_PATH,
@@ -186,12 +191,20 @@ export function registerMarvisRoutes(ctx: Context, deps: MarvisRouteOptions): vo
           const accounts = await readMarvisAccounts()
           const account = accounts[0]
           if (account === undefined) return json(res, 200, { ok: false, signedIn: false })
-          const wallet = await marvisWallet(account)
+          const wallets = await Promise.all(accounts.map(async entry => ({
+            openid: entry.openid,
+            ...(entry.nickname === undefined ? {} : { nickname: entry.nickname }),
+            loginType: entry.loginType,
+            ...(entry.expiresAt > 0 ? { expiresAt: entry.expiresAt } : {}),
+            ...(await marvisWallet(entry)),
+          })))
+          const wallet = wallets[0] ?? await marvisWallet(account)
           return json(res, 200, {
             ok: wallet.error === undefined,
             signedIn: true,
             ...wallet,
             ...(wallet.error === undefined ? {} : { error: wallet.error }),
+            accounts: wallets,
           })
         } catch (error: unknown) {
           return json(res, 200, { ok: false, signedIn: true, error: messageOf(error) })

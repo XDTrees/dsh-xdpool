@@ -12,9 +12,14 @@
  * 所以不能指望「某一页的 <style> 顺带给别人带上样式」。
  */
 import { DESIGN_DETAIL_CSS, DESIGN_TOKENS_CSS } from './design-css.ts'
+import { RESPONSIVE_CSS } from './responsive-css.ts'
+import { CREDIT_DOT_CSS } from './credit-dot-css.ts'
 
 const STYLE_ID = 'dsh-xdpool/design.css'
-const FULL_CSS = `${DESIGN_TOKENS_CSS}\n${DESIGN_DETAIL_CSS}`
+// 窄屏规则放最后：它们按插件宽度（.app[data-w]）覆盖前面的三列布局。
+// design-css.ts 是生成文件不能手改，所以单独一份。
+// 聊天框里的积分小图标在 .app 外面，用它自己的 dsm-xdpool-dot* 样式（credit-dot-css.ts）。
+const FULL_CSS = `${DESIGN_TOKENS_CSS}\n${DESIGN_DETAIL_CSS}\n${RESPONSIVE_CSS}\n${CREDIT_DOT_CSS}`
 
 /**
  * 装一次。重复调用不会重复插入。

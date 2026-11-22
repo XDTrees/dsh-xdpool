@@ -1,0 +1,194 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.0 [39m[90mD:/dsh-home/_xdpool-src[39m
+
+ [32m✓[39m tests/credit-dot.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/aggregate-probe-regression.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 3564[2mms[22m[39m
+   [32m✓[39m createWorkBuddyAdapter with an empty aggregate catalog [2m(1)[22m
+     [33m[2m✓[22m[39m builds a model list instead of throwing catalog.visible is not a function[33m 3558[2mms[22m[39m
+ [32m✓[39m tests/windows-registry-encoding.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 2405[2mms[22m[39m
+   [32m✓[39m non-ASCII install paths survive the registry probe [2m(2)[22m
+     [33m[2m✓[22m[39m finds a Chinese install path where a UTF-8 read of reg.exe cannot[33m 1300[2mms[22m[39m
+     [33m[2m✓[22m[39m a non-ASCII path is used when it is the first existing candidate[33m 1063[2mms[22m[39m
+ [32m✓[39m tests/account-discovery.test.ts [2m([22m[2m16 tests[22m[2m)[22m[33m 1915[2mms[22m[39m
+   [32m✓[39m one unopenable file must not empty the pool [2m(4)[22m
+     [33m[2m✓[22m[39m keeps every account that parsed fine[33m 1876[2mms[22m[39m
+ [32m✓[39m tests/pool-expiry.test.ts [2m([22m[2m19 tests[22m[2m)[22m[33m 1964[2mms[22m[39m
+   [32m✓[39m a reading ages out and is topped up without a timer [2m(2)[22m
+     [33m[2m✓[22m[39m treats an expired reading as unread, says so, and reads it again[33m 818[2mms[22m[39m
+     [33m[2m✓[22m[39m is topped up by a served request, using the request path rather than a timer[33m 793[2mms[22m[39m
+ [32m✓[39m tests/pre-update-backup.test.ts [2m([22m[2m17 tests[22m[2m)[22m[33m 769[2mms[22m[39m
+   [32m✓[39m installVersion：下载 → 校验 → 备份 → 写入 [2m(7)[22m
+     [33m[2m✓[22m[39m 连续更新 7 次只留 5 份备份，最新那份一定在[33m 313[2mms[22m[39m
+ [32m✓[39m tests/account-nickname.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 97[2mms[22m[39m
+ [32m✓[39m tests/preferred-account.test.ts [2m([22m[2m13 tests[22m[2m)[22m[33m 609[2mms[22m[39m
+   [32m✓[39m the status document reports the pin honestly [2m(3)[22m
+     [33m[2m✓[22m[39m marks the pinned row and names the pin at document level[33m 326[2mms[22m[39m
+ [32m✓[39m tests/sticky-affinity.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 734[2mms[22m[39m
+   [32m✓[39m sticky bindings survive a restart [2m(5)[22m
+     [33m[2m✓[22m[39m writes the account it picked for a conversation[33m 716[2mms[22m[39m
+ [32m✓[39m tests/gateway-model-listing.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 122[2mms[22m[39m
+ [32m✓[39m tests/routes.test.ts [2m([22m[2m25 tests[22m[2m)[22m[33m 415[2mms[22m[39m
+ [32m✓[39m tests/scheduler.test.ts [2m([22m[2m53 tests[22m[2m)[22m[33m 375[2mms[22m[39m
+ [32m✓[39m tests/credential-dead.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 232[2mms[22m[39m
+ [32m✓[39m tests/default-browser.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 126[2mms[22m[39m
+ [32m✓[39m tests/context-budget.test.ts [2m([22m[2m18 tests[22m[2m)[22m[33m 321[2mms[22m[39m
+ [32m✓[39m tests/pool-priority.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 144[2mms[22m[39m
+ [32m✓[39m tests/update-check.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 57[2mms[22m[39m
+ [32m✓[39m tests/context-budget-real-window.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 221[2mms[22m[39m
+ [32m✓[39m tests/reserve-free-request.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 261[2mms[22m[39m
+ [32m✓[39m tests/billion-removed.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 63[2mms[22m[39m
+ [32m✓[39m tests/pool-sticky.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 136[2mms[22m[39m
+ [32m✓[39m tests/combos.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 106[2mms[22m[39m
+ [32m✓[39m tests/channel-lane.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 154[2mms[22m[39m
+ [32m✓[39m tests/automation-schedule.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 127[2mms[22m[39m
+ [32m✓[39m tests/failover.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 121[2mms[22m[39m
+ [32m✓[39m tests/aggregate-lane.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 89[2mms[22m[39m
+[90mstdout[2m | tests/pool-availability.test.ts[2m > [22m[2ma rate-limited model reports 429, never 401[2m > [22m[2manswers 429 when the model is cooling on every account
+[22m[39m
+# status=429 code=soft_rate msg=every account is rate-limited for model hy4-preview-f (2/2 cooling, tried 0)
+
+ [32m✓[39m tests/pool-availability.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 88[2mms[22m[39m
+ [32m✓[39m tests/compat-migrate.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 70[2mms[22m[39m
+ [32m✓[39m tests/gateway-allowlist.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 116[2mms[22m[39m
+ [32m✓[39m tests/usage-shim.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 114[2mms[22m[39m
+ [32m✓[39m tests/store-lock.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 143[2mms[22m[39m
+ [32m✓[39m tests/catalog-resilience.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 117[2mms[22m[39m
+ [32m✓[39m tests/relay.test.ts [2m([22m[2m23 tests[22m[2m)[22m[32m 98[2mms[22m[39m
+ [32m✓[39m tests/checkin.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 83[2mms[22m[39m
+ [32m✓[39m tests/free-lane.test.ts [2m([22m[2m39 tests[22m[2m)[22m[32m 63[2mms[22m[39m
+ [32m✓[39m tests/client-pack-rpc.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 36[2mms[22m[39m
+ [32m✓[39m tests/non-streaming.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 73[2mms[22m[39m
+ [32m✓[39m tests/settings-applied.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 47[2mms[22m[39m
+ [32m✓[39m tests/account-store.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 49[2mms[22m[39m
+ [32m✓[39m tests/earnings.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 55[2mms[22m[39m
+ [32m✓[39m tests/migrate.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m tests/chat-identity-headers.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 44[2mms[22m[39m
+ [32m✓[39m tests/host-compat.test.ts [2m([22m[2m24 tests[22m[2m)[22m[32m 55[2mms[22m[39m
+ [32m✓[39m tests/credits-estimate.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m tests/aggregate-keys.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 36[2mms[22m[39m
+ [32m✓[39m tests/multi-account.behavior.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 81[2mms[22m[39m
+ [32m✓[39m tests/reserve.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m tests/pool-model-cooldown.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m tests/pi-ai-generation.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 36[2mms[22m[39m
+ [32m✓[39m tests/doubao-accounts.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m tests/task-events.test.ts [2m([22m[2m21 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/gateway-rejection.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m tests/channel-usage.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m tests/marvis.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 29[2mms[22m[39m
+ [32m✓[39m tests/pack-lane-allowed-polarity.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m tests/mounted-flag.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/pack-codearts-expired-heal.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/encrypted-credentials.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/system-fingerprint.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/badges.test.ts [2m([22m[2m23 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/pack-accounts.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/bundle-contract.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m tests/aggregate-page.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 25[2mms[22m[39m
+ [32m✓[39m tests/promo.test.ts [2m([22m[2m23 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/model-facts.test.ts [2m([22m[2m29 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/usage-stats.test.ts [2m([22m[2m32 tests[22m[2m)[22m[32m 23[2mms[22m[39m
+ [32m✓[39m tests/channels.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m tests/routing-page.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 24[2mms[22m[39m
+ [32m✓[39m tests/usage-ledger.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m tests/disabled-button-hover.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 16[2mms[22m[39m
+ [32m✓[39m tests/pack-codearts-403.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/ledger-channel.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m tests/provider-icons.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/card-shell.test.ts [2m([22m[2m23 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m tests/monkeycode.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/file-perms.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/app-location.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/roster-integrity.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m tests/expert-task-family.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/provider-registration.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/relay-page.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/ledger-page.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/reserve-floor-scope.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m tests/client-bundle-purity.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m tests/vendored-pack-fixes.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/release-267-regressions.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m tests/baizhi.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/catalog-cache.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/revive-benched.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+[90mstdout[2m | tests/context-budget-budget.test.ts[2m > [22m[2mthe compaction target is always smaller than the prompt[2m > [22m[2mshrinks even when the catalog window dwarfs the prompt
+[22m[39m
+# overrun=791793 catalog=1000000 -> budget=395896
+
+[90mstdout[2m | tests/context-budget-budget.test.ts[2m > [22m[2mthe estimate is sane for the observed prompt size[2m > [22m[2mcounts a large prompt as large
+[22m[39m
+# 400k chars -> ~100014 tokens
+
+ [32m✓[39m tests/context-budget-budget.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m tests/autoclaw.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/gateway-relay-document.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/expiring-credits.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m tests/combo-platforms.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 9[2mms[22m[39m
+ [32m✓[39m tests/aggregate-model-choice.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/astudio.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m tests/model-rates.test.ts [2m([22m[2m14 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m tests/design-parity.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/settings-write-verification.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/pack-catalog-ttl.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m tests/region-body-rules.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m tests/doubao-menu.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m tests/accio.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/paste-guard.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/free-lane-tool-pairing.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m tests/doubao-campaign.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/codearts-max-tokens.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/probe-request-shape.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/upstream-error-classification.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/sibling-routes.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/channel-pool-loading.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/channel-initials.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/region-card-layout.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m tests/combo-host-exec.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/tool-schema-recursion.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/context-overflow-contract.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/tool-schema.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/codearts-resign-headers.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/error-body.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/workbuddy-catalog.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/backup-panel.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/route-contract.test.ts [2m([22m[2m27 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/doubao-model-selection.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/ledger-robustness.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/origin-trust.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/risk-blocked-classification.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/release-265-regressions.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 6[2mms[22m[39m
+ [32m✓[39m tests/free-lane-refusal.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/custom-endpoint.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/channel-wiring.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/gateway-copy.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/doubao-lane.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/free-first-sort.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/models-endpoint-regression.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/compatibility-declaration.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/ledger-table-align.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/paid-twin.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/combo-reason-status.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/credential-errors.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/backup-encryption.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/prune-expired-snapshots.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/combo-member-timeout.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/style-structure.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/browser-login.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/relay-bind-failure.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/combo-explain.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/skipped-file-reason.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/signin-verification.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/combo-host-lane.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/pack-codearts-refresh-reuse.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/free-lane-gate.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 5[2mms[22m[39m
+ [32m✓[39m tests/channel-member-id.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m tests/usage-panel.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m153 passed[39m[22m[90m (153)[39m
+[2m      Tests [22m [1m[32m1683 passed[39m[22m[90m (1683)[39m
+[2m   Start at [22m 13:33:24
+[2m   Duration [22m 53.78s[2m (tests 63%, import 22%, transform 12%, worker 3%)[22m
+
+[2m    Isolate [22m [33m153 workers spawned[39m[2m · ~153ms startup each (spawn + environment, per file)[22m
+[2m            [22m [2mat least ~23.24s faster with [22m[33misolate: false[39m[2m — reuses workers across files instead of one per file[22m
+
+exit=0

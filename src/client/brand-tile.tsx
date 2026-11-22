@@ -88,6 +88,14 @@ export interface BrandTileProps {
   readonly initials?: string | undefined
   /** Extra class names, so a caller can place the tile without a wrapper. */
   readonly className?: string | undefined
+  /**
+   * 边长（px），不传就是设计稿 .ch-logo 的默认尺寸。
+   *
+   * 聚合渠道的 .vd-head 是一行小字（13px 名称 + 类别胶囊），默认的 32px 方块
+   * 会把卡片头撑高一倍；那里传 20。尺寸写在 inline style 上，不新增 CSS ——
+   * 设计稿样式是提取生成的，插件这边不改它。
+   */
+  readonly size?: number | undefined
 }
 
 /**
@@ -114,7 +122,7 @@ function tileInitials(value: string | undefined): string | undefined {
  * inline `background`, because the gradient has to be composed with a neutral
  * underlay — see decision 3 in the module header.
  */
-export function BrandTile({ accent, glyph, icon, initials, className }: BrandTileProps): ReactElement {
+export function BrandTile({ accent, glyph, icon, initials, className, size }: BrandTileProps): ReactElement {
   const letters = icon === undefined ? tileInitials(initials) : undefined
   return (
     <span
@@ -132,6 +140,14 @@ export function BrandTile({ accent, glyph, icon, initials, className }: BrandTil
           /* css:--icon-xxx 是「用设计稿的 CSS 变量」，不是 data URI */
           : icon.startsWith('css:') ? `var(${icon.slice(4)})`
             : `url("${icon}")`,
+        ...size === undefined ? {} : {
+          width: `${String(size)}px`,
+          height: `${String(size)}px`,
+          flex: `0 0 ${String(size)}px`,
+          borderRadius: size <= 24 ? '5px' : 'var(--r-md)',
+          // 字母版在小方块里要跟着缩，否则两个字母会顶出边
+          fontSize: `${String(Math.max(9, Math.round(size * 0.42)))}px`,
+        },
       } as Record<string, string>}
     >
       {letters}

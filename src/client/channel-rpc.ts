@@ -383,11 +383,29 @@ export function modelsFrom(value: unknown): readonly ChannelModel[] {
  * rows by index — reordering the same array in place would make the checkbox the
  * user just clicked appear to belong to a different model on the next render.
  */
+/**
+ * 这个模型是不是免费的。
+ *
+ * 只看 `isFree` 不够：只有 Cline 的目录带这个标记，其他厂商都把价格写进名字里
+ * （`Hy3 · x0.00`、`Qwen3.8-Flash · 免费`、`GLM · 限时免费`）。名字里写了免费、
+ * 或者倍率是 0，就算免费。规则和卡片上「免费」徽标用的 multiplierTone 一致。
+ */
+export function isFreeChannelModel(model: Pick<ChannelModel, 'isFree' | 'name'>): boolean {
+  if (model.isFree === true) return true
+  const tag = /[·・]\s*(x\s*[\d.]+(?:\s*→\s*x?[\d.]+)?|免费|限时免费)\s*$/iu.exec(model.name ?? '')?.[1]
+  if (tag === undefined) return false
+  if (/免费/u.test(tag)) return true
+  // `x0.12→x0.06` 是促销中：按现在生效的（箭头后面的）那个倍率算
+  const current = tag.split('→').pop() ?? tag
+  return /^x?\s*0*\.?0+$/iu.test(current.trim())
+}
+
 export function sortChannelModels(models: readonly ChannelModel[]): readonly ChannelModel[] {
   return [...models].sort((a, b) => {
-    // Free first. Unknown (`undefined`) sorts with the paid rows: claiming a
-    // model is paid would be an invented price fact.
-    if ((a.isFree === true) !== (b.isFree === true)) return a.isFree === true ? -1 : 1
+    // 免费的排最前面。不知道价格的和收费的排在一起：说它收费是编出来的事实，说它免费更是。
+    const freeA = isFreeChannelModel(a)
+    const freeB = isFreeChannelModel(b)
+    if (freeA !== freeB) return freeA ? -1 : 1
     const windowA = a.contextWindow ?? 0
     const windowB = b.contextWindow ?? 0
     if (windowA !== windowB) return windowB - windowA

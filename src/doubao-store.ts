@@ -23,6 +23,7 @@
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { DoubaoSession } from './doubao-auth.ts'
+import { preserveUnreadableJson } from './data-guard.ts'
 import { pluginDataDir } from './ignored.ts'
 
 /** The single-session file an earlier version wrote. */
@@ -144,6 +145,9 @@ export async function readStoredAccounts(): Promise<readonly StoredDoubaoAccount
 async function writeAccounts(accounts: readonly StoredDoubaoAccount[]): Promise<void> {
   const target = doubaoSessionsPath()
   await mkdir(dirname(target), { recursive: true })
+  // 读的一侧把读不懂的列表当成「没有账号」，这次写入就会把它整份盖掉。先原样另存一份
+  // `.unreadable-<时间戳>`，里面的登录态还能手工找回（见 data-guard.ts）。
+  preserveUnreadableJson(target)
   const temporary = `${target}.tmp`
   await writeFile(temporary, JSON.stringify(accounts, null, 2), { encoding: 'utf8', mode: 0o600 })
   await rename(temporary, target)

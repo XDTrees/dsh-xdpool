@@ -685,6 +685,27 @@ function parseProviderId(body: Record<string, unknown>): string | undefined {
   return isProviderId(providerId) ? providerId : undefined
 }
 /**
+ * 注册表模型的显示信息（名字 / 识图 / 推理），按 id 索引。
+ *
+ * 聚合页只拿得到模型 id 列表；没有这一份，未接入厂商的卡片只能把
+ * claude-opus-4-7 这种 id 当名字显示。只收注册表写明的字段，null 一律不传。
+ */
+function aggregateModelMetaOf(
+  models: readonly { id: string; name: string; vision: boolean | null; reasoning: boolean | null }[],
+): Record<string, { name: string; vision?: boolean; reasoning?: boolean }> | undefined {
+  if (!Array.isArray(models) || models.length === 0) return undefined
+  const meta: Record<string, { name: string; vision?: boolean; reasoning?: boolean }> = {}
+  for (const model of models) {
+    if (model === null || typeof model !== 'object' || typeof model.id !== 'string') continue
+    meta[model.id] = {
+      name: typeof model.name === 'string' && model.name !== '' ? model.name : model.id,
+      ...model.vision === true ? { vision: true } : {},
+      ...model.reasoning === true ? { reasoning: true } : {},
+    }
+  }
+  return meta
+}
+/**
  * Build the document the aggregate card renders from one store read.
  *
  * The provider rows NEVER carry the key — only whether one is present. That is
@@ -753,6 +774,10 @@ export function aggregateStatusOf(
       // showing a switch that cannot do anything.
       keyCount: providerApiKeys(setting).length,
       ...setting.distribution === undefined ? {} : { distribution: setting.distribution },
+      ...(() => {
+        const modelMeta = aggregateModelMetaOf(provider.models)
+        return modelMeta === undefined ? {} : { modelMeta }
+      })(),
     })
   }
   return {
@@ -1723,7 +1748,9 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
         try {
           return json(res, 200, await updateToLatest())
         } catch (error: unknown) {
-          return json(res, 200, { ok: false, restartRequired: false, error: safeMessage(error) })
+          // updateToLatest 自己的失败都已经是中文；这里只兜底它没预料到的异常，同样给中文，
+          // 并说明数据没动 —— 抛出发生在改 package.json 之前（它是最后一步）。
+          return json(res, 200, { ok: false, restartRequired: false, error: `更新失败（${safeMessage(error)}），插件和数据都没有改动` })
         }
       },
     })

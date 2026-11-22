@@ -208,6 +208,14 @@ export interface MarvisWallet {
   used: number
   available: number
   frozen: number
+  /**
+   * When today's allowance resets, epoch ms.
+   *
+   * Read from the payload when the service names it; otherwise the next 00:00 Beijing time,
+   * which is when the daily 10M allowance rolls over. `resetEstimated` says which one it is.
+   */
+  resetAt?: number
+  resetEstimated?: boolean
   /** Why it could not be read, when it could not. */
   error?: string
 }
@@ -251,7 +259,15 @@ export async function marvisWallet(account: MarvisAccount, signal?: AbortSignal)
     const total = num('total_tokens')
     const used = num('used_tokens')
     const available = num('avail_tokens') || Math.max(0, total - used)
-    return { total, used, available, frozen: num('frozen_tokens') }
+    const announced = resetFrom(data)
+    return {
+      total,
+      used,
+      available,
+      frozen: num('frozen_tokens'),
+      resetAt: announced ?? nextBeijingMidnight(),
+      resetEstimated: announced === undefined,
+    }
   } catch (error: unknown) {
     return {
       total: 0,
@@ -261,6 +277,30 @@ export async function marvisWallet(account: MarvisAccount, signal?: AbortSignal)
       error: error instanceof Error ? error.message : String(error),
     }
   }
+}
+
+/** The next 00:00 in UTC+8 (no daylight saving there), epoch ms. */
+export function nextBeijingMidnight(now: number = Date.now()): number {
+  const day = 86_400_000
+  const offset = 8 * 3_600_000
+  return (Math.floor((now + offset) / day) + 1) * day - offset
+}
+
+/** A reset stamp the payload names, in epoch ms, or undefined. Accepts seconds, ms or a date string. */
+function resetFrom(data: Record<string, unknown>): number | undefined {
+  for (const key of ['reset_time', 'next_reset_time', 'reset_at', 'refresh_time', 'expire_time']) {
+    const value = data[key]
+    let stamp: number | undefined
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) stamp = value
+    else if (typeof value === 'string' && value.trim() !== '') {
+      const numeric = Number(value)
+      stamp = Number.isFinite(numeric) && numeric > 0 ? numeric : Date.parse(value)
+    }
+    if (stamp === undefined || !Number.isFinite(stamp) || stamp <= 0) continue
+    // Ten digits is seconds; thirteen is milliseconds.
+    return stamp < 1e12 ? stamp * 1000 : stamp
+  }
+  return undefined
 }
 
 export { ualSignature }

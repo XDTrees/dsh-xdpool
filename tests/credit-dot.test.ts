@@ -38,7 +38,9 @@ describe('the credit dot', () => {
   it('is the pool glyph, not a plain circle', () => {
     // A circle says "some status"; the plugin's own glyph says whose number it is.
     expect(dot).toContain('POOL_NAV_ICON_MASK_URL')
-    expect(dot).toContain('ch-mark')
+    // 小图标在聊天框里（.app 外面），用自己的类，不能借设计稿的 ch-mark（那里没有样式）
+    expect(dot).toContain('className="dsm-xdpool-dot-glyph"')
+    expect(dot).toContain('className="dsm-xdpool-dotpanel"')
     // The colour comes from `currentColor` so one state attribute drives both the dot
     // and the icon, with no second asset.
     expect(styles).toContain('-webkit-mask-image')
@@ -106,7 +108,10 @@ describe('the credit dot', () => {
   it('renders a colour per state rather than a colour per label', () => {
     // Two states, two attributes — a styled span would leave the colour to the stylesheet
     // and the state to the text, which is how a grey dot ends up saying "available".
-    expect(dot).toContain("data-state={alive ? 'alive' : 'empty'}")
+    // 第三种状态 none：当前渠道本来就不按积分计费（免密通道、填 key 的聚合厂商），
+    // 不能画成灰色的「没积分了」。
+    expect(dot).toContain("const state = alive ? 'alive' : unmetered ? 'none' : 'empty'")
+    expect(dot).toContain('data-state={state}')
   })
 
   it('opens the panel on click and closes on outside click or Escape', () => {
@@ -153,17 +158,36 @@ describe('the credit dot', () => {
     expect(dot).not.toContain("nameOfOrigin")
   })
 
-  it('shows the TOTAL across channels, so it cannot disagree with the pool card', () => {
-    // Reported: the composer dot said 13,990 while the account-pool card said 14,089 —
-    // a difference of the 99 sitting on a second credential origin. The dot was naming
-    // the LARGEST channel, not the sum. Two screens in one plugin disagreeing about the
-    // same quantity is a bug the reader cannot resolve.
-    const start = dot.indexOf('pop-head')
-    const body = dot.slice(start, start + 1600)
-    // 两处都判空：snapshot.all 来自一次 fetch，读失败时是 undefined
-    expect(body).toContain('(snapshot.all ?? []).reduce(')
-    // And the per-channel split is shown so the total is reconcilable.
+  it('follows the CURRENT model, not the WorkBuddy pool', () => {
+    /*
+      用户要求：小卡片跟着当前模型走。2.7.x 只统计 WorkBuddy，用 TRAE / CodeArts 的模型时
+      显示的是 WorkBuddy 的积分。现在先认出当前模型走的渠道，再显示那一家的余额和今日已用。
+    */
+    expect(dot).toContain('function pickLane(')
+    // 认渠道的四个依据都在，而且按这个顺序
+    const pick = dot.slice(dot.indexOf('function pickLane('))
+    const order = ['readSelectedProvider()', 'raw.usage', 'raw.spendRows', '4. 模型目录']
+    let last = -1
+    for (const step of order) {
+      const at = pick.indexOf(step)
+      expect(at, step).toBeGreaterThan(last)
+      last = at
+    }
+    // 宿主那条只在那家渠道真的发布了当前模型时才采用
+    expect(pick).toContain('publishes(direct, key)')
+    // 依据写在卡片上
+    expect(dot).toContain('`依据：${snapshot.why}`')
+  })
+
+  it('uses the same WorkBuddy region ids as the ledger and the pool page', () => {
+    // 国内 buddy、国际 workbuddy：和 token 账本、账号池页面同一套 id，三处才对得上
+    expect(dot).toContain("id: region === 'global' ? 'workbuddy' : 'buddy'")
+    expect(dot).toContain('brandKey(')
+  })
+
+  it('lists the other channels that serve the same model', () => {
     expect(dot).toContain('(snapshot.all ?? []).map(')
+    expect(dot).toContain('同一模型的其他渠道')
   })
 
   it('names the channel in the header, not a status word', () => {

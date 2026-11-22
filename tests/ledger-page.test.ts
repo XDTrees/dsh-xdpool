@@ -18,6 +18,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { UsageRecorder } from '../src/stats.ts'
 const page = readFileSync(new URL('../src/client/LedgerPage.tsx', import.meta.url), 'utf8')
+const charts = readFileSync(new URL('../src/client/ledger-charts.tsx', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('../src/client/styles.ts', import.meta.url), 'utf8')
 const card = readFileSync(new URL('../src/client/PoolCard.tsx', import.meta.url), 'utf8')
 const locales = readFileSync(new URL('../src/client/locales.ts', import.meta.url), 'utf8')
@@ -68,18 +69,19 @@ describe('ledger page: totals derived from the rows on screen', () => {
     expect(page).toMatch(/tpsWeight\s*\+=\s*row\.calls/)
     expect(page).toMatch(/Math\.round\(tpsWeighted\s*\/\s*tpsWeight\)/)
   })
-  it('keeps the KPI and the share column reading the same total', () => {
-    // Both come from the same `totals.input`, which is the only way they can be
-    // guaranteed to agree. A second derivation would be a second chance to drift.
-    expect(page).toMatch(/const share = \(totals\?\.input \?\? 0\) === 0/)
-    expect(page).toMatch(/row\.inputTokens \/ \(totals\?\.input \?\? 1\)/)
+  it('keeps the KPI and the rank share reading the same rows', () => {
+    // 按设计稿重做后没有「按模型」表格的占比列了，占比在榜单的 .rank-pct 里：
+    // 榜单和 KPI 都从同一份 summary.rows 来，占比的分母是榜单自己的合计。
+    expect(page).toContain('items={byChannel(summary.rows)}')
+    expect(page).toContain('items={byModel(summary.rows)}')
+    expect(charts).toMatch(/const total = sorted\.reduce/)
   })
   it('never divides by zero when no call was ever counted', () => {
-    // Zero input means zero rows are in the table; the `?? 1` in the divisor is
-    // what keeps an empty dashboard from throwing inside render.
+    // 空看板时合计是 0：占比写「—」，进度条峰值至少取 1，渲染里不会除以 0。
     const summary = new UsageRecorder().summary()
     expect(summary.rows).toHaveLength(0)
-    expect(page).toContain('(totals?.input ?? 1)')
+    expect(charts).toContain("total <= 0 ? '—'")
+    expect(charts).toContain('const peak = Math.max(1,')
   })
 })
 describe('ledger page: turns are not calls', () => {
@@ -93,7 +95,8 @@ describe('ledger page: turns are not calls', () => {
     // page exists to avoid: rotation is a feature, and a reader who cannot see
     // it will read the call count as inefficiency.
     expect(page).toContain("t?.('ledger.turns')")
-    expect(page).toContain("t?.('ledger.requests')")
+    // 设计稿这一格叫「调用」（ledger.requests 的中文是「请求数」，和设计稿不一致），直接写中文
+    expect(page).toContain('label="调用"')
     expect(page).toContain('value={fmtInt(summary.turns)}')
     expect(page).toContain('value={fmtInt(summary.calls)}')
   })
@@ -121,8 +124,9 @@ describe('ledger page: honesty about what the recorder is', () => {
   it('labels the totals as in-memory on the hero itself', () => {
     // Not buried in a footnote: a dashboard that looks durable and resets at
     // midnight is the thing users stop trusting after exactly one midnight.
-    expect(page).toContain("t?.('ledger.memoryOnly')")
-    expect(page).toContain("t?.('ledger.window'")
+    // 设计稿把这句写在 .mhead-org 里：「全部渠道汇总 · 内存中保留最近 2000 次调用」
+    expect(page).toContain('className="mhead-org"')
+    expect(page).toContain('内存中保留最近 ${String(USAGE_MAX_SAMPLES)} 次调用')
   })
   it('keeps the pool card polling for usage so the page shares one fetch', () => {
     // Two components polling the same endpoint would double the request count

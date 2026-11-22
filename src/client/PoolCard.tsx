@@ -46,7 +46,7 @@ import {
 } from '../status-paths.ts'
 import { DEFAULT_AUTOMATION_HOURS } from '../status-paths.ts'
 import { POOL_CARD_AVATAR } from './avatar.ts'
-import { PoolShell, PageHero, initialShellTab, rememberedShellTab } from './shell.tsx'
+import { PoolShell, PageHero, RailIcon, initialShellTab, rememberedShellTab } from './shell.tsx'
 import { LedgerPage } from './LedgerPage.tsx'
 import { AggregatePage } from './AggregatePage.tsx'
 import { ChannelsPage } from './ChannelsPage.tsx'
@@ -1514,6 +1514,28 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
       /* 账号池是三列（有中栏），其余六页是两列 */
       wide={page !== 'pool'}
       /* 设计稿里没有页面级 hero：标题在中栏的 list-head 里 */
+      /*
+        侧栏入口开关 —— 设计稿把它放在左下角 .rail-foot（点 Star / 交流群 下面）。
+        之前它是一张 position:absolute 的卡片，钉在详情列右下角，压在账号卡和模型列表上面。
+      */
+      links={
+        <button
+          type="button"
+          className="rail-item"
+          role="switch"
+          aria-checked={sidebarRow}
+          disabled={!settingsWritable || sidebarRowBusy}
+          title={sidebarRow
+            ? (t?.('row.sidebarRowOn') ?? 'XD Pool has its own row in the left sidebar. Turn it off to open the pool from Settings instead.')
+            : (t?.('row.sidebarRowOff') ?? 'The sidebar row is hidden; the pool still opens from Settings → XD Pool, and models are unaffected.')}
+          onClick={() => { void setSidebarRow(!sidebarRow) }}
+        >
+          <RailIcon name="sidebar" />
+          <span>{t?.('row.sidebarRowTitle') ?? '侧栏入口'}</span>
+          <span className="sw" role="presentation" aria-checked={sidebarRow}
+            style={{ marginLeft: 'auto', pointerEvents: 'none' }} />
+        </button>
+      }
     >
       {page === 'aggregate' ? <AggregatePage t={t} />
         : page === 'channels' ? <ChannelsPage t={t} />
@@ -1543,32 +1565,27 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                 它们的数据（账号数、模型数、积分）已经在中栏的渠道行和详情里，
                 这里不需要第二份。
               */}
-              <div className="dsm-xdpool-settingslot" /*
-                  绝对定位钉在详情列底部，不参与网格排布 ——
-                  它是第四个网格项时会把 main 挤到第二行（三列塌成一坨的最后一环）。
+              <ChannelPoolSection
+                t={t}
+                active={selectedChannel}
+                onAddAccount={() => { setPage('channels') }}
+                autoClaim={statusOf('cn')?.automation?.enabled === true}
+                autoClaimBusy={automationBusyRegion !== undefined}
+                onAutoClaim={on => { void setAutomationEnabled('cn', on) }}
+                /*
+                  提示条放进详情列的 mbody 里。之前它们是 .app 网格的直接子元素，
+                  一出现就占一个格子，把三列挤乱。
                 */
-                style={{ position: 'absolute', right: 0, bottom: 0, width: 'calc(100% - 464px)', padding: '0 32px 16px' }}>
-                <section className="card row" aria-label={t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}>
-                <div className="sec-head">
-                  <h3 className="sec-title">{t?.('row.sidebarRowTitle') ?? 'Sidebar entry'}</h3>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={sidebarRow}
-                    disabled={!settingsWritable || sidebarRowBusy}
-                    className={`sw${sidebarRow ? ' is-on' : ''}`}
-                    aria-label={sidebarRow ? (t?.('row.autoOn') ?? 'On') : (t?.('row.autoOff') ?? 'Off')}
-                    onClick={() => { void setSidebarRow(!sidebarRow) }}
-                  />
-                </div>
-                <p className="hint">
-                  {sidebarRow
-                    ? (t?.('row.sidebarRowOn') ?? 'XD Pool has its own row in the left sidebar. Turn it off to open the pool from Settings instead.')
-                    : (t?.('row.sidebarRowOff') ?? 'The sidebar row is hidden; the pool still opens from Settings → XD Pool, and models are unaffected.')}
-                </p>
-              </section>
-              </div>
-              <ChannelPoolSection t={t} active={selectedChannel} />
+                banner={flash === undefined && error === undefined ? undefined : (
+                  <>
+                    {flash === undefined ? null : <p className="note">{flash}</p>}
+                    {error === undefined ? null
+                      : <p className="hint">
+                          {t?.('row.error', { message: error }) ?? `Pool status unavailable: ${error}`}
+                        </p>}
+                  </>
+                )}
+              />
               {/*
                 侧栏入口开关：它是设置项，不属于渠道详情。
                 放进第三列（详情列）的末尾 —— 挂在 .app 层会让它自己占一格，
@@ -1579,12 +1596,6 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
               {/* Backup moved to its own page. It operates on the whole credential set
                   rather than on one pool card, and sitting it under the accounts implied a
                   scope it does not have. */}
-              {flash === undefined ? null
-                : <p className="note">{flash}</p>}
-              {error === undefined ? null
-                : <p className="hint">
-                    {t?.('row.error', { message: error }) ?? `Pool status unavailable: ${error}`}
-                  </p>}
           </>
       }
     </PoolShell>

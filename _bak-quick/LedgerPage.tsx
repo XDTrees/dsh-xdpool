@@ -1,0 +1,630 @@
+/**
+ * The 数据看板 (ledger) page.
+ *
+ * Five numbers across the top, three tables below: recent calls, accounts,
+ * models. Every figure is read straight out of {@link UsageSummary} — this
+ * page re-derives nothing, because a dashboard whose KPI disagrees with the
+ * table under it is worse than no dashboard, because it gets trusted.
+ *
+ * Two distinctions this page is built around, both of which are easy to lose in
+ * a rewrite and both of which are the whole reason the numbers are trustworthy:
+ *
+ * - **A turn is not a call.** One question that rotated three accounts is one
+ *   turn and three calls. Both appear, always as separate numbers.
+ * - **"no tokens" is not "no report".** A gateway that ignored
+ *   `stream_options` produces the same zeroes as a gateway that reported zero,
+ *   and only `usageReported` separates them. When it is false the KPI says the
+ *   gateway said nothing — it never prints a confident `0` it cannot back up.
+ *
+ * The recorder is in-memory (see `UsageRecorder`), so the totals describe this
+ * process only. The page says so rather than implying a history that does not
+ * exist: a dashboard that looks durable and resets at midnight is the kind of
+ * thing users stop trusting after exactly one midnight.
+ *
+ * @module dsh-xdpool/client/LedgerPage
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { POOL_USAGE_PATH } from '../status-paths.ts'
+import type { UsageAccountRow, UsageCall, UsageSummary } from '../stats.ts'
+import type { XdPoolSettingsKey } from './locales.ts'
+import { DayChart, RankList, byChannel, byModel } from './ledger-charts.tsx'
+import { KpiCard, PageHero } from './shell.tsx'
+/** The translator the settings section injects. */
+type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
+export interface LedgerPageProps {
+  t?: Translate | undefined
+  /**
+   * The aggregate, if the parent already has it.
+   *
+   * The pool card polls usage for its own compact panel; passing that down
+   * means this page renders from the first paint and keeps sharing one fetch
+   * rather than opening a second identical one.
+   */
+  usage?: UsageSummary | undefined
+}
+/** How many recent calls the detail table lists. */
+const DETAIL_ROWS = 12
+/**
+ * 一个整数，用逗号分千位。
+ *
+ * 收 undefined 时返回「—」而不是抛错：这个函数喂的是上游聚合出来的字段，
+ * 一条记录缺字段（老样本、某渠道不报 cached）在真实数据里是常态。
+ * 原来直接 .toLocaleString()，一个缺字段就让整页白屏 —— 用户报的
+ * 「点数据面板直接空白」就是它。
+ */
+function fmtInt(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return '—'
+  return value.toLocaleString('en-US')
+}
+/** Milliseconds as `1.2s` / `340ms`, because `1200ms` is not a unit anyone reads. */
+function fmtMs(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return '—'
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${String(ms)}ms`
+}
+/** Tokens per second, kept integer: 12.4 tok/s reads as false precision. */
+function fmtTps(value: number | null): string {
+  return value === null ? '—' : `${fmtInt(value)}`
+}
+function fmtClock(at: number): string {
+  const d = new Date(at)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
+}
+/**
+ * Cache hit rate, or null when no input tokens were ever counted.
+ *
+ * Null rather than zero: with `usageReported === false` the numerator and
+ * denominator are both absent, and printing `0%` there would claim the cache
+ * never helped when the truth is that nothing was measured.
+ */
+function cacheHitRate(summary: UsageSummary): number | null {
+  let input = 0
+  let cached = 0
+  for (const row of Array.isArray(summary.rows) ? summary.rows : []) {
+    input += row.inputTokens
+    cached += row.cachedTokens
+  }
+  const total = input + cached
+  return total === 0 ? null : cached / total
+}
+function regionLabel(region: string, t?: Translate): string {
+  return region === 'global' ? (t?.('ledger.global') ?? 'Global') : (t?.('ledger.cn') ?? 'CN')
+}
+/**
+ * The channel a call went through, as the table's first column.
+ *
+ * A provider id (`opencode`, `raccoon`, `codearts`) is printed as-is, because that
+ * is the same spelling the aggregate page and the model picker use — inventing a
+ * second name here would make one vendor look like two. `workbuddy` and `free` get
+ * a translated label since they are lanes of this plugin rather than vendors.
+ *
+ * Falls back to the region for a sample filed before this field existed, so an old
+ * in-memory window still renders something true instead of a blank cell.
+ */
+function channelLabel(call: { channel?: string; region: string }, t?: Translate): string {
+  const channel = call.channel ?? ''
+  if (channel === 'workbuddy' || channel === '') return regionLabel(call.region, t)
+  if (channel === 'free') return t?.('ledger.channelFree') ?? 'Free lane'
+  return channel
+}
+/**
+ * In / out / cached for one call, or `—` when that call reported no usage.
+ *
+ * `—` rather than `0`: a call that never received a usage block is a missing
+ * measurement, and the model table's share column would then divide a total by
+ * rows that contributed nothing and quietly shrink it.
+ */
+/**
+ * The three numeric cells for one call: input, output, cached.
+ *
+ * A fixed-length TUPLE, not `string[]`, so the header can never drift out of step
+ * with the body. The table renders these through `.map`, which means a fourth
+ * header added without a fourth value here — or a third value dropped — would
+ * silently shift every numeric column against its title. That is precisely the
+ * misalignment this was rebuilt to fix, and a `string[]` type cannot see it.
+ */
+function tokenCells(call: UsageCall): readonly [string, string, string] {
+  if (call.usage === undefined) return ['—', '—', '—']
+  return [fmtInt(call.usage.inputTokens), fmtInt(call.usage.outputTokens), fmtInt(call.usage.cachedTokens)]
+}
+
+/**
+ * 把任何形状的用量应答整理成组件能直接用的样子。
+ *
+ * 为什么在这一层做：后端的类型声明说这些是数组、是数字，
+ * 但运行时可以给任何东西（应答被中间层改过、版本不匹配、
+ * 鄲测器返回了别的格式）。一个 `.reduce is not a function` 就能让整页白掉，
+ * 而读者看到的是「插件坏了」，不是「数据不对」。
+ *
+ * 宁可少显示一个数字，不能整页空白。
+ */
+function normalizeSummary(raw: unknown): UsageSummary | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const v = raw as Record<string, unknown>
+  const num = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0)
+  const arr = <T,>(x: unknown): T[] => (Array.isArray(x) ? (x as T[]) : [])
+  /* 数组里的 null 也要掉：后端说「有一条记录」但内容是 null 时，
+     读它的 .inputTokens 会直接抛错。 */
+  const rows = <T,>(x: unknown): T[] => arr<T>(x).filter((r): r is T => r !== null && typeof r === 'object')
+  return {
+    samples: num(v.samples),
+    turns: num(v.turns),
+    failedTurns: num(v.failedTurns),
+    recoveredTurns: num(v.recoveredTurns),
+    calls: num(v.calls),
+    usageReported: v.usageReported === true,
+    entries: rows(v.entries),
+    rows: rows(v.rows),
+    accounts: rows(v.accounts),
+    days: rows(v.days),
+  }
+}
+
+export function LedgerPage({ t, usage: shared }: LedgerPageProps) {
+  const [own, setOwn] = useState<UsageSummary | undefined>(() => normalizeSummary(shared))
+  const [clearing, setClearing] = useState(false)
+
+  /**
+   * 导出 CSV。
+   *
+   * 前端生成 Blob，不经过后端：这份数据本来就在内存里，
+   * 再绕一次接口只会多一个失败点。列名用英文（Excel/Numbers 都认），
+   * 值原样输出 —— 把数字格式化成 "1.2k" 会让它没法再算。
+   */
+  const exportCsv = useCallback(() => {
+    const rows = own?.rows ?? []
+    if (rows.length === 0) return
+    const head = ['channel', 'region', 'model', 'calls', 'turns', 'failed', 'recovered',
+      'input_tokens', 'output_tokens', 'reasoning_tokens', 'cached_tokens', 'tps', 'avg_ttft_ms', 'last_used_at']
+    const esc = (v: unknown): string => {
+      const s2 = v === null || v === undefined ? '' : String(v)
+      return /[",\n]/.test(s2) ? `"${s2.replace(/"/g, '""')}"` : s2
+    }
+    const lines = [head.join(',')]
+    for (const r of rows) {
+      lines.push([r.channel, r.region, r.model, r.calls, r.turns, r.failed, r.recovered,
+        r.inputTokens, r.outputTokens, r.reasoningTokens, r.cachedTokens,
+        r.tps, r.avgTtftMs, r.lastUsedAt === undefined ? '' : new Date(r.lastUsedAt).toISOString(),
+      ].map(esc).join(','))
+    }
+    /* BOM：Excel 不认没 BOM 的 UTF-8 中文 */
+    const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `xdpool-usage-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [own])
+
+  /** 清空记录。DELETE 之后重新读一次，免得界面还挂着旧数字。 */
+  const clearUsage = useCallback(async () => {
+    setClearing(true)
+    try {
+      await fetch(POOL_USAGE_PATH, { method: 'DELETE', credentials: 'same-origin' })
+      const res = await fetch(POOL_USAGE_PATH, { headers: { accept: 'application/json' }, credentials: 'same-origin' })
+      if (res.ok) setOwn(normalizeSummary(await res.json()))
+    } catch { /* 失败时保留原有数字，读者能看出没清掉 */ }
+    finally { setClearing(false) }
+  }, [])
+  /**
+   * 时间范围。插件只在内存里保留最近 2000 次调用，所以这里是前端过滤，
+   * 不重新请求 —— 切一次范围不该再打一次网络。
+   */
+  const [window_, setWindow] = useState<'today' | 'week' | 'month' | 'all'>('all')
+  /** 只看失败的行。与时间范围互相独立。 */
+  const [failedOnly, setFailedOnly] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const mounted = useRef(true)
+  // Adopt the parent's copy whenever it arrives, so opening this page shows the
+  // numbers that already exist instead of a skeleton for one poll interval.
+  useEffect(() => {
+    if (shared !== undefined) setOwn(normalizeSummary(shared))
+  }, [shared])
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+  /**
+   * Poll only while this page is mounted.
+   *
+   * The pool card already polls for its own panel, so when a copy is shared
+   * there is nothing to fetch here. Without one this page owns the timer, and
+   * unmounting it stops the timer — a hidden dashboard must not keep a 30s
+   * request alive for a tab nobody is looking at.
+   */
+  const load = useCallback(async (signal?: AbortSignal): Promise<void> => {
+    try {
+      const response = await fetch(POOL_USAGE_PATH, {
+        headers: { accept: 'application/json' },
+        credentials: 'same-origin',
+        ...signal === undefined ? {} : { signal },
+      })
+      if (!response.ok) {
+        if (mounted.current) setFailed(true)
+        return
+      }
+      const value = await response.json().catch(() => undefined)
+      if (mounted.current && signal?.aborted !== true) {
+        setOwn(normalizeSummary(value))
+        setFailed(false)
+      }
+    } catch {
+      if (mounted.current && signal?.aborted !== true) setFailed(true)
+    }
+  }, [])
+  useEffect(() => {
+    if (shared !== undefined) return
+    const controller = new AbortController()
+    void load(controller.signal)
+    const timer = window.setInterval(() => { void load(controller.signal) }, 30_000)
+    return () => {
+      window.clearInterval(timer)
+      controller.abort()
+    }
+  }, [load, shared])
+  /** 这段时间内有失败的次数（它决定那个芯片能不能点）。 */
+  const failedTotal = (own?.rows ?? []).reduce((n, r) => n + (r.failed ?? 0), 0)
+
+  /**
+   * 列表用的行。
+   *
+   * 「只看失败」时只留 failed > 0 的。
+   */
+  const shownRows = useMemo(() => {
+    const rows = own?.rows ?? []
+    return failedOnly ? rows.filter(r => (r.failed ?? 0) > 0) : rows
+  }, [own, failedOnly])
+
+  const summary = own
+  /**
+   * Totals are summed here rather than read from a server-side total, because
+   * the server publishes per-model rows and the page is the only place that
+   * knows which rows are on screen. Summing the rows it is about to render is
+   * what keeps the KPI and the table from being able to disagree.
+   */
+  const totals = useMemo(() => {
+    if (summary === undefined) return undefined
+    let input = 0
+    let output = 0
+    let reasoning = 0
+    let cached = 0
+    let tpsWeighted = 0
+    let tpsWeight = 0
+    let ttftWeighted = 0
+    let ttftWeight = 0
+    for (const row of Array.isArray(summary.rows) ? summary.rows : []) {
+      input += row.inputTokens
+      output += row.outputTokens
+      reasoning += row.reasoningTokens
+      cached += row.cachedTokens
+      // Weight by calls, never averaged: one model with a single fast call must
+      // not move the fleet average as hard as one running a thousand turns.
+      if (row.tps !== null) {
+        tpsWeighted += row.tps * row.calls
+        tpsWeight += row.calls
+      }
+      if (row.avgTtftMs !== null) {
+        ttftWeighted += row.avgTtftMs * row.calls
+        ttftWeight += row.calls
+      }
+    }
+    return {
+      input,
+      output,
+      reasoning,
+      cached,
+      avgTps: tpsWeight === 0 ? null : Math.round(tpsWeighted / tpsWeight),
+      avgTtftMs: ttftWeight === 0 ? null : Math.round(ttftWeighted / ttftWeight),
+    }
+  }, [summary])
+  /*
+    entries 后端说数组、实际给了对象时 `.slice is not a function` ——
+    整页空白。数组守卫比 `?.` 硬一档。
+  */
+  const details = useMemo(() => {
+    const rows = summary?.entries
+    return Array.isArray(rows) ? rows.slice(0, DETAIL_ROWS) : []
+  }, [summary])
+  const accounts: readonly UsageAccountRow[] = summary?.accounts ?? []
+  return (
+    /*
+      两段：页头 + 正文 —— 设计稿每一页的 main 都是这个形状。
+      少了 .mbody，正文会贴着 pagehead 没有呼吸，圆角也框不住。
+    */
+    <div className="main">
+      <PageHero
+        title={t?.('ledger.title') ?? 'Data dashboard'}
+        sub={t?.('ledger.sub') ?? 'What this machine actually sent and got back, since the pool last started.'}
+        pills={(
+          <>
+            <span className="pill">
+              {t?.('ledger.window', { count: summary?.samples ?? 0 }) ?? `last ${summary?.samples ?? 0} calls`}
+            </span>
+            <span className="pill" data-tone="off">
+              {t?.('ledger.memoryOnly') ?? 'cleared on restart'}
+            </span>
+          </>
+        )}
+        /*
+          页级动作 —— 设计稿放在 .mhead-actions（页头右侧）。
+          这两件事作用于整份记录，不属于任何一个区块。
+        */
+        actions={(
+          <>
+            <button
+              type="button"
+              className="btn"
+              disabled={summary === undefined || summary.rows.length === 0}
+              onClick={() => { exportCsv() }}
+            >
+              {t?.('ledger.exportCsv') ?? '导出 CSV'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={clearing || (summary?.calls ?? 0) === 0}
+              onClick={() => { void clearUsage() }}
+            >
+              {clearing
+                ? (t?.('ledger.clearing') ?? '清空中…')
+                : (t?.('ledger.clear') ?? '清空')}
+            </button>
+          </>
+        )}
+      />
+      <div className="mbody">
+      {/*
+        时间范围：今天 / 7 天 / 30 天 / 全部 —— 设计稿的 .filters。
+
+        没有它，读者只能看「本进程启动以来的全部」，无法回答
+        「昨天用了多少」。插件本身只保留最近 2000 次调用，所以这里
+        是前端过滤，不是重新请求。
+      */}
+      <div className="filters">
+        {(['today', 'week', 'month', 'all'] as const).map(range => (
+          <button
+            key={range}
+            type="button"
+            className="chip"
+            aria-pressed={window_ === range}
+            onClick={() => { setWindow(range) }}
+          >
+            {range === 'today' ? (t?.('ledger.rangeToday') ?? '今天')
+              : range === 'week' ? (t?.('ledger.rangeWeek') ?? '7 天')
+                : range === 'month' ? (t?.('ledger.rangeMonth') ?? '30 天')
+                  : (t?.('ledger.rangeAll') ?? '全部')}
+          </button>
+        ))}
+        {/*
+          只看失败 —— 设计稿的 .filters 里有这一个。
+          时间范围决定「看多久」，这个决定「看什么」，
+          两者是不同的问题，放在同一排里也不会混。
+        */}
+        <button
+          type="button"
+          className="chip"
+          aria-pressed={failedOnly}
+          disabled={failedTotal === 0}
+          title={failedTotal === 0
+            ? (t?.('ledger.noFailures') ?? '这段时间没有失败')
+            : undefined}
+          onClick={() => { setFailedOnly(!failedOnly) }}
+        >
+          {t?.('ledger.failedOnly') ?? '只看失败'}
+          {failedTotal > 0 ? ` ${String(failedTotal)}` : ''}
+        </button>
+      </div>
+      {failed
+        ? <p className="note" role="alert">
+            {t?.('ledger.failed') ?? 'Could not read the usage numbers. The pool itself is unaffected.'}
+          </p>
+        : null}
+      {summary === undefined
+        ? <p className="note">
+            {t?.('ledger.loading') ?? 'Reading the recorded calls…'}
+          </p>
+        : <>
+            <div className="summary">
+              <KpiCard
+                label={t?.('ledger.tokens') ?? 'Tokens'}
+                value={summary.usageReported ? fmtInt(totals?.input ?? 0) : (t?.('ledger.notReported') ?? 'not reported')}
+                sub={summary.usageReported
+                  ? (t?.('ledger.tokenSplit', {
+                      input: fmtInt(totals?.input ?? 0),
+                      output: fmtInt(totals?.output ?? 0),
+                    }) ?? `in ${fmtInt(totals?.input ?? 0)} · out ${fmtInt(totals?.output ?? 0)}`)
+                  : (t?.('ledger.notReportedHint') ?? 'the gateway ignored stream_options.include_usage')}
+              />
+              <KpiCard
+                label={t?.('ledger.turns') ?? 'Turns'}
+                value={fmtInt(summary.turns)}
+                sub={(t?.('ledger.callsSub', { calls: summary.calls }) ?? `${summary.calls} upstream calls`)}
+              />
+              <KpiCard
+                label={t?.('ledger.speed') ?? 'Speed'}
+                value={totals?.avgTps === null || totals?.avgTps === undefined ? '—' : `${fmtInt(totals.avgTps)} tok/s`}
+                sub={totals?.avgTtftMs === null || totals?.avgTtftMs === undefined
+                  ? (t?.('ledger.speedNone') ?? 'no timing reported')
+                  : (t?.('ledger.ttft', { ms: fmtMs(totals.avgTtftMs) }) ?? `ttft ${fmtMs(totals.avgTtftMs)}`)}
+              />
+              <KpiCard
+                label={t?.('ledger.cache') ?? 'Cache hit'}
+                value={(() => {
+                  const rate = cacheHitRate(summary)
+                  return rate === null || !summary.usageReported ? '—' : `${Math.round(rate * 100)}%`
+                })()}
+                sub={summary.usageReported
+                  ? (t?.('ledger.cacheSub', { cached: fmtInt(summary.rows.reduce((n, r) => n + r.cachedTokens, 0)) }) ?? '')
+                  : ''}
+              />
+              <KpiCard
+                label={t?.('ledger.requests') ?? 'Requests'}
+                value={fmtInt(summary.calls)}
+                sub={summary.failedTurns === 0
+                  ? (t?.('ledger.allOk') ?? 'no turn failed outright')
+                  : (t?.('ledger.failedSub', { failed: summary.failedTurns, recovered: summary.recoveredTurns })
+                    ?? `${summary.failedTurns} failed · ${summary.recoveredTurns} recovered`)}
+              />
+            </div>
+            {details.length === 0
+              ? <p className="note">
+                  {t?.('ledger.empty') ?? 'No calls recorded yet. Start a conversation and this fills in.'}
+                </p>
+              : <>
+            {/*
+              每天用量：一根柱子一天，输入在下、输出在上。
+
+              设计稿的 .trend 区块。合成一根看不出「这天是读得多还是写得多」，
+              两段色差把那个区别直接画出来。
+            */}
+            <DayChart
+              title={t?.('ledger.trend') ?? '每天用量'}
+              days={summary.days}
+              emptyLabel={t?.('ledger.noDays') ?? '还没有按天的记录'}
+            />
+
+            {/*
+              两个榜单：按渠道、按模型。
+
+              只列前五 —— 一份二十行的榜单没有人读到底，而「谁用得最多」
+              这个问题看前三行就有答案了。
+            */}
+            <div className="ranks">
+              <RankList
+                title={t?.('ledger.byChannel') ?? '按渠道'}
+                count={new Set(summary.rows.map(row => row.channel)).size}
+                items={byChannel(shownRows)}
+                emptyLabel={t?.('ledger.none') ?? '还没有记录'}
+              />
+              <RankList
+                title={t?.('ledger.byModel') ?? '按模型'}
+                count={new Set(summary.rows.map(row => `${row.channel}/${row.model}`)).size}
+                items={byModel(summary.rows)}
+                emptyLabel={t?.('ledger.none') ?? '还没有记录'}
+              />
+            </div>
+
+
+                  <section className="sec">
+                    <h3 className="sec-title">{t?.('ledger.recent') ?? 'Recent calls'}</h3>
+                    <div className="table-scroll">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>{t?.('ledger.colTime') ?? 'Time'}</th>
+                            <th>{t?.('ledger.colChannel') ?? 'Channel'}</th>
+                            <th>{t?.('ledger.colModel') ?? 'Model'}</th>
+                            <th>{t?.('ledger.colAccount') ?? 'Account'}</th>
+                            <th className="num">{t?.('ledger.colIn') ?? 'In'}</th>
+                            <th className="num">{t?.('ledger.colOut') ?? 'Out'}</th>
+                            <th className="num">{t?.('ledger.colCached') ?? 'Cached'}</th>
+                            <th className="num">{t?.('ledger.colTtft') ?? 'TTFT'}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {details.map((entry, index) => (
+                            <tr key={`${entry.turnId}:${String(entry.at)}:${String(index)}`} data-ok={entry.ok}>
+                              <td>{fmtClock(entry.at)}</td>
+                              <td>{channelLabel(entry, t)}</td>
+                              <td className="td-mono" title={entry.model}>{entry.model}</td>
+                              <td className="td-mono" title={entry.account ?? ''}>
+                                {entry.account ?? (t?.('ledger.noAccount') ?? '—')}
+                              </td>
+                              {tokenCells(entry).map((cell, cellIndex) => (
+                                <td className="num" key={String(cellIndex)}>{cell}</td>
+                              ))}
+                              <td className="num">
+                                {entry.ttftMs === undefined ? '—' : fmtMs(entry.ttftMs)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                  <section className="sec">
+                    <h3 className="sec-title">{t?.('ledger.accounts') ?? 'By account'}</h3>
+                    <div className="table-scroll">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>{t?.('ledger.colAccount') ?? 'Account'}</th>
+                            <th>{t?.('ledger.colChannel') ?? 'Channel'}</th>
+                            <th className="num">{t?.('ledger.colTurns') ?? 'Turns'}</th>
+                            <th className="num">{t?.('ledger.colCalls') ?? 'Calls'}</th>
+                            <th className="num">{t?.('ledger.colIn') ?? 'In'}</th>
+                            <th className="num">{t?.('ledger.colOut') ?? 'Out'}</th>
+                            <th>{t?.('ledger.colModels') ?? 'Usually runs'}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {accounts.map(row => (
+                            <tr key={`${row.region}:${row.account}`}>
+                              <td className="td-mono" title={row.account}>
+                                {row.account === '' ? (t?.('ledger.unattributed') ?? '(unattributed)') : row.account}
+                              </td>
+                              <td>{channelLabel(row, t)}</td>
+                              <td className="num">{fmtInt(row.turns)}</td>
+                              <td className="num">{fmtInt(row.calls)}</td>
+                              <td className="num">{fmtInt(row.inputTokens)}</td>
+                              <td className="num">{fmtInt(row.outputTokens)}</td>
+                              <td className="td-mono" title={(row.topModels ?? []).join(', ')}>
+                                {(row.topModels ?? []).join(', ') || '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                  <section className="sec">
+                    <h3 className="sec-title">{t?.('ledger.models') ?? 'By model'}</h3>
+                    <div className="table-scroll">
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>{t?.('ledger.colChannel') ?? 'Channel'}</th>
+                            <th>{t?.('ledger.colModel') ?? 'Model'}</th>
+                            <th className="num">{t?.('ledger.colCalls') ?? 'Calls'}</th>
+                            <th className="num">{t?.('ledger.colTps') ?? 'tok/s'}</th>
+                            <th className="num">{t?.('ledger.colTtft') ?? 'TTFT'}</th>
+                            <th className="num">{t?.('ledger.colShare') ?? 'Share'}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {summary.rows.map(row => {
+                            const share = (totals?.input ?? 0) === 0
+                              ? 0
+                              : Math.round((row.inputTokens / (totals?.input ?? 1)) * 100)
+                            return (
+                              <tr key={`${row.channel}:${row.region}:${row.model}`}>
+                                {/*
+                                  Channel FIRST, then the model. The same id can be
+                                  served by several vendors, so a table led by the
+                                  model name silently merged them and the share
+                                  column then divided one vendor's tokens by a total
+                                  that included another's.
+                                */}
+                                <td>{channelLabel(row, t)}</td>
+                                <td className="td-mono" title={row.model}>{row.model}</td>
+                                <td className="num">{fmtInt(row.calls)}</td>
+                                <td className="num">{fmtTps(row.tps)}</td>
+                                <td className="num">
+                                  {row.avgTtftMs === null ? '—' : fmtMs(row.avgTtftMs)}
+                                </td>
+                                <td className="num">{summary.usageReported ? `${share}%` : '—'}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </section>
+                </>}
+          </>}
+      </div>
+    </div>
+  )
+}

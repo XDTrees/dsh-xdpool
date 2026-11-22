@@ -34,9 +34,11 @@ describe('numeric table columns line up with their headers', () => {
   })
 
   it('every numeric header carries the class that now works', () => {
-    const headers = [...page.matchAll(/<th className="num">([^<]*)</gu)]
-    // The recent-calls table has four numeric columns (in / out / cached / ttft).
-    expect(headers.length).toBeGreaterThanOrEqual(2)
+    // 按设计稿改成了 .tr 网格表：表头和单元格都用 .td-num 右对齐。
+    const headers = [...page.matchAll(/<span className="td td-num">([^<{]+)</gu)]
+    // 最近调用表有四个数字列（输入 / 输出 / 缓存 / 耗时）。
+    expect(headers.length).toBeGreaterThanOrEqual(4)
+    expect(page).toContain('<span className="td td-num" key={String(cellIndex)}>{cell}</span>')
   })
 
   it('the row payload is a fixed three-tuple, so a column cannot drift', () => {

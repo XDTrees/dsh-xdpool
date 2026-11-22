@@ -122,8 +122,9 @@ describe('the filter buttons carry their own counts', () => {
     // The buttons ARE the filter, so the count answers "how much is in this
     // category", not "how many match what I just typed".
     expect(page).toContain('const categoryCounts = useMemo')
-    expect(page).toContain('count: providers.length')
-    expect(page).toContain('count: categoryCounts.get(value) ?? 0')
+    // 设计稿 aggregate.html 的 .tab 把数字放在 <span class="n"> 里，不再走带括号的文案键。
+    expect(page).toContain('String(providers.length)')
+    expect(page).toContain('categoryCounts.get(value) ?? 0')
   })
 })
 
@@ -176,7 +177,9 @@ describe('each vendor is a compact card like the sign-in page', () => {
     expect(off).toContain('color:var(--faint)') // 未接入时是次要文字色
     // "Off" is not a failure and must not be painted like one.
     expect(off).not.toContain('state-error-primary')
-    expect(page).toContain('data-tone={enabled ? \'ok\' : \'off\'}')
+    // 设计稿 aggregate.html 的 .vd-state 用 data-on 区分已接入 / 未接入，
+    // 而且算的是「这家开着且聚合总开关也开着」，不是只看这一家。
+    expect(page).toContain('data-on={effective ? \'true\' : \'false\'}')
   })
 })
 
