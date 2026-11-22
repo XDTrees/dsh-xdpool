@@ -345,7 +345,12 @@ function FilterPick({ allLabel, value, options, onPick }: {
               background: 'var(--surface)',
               border: '1px solid var(--line-2)',
               borderRadius: 'var(--r-md)',
-              boxShadow: '0 8px 24px rgba(0,0,0,.35)',
+              /*
+                投影走变量：亮色主题在 theme-css.ts 里给了柔化版（纯黑 35% 在
+                浅底上比卡片自带的 --sh-* 重得多，会显脏）。暗色取不到这个变量，
+                退回原值 —— 外观一个像素都不变。
+              */
+              boxShadow: 'var(--xd-pop-shadow, 0 8px 24px rgba(0,0,0,.35))',
             }}
           >
             {[{ key: '', label: allLabel }, ...options].map(option => (

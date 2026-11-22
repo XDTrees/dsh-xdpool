@@ -33028,7 +33028,21 @@ function isSseQueueErrorCode(code) {
   return code === "TM.00001041" || /81111|TPM|(^|[^0-9])429([^0-9]|$)|rate.?limit|too many requests|排队|限流/i.test(code);
 }
 function isSseQuotaExhaustedErrorCode(code, message2) {
-  return code.includes("4291") || /insufficient[\s_-]+quota/i.test(message2);
+  // [xdpool-local] 额度耗尽也是一种「额度耗尽」—— issue #192.
+  //
+  // 这段只认 `4291` 和英文 `insufficient quota`，而 CodeArts 的积分耗尽长这样：
+  //
+  //   HTTP 400  {"error_code":"TM.00001050","error_msg":"您的积分已耗尽，请关注活动积分领取活动或者[升级套餐]"}
+  //
+  // 它一条都不命中，于是 400 被当成普通请求失败：账号不进冷却、轮转继续选它，
+  // 用户看到的是「同一条消息重发几次才成功」，界面只说 Failed to fetch。而这一
+  // 分支下面本来就有完整处理 —— 冷却到次日 UTC+8（updateModelRateLimit）、换下一个
+  // 账号、全池都耗尽才抛 QUOTA_EXCEEDED。缺的只是把码认出来。
+  //
+  // 中文提示一并匹配：CodeArts 的 error_code 有时为空而文案稳定。
+  return code.includes("4291")
+    || code.includes("TM.00001050")
+    || /insufficient[\s_-]+quota|\u79ef\u5206\u5df2\u8017\u5c3d|\u79ef\u5206\u4e0d\u8db3/i.test(message2);
 }
 function errorDetail(body) {
   try {

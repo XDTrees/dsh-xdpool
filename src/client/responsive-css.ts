@@ -44,7 +44,7 @@ export const RESPONSIVE_CSS = `
 .app[data-w="narrow"] .list-group{display:none}
 .app[data-w="narrow"] .ch{flex:0 0 auto;width:auto;max-width:180px;padding:4px 10px;min-height:28px;border:1px solid var(--line-2);border-radius:var(--r-pill);display:inline-flex;align-items:center;gap:6px}
 .app[data-w="narrow"] .ch[aria-current="true"]{border-color:transparent;background:var(--accent);color:var(--accent-ink)}
-.app[data-w="narrow"] .ch[aria-current="true"] .ch-n{color:var(--accent-ink);opacity:.8}
+.app[data-w="narrow"] .ch[aria-current="true"] .ch-n{color:var(--accent-ink)}
 .app[data-w="narrow"] .ch-mark{width:16px;height:16px;flex-basis:16px}
 .app[data-w="narrow"] .ch-name{font-size:var(--fs-xs)}
 .app[data-w="narrow"] .mhead{padding:var(--s4) var(--s4) var(--s3);margin-bottom:var(--s2)}
@@ -64,7 +64,17 @@ export const RESPONSIVE_CSS = `
 .app[data-w="phone"] .rail-item{flex:1 1 0;min-width:0; flex-direction:column;gap:2px; padding:6px 2px; justify-content:center; border-radius:var(--r-md);}
 .app[data-w="phone"] .rail-item svg{width:17px;height:17px}
 .app[data-w="phone"] .rail-item span{font-size:10px;line-height:1.2;text-align:center}
-.app[data-w="phone"] .rail-foot{display:none}
+.app[data-w="phone"] .rail-foot{display:flex;flex:0 0 46px;flex-direction:row;align-items:center;justify-content:center;padding:0;margin:0;gap:0}
+/*
+  手机档只放回主题开关。
+
+  .rail-foot 整条在手机上被收起（Star、交流群、侧栏入口都塞不进 dock），
+  但主题开关不一样：它是「外观」，跟窗口大小无关，而且手机上恰恰是用户
+  最可能要切亮色的时候（亮处看暗色屏）。所以这一格单独留出来，
+  其余成员继续隐藏。
+*/
+.app[data-w="phone"] .rail-foot > *{display:none}
+.app[data-w="phone"] .rail-foot > .rail-theme{display:flex;flex:0 0 46px;width:46px;padding-bottom:calc(4px + env(safe-area-inset-bottom,0px))}
 .app[data-w="phone"] .list{border-right:0; border-bottom:1px solid var(--line); background:var(--surface);}
 .app[data-w="phone"] .list-head{flex-direction:row;align-items:center;gap:var(--s2); padding:var(--s2) var(--s3); overflow-x:auto;}
 .app[data-w="phone"] .list-title{font-size:var(--fs-md);white-space:nowrap}
@@ -77,7 +87,7 @@ export const RESPONSIVE_CSS = `
 .app[data-w="phone"] .list-group{display:none;}
 .app[data-w="phone"] .ch{flex:0 0 auto;width:auto; max-width:176px; padding:5px 10px;min-height:30px; border:1px solid var(--line-2); border-radius:var(--r-pill); background:var(--surface); display:inline-flex;align-items:center;gap:6px;}
 .app[data-w="phone"] .ch[aria-current="true"]{border-color:transparent; background:var(--accent); color:var(--accent-ink);}
-.app[data-w="phone"] .ch[aria-current="true"] .ch-n{color:var(--accent-ink);opacity:.8}
+.app[data-w="phone"] .ch[aria-current="true"] .ch-n{color:var(--accent-ink)}
 .app[data-w="phone"] .ch-mark{width:16px;height:16px;flex-basis:16px;flex-shrink:0}
 .app[data-w="phone"] .ch-name{font-size:var(--fs-xs); flex:1 1 auto;min-width:0; overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .app[data-w="phone"] .ch-n{font-size:var(--fs-xs);flex:0 0 auto;margin-left:2px}

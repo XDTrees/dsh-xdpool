@@ -3398,6 +3398,21 @@ type ChannelLaneEvent = {
 } | {
   kind: 'done';
   finishReason: string;
+} |
+/**
+ * The turn ended in a failure the host reported — issue #195.
+ *
+ * Without this, `mapFinishReason` folded `kind:'error'` into `'stop'`, the
+ * gateway answered `finish_reason:"stop"` with empty content, and the host read
+ * that as `EMPTY_RESPONSE` — a *retryable* code. A genuine upstream failure
+ * therefore looked like a flaky model: the client retried until backoff ran
+ * out and the user never saw the reason. `message` carries the host's own text
+ * (the status included) so it can reach the client verbatim.
+ */
+{
+  kind: 'failed';
+  message: string;
+  status: number | undefined;
 };
 interface ChannelLane {
   rows: () => Promise<readonly ChannelLaneRow[]>;
@@ -4807,6 +4822,21 @@ export interface Config {
    * (the aggregate switch does not govern it — it is not an aggregate provider).
    */
   freeLane?: boolean;
+  /**
+   * Doubao model ids the user switched OFF on the card — issue #196.
+   *
+   * A DISABLE list, not an allow list, and the direction is the fix. The card
+   * keeps its ticks in the browser's localStorage, which this process cannot
+   * read, so `DoubaoHostAdapter.listModels` published the whole live roster
+   * while the card showed "4/16". The card mirrors the result here.
+   *
+   * An empty list means "nothing switched off" — which is also what every
+   * install starts as, because a settings array nobody has written yet reads as
+   * `[]`. Storing the complement instead would make a fresh install publish an
+   * empty group until the card was opened once: exactly the trap #122 documented
+   * for `enabledModelIds`, and it is avoided by keeping the polarity.
+   */
+  doubaoDisabledModels?: string[];
 }
 /** One region's saved model selection. */
 export interface ModelSelectionConfig {

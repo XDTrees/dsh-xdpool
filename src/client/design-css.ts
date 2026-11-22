@@ -102,29 +102,62 @@ export const DESIGN_TOKENS_CSS = `/* XD Pool 设计变量
 
 
 /* 数字等宽：刷新时不左右跳 */
-.num { font-variant-numeric: tabular-nums; }
+.app .num { font-variant-numeric: tabular-nums; }
 
-/* 焦点环：只给键盘用户 */
-:focus-visible {
+/*
+  焦点环：只给键盘用户。
+
+  作用域到 .app —— 这条原来是全局 :focus-visible，注入宿主页面后会把 DSH
+  自己每一个可聚焦元素的焦点环改成 var(--accent)。而这个变量只在 .app 上
+  定义，宿主那里读到的是未定义，整条 outline 声明被丢弃：宿主不但没拿到我们
+  的焦点环，还把自己的默认焦点环换成了一个无效值。插件不该改动宿主。
+*/
+.app :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-/* 滚动条：细、半透明、悬停变亮 */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: oklch(100% 0 0 / 0.08);
+/*
+  滚动条：细、半透明、悬停变亮。
+
+  同样作用域到 .app：这两条原来也是全局的，注入后宿主的每一个滚动条都会变成
+  10px 白色半透明。而且现在颜色来自 --line-2 / --line-3，那两个变量只在 .app
+  上定义 —— 挂在全局的话，宿主那边的 var() 读不到值，滚动条会直接失去背景。
+
+  暗色下是「一道亮痕」，亮色下是「一丝影」，两种都由变量翻转，规则本身不动。
+*/
+.app ::-webkit-scrollbar { width: 10px; height: 10px; }
+.app ::-webkit-scrollbar-track { background: transparent; }
+.app ::-webkit-scrollbar-thumb {
+  background: var(--line-2);
   border-radius: var(--r-pill);
   border: 3px solid transparent;
   background-clip: content-box;
   transition: background var(--t-fast) var(--ease);
 }
-::-webkit-scrollbar-thumb:hover { background: oklch(100% 0 0 / 0.16); background-clip: content-box; }
+.app ::-webkit-scrollbar-thumb:hover { background: var(--line-3); background-clip: content-box; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 1ms !important; animation-duration: 1ms !important; }
 }
+
+/*
+  亮色（护眼绿）的色值不在这个文件里 —— 见同目录的 theme-light.css。
+
+  为什么分开放：tokens.css 会被 scripts/extract-design-css.mjs 抽成插件的
+  design-css.ts，而那份产物是「暗色」的基准。亮色是一层覆盖（只改
+  .app[data-theme="light"] 下的变量 + 几处字面色），单独一份既不会被重新
+  抽取冲掉，也让「暗色一行没动」这件事可验证。
+
+  在设计稿里切换：页面自带的 <script>（每个 html 末尾）按 prefers-color-scheme
+  给出初始值，点左下角的开关改它，并记在 localStorage.xdpool.theme。
+
+  注意 check_design 的一个坑：它在暗模式下量这几页时会报「文字 1.1:1」这类
+  数字 —— 那是它自己把系统偏好改成暗色、而页面脚本已经把 data-theme 固定成
+  亮色造成的混搭，不是真的对比度问题。以截图为准（或把 data-theme 直接写
+  在 .app 上再量）。
+*/
+
 
 /* 渠道品牌色：取自项目 channel-roster.ts 的 accent
    深色背景下提亮到 72% 左右，否则原色显得脏
@@ -193,6 +226,19 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
   grid-template-columns: var(--rail-w) var(--list-w) minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
+  /*
+    底色和文字色写在 .app 上，不只写在 body 上。
+
+    以前靠 body：设计稿每页都是「body 铺 --bg，.app 透明」。插件里不成立 ——
+    它跑在宿主的对话框里，不能改 body，于是内容区（.main 没有自己的背景）
+    透出的是宿主底色。3.0.0 的 bridge 已经补过一次这个洞。
+
+    现在这一条同时是亮色的前提：.app[data-theme="light"] 换掉的是 .app 上的
+    变量，body 那层读不到它。底色留在 body 上，切亮色时内容区就会继续是
+    暗的（白栏 + 黑内容，字还看不太清）。
+  */
+  background: var(--bg);
+  color: var(--text);
 }
 /* 两栏：没有条目栏的页面 */
 .app-wide { grid-template-columns: var(--rail-w) minmax(0, 1fr); }
@@ -1012,7 +1058,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
   position:relative;align-self:start;
   transition:border-color var(--t-base) var(--ease),background var(--t-base) var(--ease);
 }
-.acct:hover{border-color:oklch(64% .14 155 / .45);background:var(--surface-2)}
+.acct:hover{border-color:var(--accent-line);background:var(--surface-2)}
 .acct-head{display:flex;align-items:center;gap:6px;min-width:0}
 .acct-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:0 0 auto}
 .acct-name{font-size:var(--fs-md);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 auto;min-width:0}
@@ -1053,9 +1099,9 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 .model-side{grid-area:side;display:flex;align-items:center;gap:var(--s2);flex:0 0 auto}
 
 .badge{font-size:12px;line-height:15px;padding:0 5px;border-radius:var(--r-pill);border:1px solid var(--line-2);color:var(--muted);white-space:nowrap;flex:0 0 auto}
-.badge[data-kind="free"]{border-color:oklch(64% .14 155/.55);background:var(--accent-dim);color:var(--accent);font-weight:600}
-.badge[data-kind="plan"]{border-color:oklch(76% .13 78/.6);background:oklch(76% .13 78/.14);color:var(--warn);font-weight:600}
-.badge[data-kind="vision"]{border-color:oklch(70% .1 250/.5);background:oklch(70% .1 250/.12);color:oklch(76% .09 250)}
+.badge[data-kind="free"]{border-color:var(--accent-line);background:var(--accent-dim);color:var(--accent);font-weight:600}
+.badge[data-kind="plan"]{border-color:color-mix(in oklch, var(--warn) 45%, transparent);background:color-mix(in oklch, var(--warn) 12%, transparent);color:var(--warn);font-weight:600}
+.badge[data-kind="vision"]{border-color:color-mix(in oklch, var(--info) 45%, transparent);background:color-mix(in oklch, var(--info) 12%, transparent);color:var(--info)}
 
 .model-mult{font-size:var(--fs-xs);color:var(--muted);font-variant-numeric:tabular-nums;flex:0 0 auto}
 .model-mult[data-free="true"]{color:var(--accent);font-weight:600}
@@ -1127,7 +1173,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
   border:1px solid var(--line);background:var(--surface);
   transition:border-color var(--t-base) var(--ease),background var(--t-base) var(--ease);
 }
-.card-ch:hover{border-color:oklch(64% .14 155 / .45);background:var(--surface-2)}
+.card-ch:hover{border-color:var(--accent-line);background:var(--surface-2)}
 .ch-head{display:flex;align-items:center;gap:var(--s2);min-width:0}
 .ch-logo{
   flex:0 0 32px;width:32px;height:32px;border-radius:var(--r-md);
@@ -1143,7 +1189,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
   border:1px solid var(--line-2);color:var(--faint);
 }
 .ch-state[data-bound="true"]{
-  border-color:oklch(64% .14 155 / .5);background:var(--accent-dim);
+  border-color:var(--accent-line);background:var(--accent-dim);
   color:var(--accent);font-weight:600;
 }
 .ch-note{margin:0;font-size:var(--fs-xs);color:var(--muted);line-height:1.6;min-height:32px}
@@ -1457,9 +1503,9 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
   flex:1 1 0;min-width:0;height:100%;
 }
 .col-bar{border-radius:2px 2px 0 0;background:var(--accent);min-height:2px;flex:0 0 auto;transition:background var(--t-base) var(--ease)}
-.col-bar[data-kind="in"]{background:oklch(64% .14 155/.55)}
+.col-bar[data-kind="in"]{background:var(--accent-line)}
 .col-bar[data-kind="out"]{background:var(--accent)}
-.col:hover .col-bar{background:oklch(72% .14 155)}
+.col:hover .col-bar{background:var(--accent-strong)}
 .axis{
   display:flex;gap:4px;
   font-size:var(--fs-xs);color:var(--faint);
@@ -1532,7 +1578,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
   transition:background var(--t-base) var(--ease),color var(--t-base) var(--ease);
 }
 .chip:hover{background:var(--surface-2);color:var(--text)}
-.chip[aria-pressed="true"]{background:var(--accent-dim);border-color:oklch(64% .14 155/.5);color:var(--accent);font-weight:600}
+.chip[aria-pressed="true"]{background:var(--accent-dim);border-color:var(--accent-line);color:var(--accent);font-weight:600}
 
 
 .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s2)}
@@ -1707,7 +1753,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 
 .accts{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:var(--s2)}
 .acct{padding:var(--s3);border-radius:var(--r-lg);border:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;gap:var(--s3);transition:border-color var(--t-base) var(--ease),background var(--t-base) var(--ease)}
-.acct:hover{border-color:oklch(64% .14 155 / .45);background:var(--surface-2)}
+.acct:hover{border-color:var(--accent-line);background:var(--surface-2)}
 .acct-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
 .acct-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:0 0 auto}
 .acct-name{font-size:var(--fs-md);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}
@@ -1857,7 +1903,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
     background:var(--accent);
     color:var(--accent-ink);
   }
-  .ch[aria-current="true"] .ch-n{color:var(--accent-ink);opacity:.8}
+  .ch[aria-current="true"] .ch-n{color:var(--accent-ink)}
   .ch-mark{width:16px;height:16px;flex-basis:16px;flex-shrink:0}
   .ch-name{
     font-size:var(--fs-xs);

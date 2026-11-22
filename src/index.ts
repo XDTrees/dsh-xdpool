@@ -8,6 +8,7 @@
 import { creditReservesWith } from './credit-reserve.ts'
 import { createDoubaoLlm, DOUBAO_CHANNEL as DOUBAO_LANE_CHANNEL } from './doubao-llm.ts'
 import { registerDoubaoRoutes } from './doubao-routes.ts'
+import { registerChannelUsageRoute } from './channel-usage-route.ts'
 import { createDoubaoAutomation } from './doubao-automation.ts'
 import { isUsageStrategy, readChannelUsage, writeChannelUsage } from './channel-usage.ts'
 import { DoubaoHostAdapter, DOUBAO_PROVIDER_ID } from './doubao-host-adapter.ts'
@@ -485,6 +486,21 @@ export interface Config {
    * (the aggregate switch does not govern it — it is not an aggregate provider).
    */
   freeLane?: boolean
+  /**
+   * Doubao model ids the user switched OFF on the card — issue #196.
+   *
+   * A DISABLE list, not an allow list, and the direction is the fix. The card
+   * keeps its ticks in the browser's localStorage, which this process cannot
+   * read, so `DoubaoHostAdapter.listModels` published the whole live roster
+   * while the card showed "4/16". The card mirrors the result here.
+   *
+   * An empty list means "nothing switched off" — which is also what every
+   * install starts as, because a settings array nobody has written yet reads as
+   * `[]`. Storing the complement instead would make a fresh install publish an
+   * empty group until the card was opened once: exactly the trap #122 documented
+   * for `enabledModelIds`, and it is avoided by keeping the polarity.
+   */
+  doubaoDisabledModels?: string[]
 }
 /** One region's saved model selection. */
 export interface ModelSelectionConfig {
@@ -693,7 +709,18 @@ export const Config: z<Config> = z.object({
   freeLane: asVolatile(
     z.boolean().default(false)
       .description('Offer the shared 免密 free models (the "XD Pool · 免费模型" group). Off by default: it is a third-party endpoint with no key of your own.'),
-  )
+  ),
+  /**
+   * Doubao's disable-list, mirrored from the card (see the Config doc above).
+   *
+   * Empty = nothing switched off = the whole roster. `asVolatile` is what the
+   * card needs (client writes, host reads without a restart); it is also why the
+   * polarity matters — the default `[]` has to be the harmless answer.
+   */
+  doubaoDisabledModels: asVolatile(
+    z.array(z.string()).default([])
+      .description('Doubao model ids switched off in the picker (mirrored from the Doubao card; empty shows the whole roster)'),
+  ),
 })
 /** Everything the CLI needs from a live plugin instance. */
 export interface WorkBuddyPoolApi {
@@ -1028,6 +1055,23 @@ export function apply(ctx: Context, config: Config = {}): void {
     // re-arms it without a host restart. An absent block means off, which is why
     // this passes `enabled: false` explicitly rather than leaving it undefined.
     core.scheduler.applyConfig(automationOptions(automation))
+    /**
+     * And finally: tell the HOST that the model list just changed.
+     *
+     * `applySelection` above only swaps the selection inside OUR catalogue. The
+     * host's picker renders whatever its own cached provider snapshot holds, and
+     * that cache is keyed by the identity of the `profiles` map (see
+     * `adapter.ts/ makeProvider`). Nothing in this function rebuilds it, so a
+     * save that narrowed the list left the picker showing the old one — the
+     * user unticks a model, presses save, the settings file is correct, and the
+     * model is still in the picker until DSH restarts or they press "refetch
+     * models". That is the report this line fixes.
+     *
+     * It is a no-op during the very first apply (the real implementation is
+     * assigned further down, once the adapters exist), which is why it is safe
+     * to call unconditionally here.
+     */
+    invalidateCatalog()
   }
   // ---------------------------------------------------------------------
   // Settings registration, on whichever host line is running.
@@ -1663,6 +1707,29 @@ function canonicalJson(value: unknown): string {
         void removeStoredSession()
       },
       automation: () => doubaoAutomation,
+      /**
+       * Persist the card's disable-list — issue #196.
+       *
+       * `setSetting` re-reads and throws when the document did not change, so a
+       * refused write reaches the card as a 500 instead of looking saved.
+       */
+      saveDoubaoSelection: async (ids) => {
+        const payload = [...ids]
+        await setSetting('doubaoDisabledModels', payload, payload)
+      },
+    })
+    /**
+     * The 「账号使用方式」 route — the one 3.0.0 forgot to register.
+     *
+     * The card and the channel pane both POST to this path; only the in-process
+     * `api.channelUsage()` half existed, so every click fell through to the
+     * host's catch-all and the user was told「账号使用方式没保存上：HTTP 405」.
+     * Registering it here is the whole fix — the read, the atomic write and the
+     * publish to the pack were already written and tested.
+     */
+    registerChannelUsageRoute(webCtx, {
+      pool: () => current().distribution ?? 'priority',
+      trustedHosts,
     })
     return registerPoolStatusRoute(webCtx, {
     pool: core.pool,
@@ -2307,7 +2374,18 @@ function canonicalJson(value: unknown): string {
            */
           releaseAdapterDoubao = ctx.llm.registerAdapter(
             [DOUBAO_PROVIDER_ID],
-            new DoubaoHostAdapter({ session: () => doubaoSession }),
+            new DoubaoHostAdapter({
+              session: () => doubaoSession,
+              /**
+               * Issue #196: the card's ticks reach the picker through this read.
+               *
+               * A native `LlmAdapter` is asked for its models on every catalogue
+               * build (`LlmRuntime.listModels` → `adapter.listModels`), so a
+               * settings change is visible without re-registering anything —
+               * unlike the pi-ai lanes, which need `invalidateCatalog`.
+               */
+              disabled: () => current().doubaoDisabledModels,
+            }),
           )
           /**
            * Marvis, the fifteenth channel.
@@ -2511,6 +2589,24 @@ function canonicalJson(value: unknown): string {
         void aggregateCatalog.onChange(() => {
           invalidateCatalog()
         })
+        /**
+         * The two gateway catalogues get the same treatment, which they never had.
+         *
+         * `applyConfigFromSource` now invalidates on every settings apply (see the
+         * note there), but a catalogue can also move WITHOUT a settings write: the
+         * startup seed and every "refetch models" land through
+         * `updateFromUpstream`, and an account swap re-seeds it. Those paths reach
+         * the host through this subscription instead of through a settings event.
+         *
+         * Registered through `ctx.effect` so a plugin reload disposes them: the
+         * aggregate and free subscriptions above hand their disposer away, which
+         * leaks one listener per reload. New subscriptions do not repeat that.
+         */
+        for (const catalog of [core.catalogs.cn, core.catalogs.global]) {
+          ctx.effect(() => catalog.onChange(() => {
+            invalidateCatalog()
+          }))
+        }
         // The same for the free lane: its roster is read live, so a
         // listing that lands after startup has to be able to move the picker
         // without a restart. This is also what makes a failed refresh honest —

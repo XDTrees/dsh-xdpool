@@ -719,6 +719,34 @@ function withBareModelId(raw: string, modelId: string): string {
           finish = event.finishReason
           continue
         }
+        /**
+         * The channel reported a failure — issue #195.
+         *
+         * This is the difference between "the model said nothing" and "the
+         * upstream refused". Answering `finish_reason:"stop"` with empty content
+         * made the host classify a real failure as `EMPTY_RESPONSE`, which is in
+         * `DEFAULT_RETRYABLE_CODES`: it retried until backoff ran out and the
+         * user never learned why. The status the host reported travels through
+         * when it has one; 502 is the honest default for "a channel in this
+         * deployment failed".
+         */
+        if (event.kind === 'failed') {
+          const status = event.status !== undefined && event.status >= 400 && event.status < 600
+            ? event.status
+            : 502
+          const message = `channel ${target.channel}: ${event.message}`
+          if (started) {
+            // The 200 and the first deltas are already on the wire; the only
+            // truthful thing left is an error frame followed by the terminator,
+            // so the client closes instead of reading this as a short answer.
+            res.write(`data: ${JSON.stringify({ error: { message, type: 'channel_upstream_error' } })}\n\n`)
+            res.write('data: [DONE]\n\n')
+            res.end()
+            return
+          }
+          writeOpenAIError(res, status, 'channel_upstream_error', message)
+          return
+        }
         const delta = event.delta
         if (typeof delta.content === 'string') text += delta.content
         if (typeof delta.reasoning_content === 'string') reasoning += delta.reasoning_content
@@ -1235,6 +1263,17 @@ function withBareModelId(raw: string, modelId: string): string {
               // no per-member usage block, so it is dropped rather than invented.
             } else if (event.kind === 'done') {
               if (typeof event.finishReason === 'string' && event.finishReason !== '') finishReason = event.finishReason
+            } else if (event.kind === 'failed') {
+              /**
+               * A member that failed is not a member that answered — issue #195.
+               *
+               * Throwing here is what routes it into the `catch` below, which
+               * records the member as failed and lets the chain try the next one.
+               * Treating it as an empty-but-successful answer (the old behaviour,
+               * via `finish_reason:"stop"`) stopped the chain on the member that
+               * could not answer and reported success.
+               */
+              throw new Error(event.message)
             } else {
               // `channels.turn` yields a structured delta (OpenAI-shaped already),
               // so it is passed through untouched rather than re-mapped.

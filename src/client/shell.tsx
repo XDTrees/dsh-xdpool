@@ -36,6 +36,7 @@ import { POOL_UPDATE_CHECK_PATH } from '../status-paths.ts'
 import { compareVersions } from '../update-check.ts'
 import type { ReactElement } from 'react'
 import { RAIL_ICONS, type RailIconName } from './rail-icons.ts'
+import { initialTheme, otherTheme, rememberTheme, storedTheme, type PoolTheme } from './theme.ts'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import type { XdPoolSettingsKey } from './locales.ts'
@@ -215,6 +216,39 @@ export function PoolShell({
    */
   const [pop, setPop] = useState<'update' | 'group' | undefined>(undefined)
   const [popAt, setPopAt] = useState<PopAnchor | undefined>(undefined)
+  /**
+   * 亮 / 暗。
+   *
+   * 初值同步读出来（localStorage → prefers-color-scheme），所以第一帧就是
+   * 正确的那一档，不会先画一帧暗色再跳成亮色。切换只写本地：这是插件自己的
+   * 外观偏好，不该占用宿主或插件设置文档里的一个字段。
+   */
+  const [theme, setTheme] = useState<PoolTheme>(initialTheme)
+  const toggleTheme = useCallback((): void => {
+    setTheme(current => {
+      const next = otherTheme(current)
+      rememberTheme(next)
+      return next
+    })
+  }, [])
+  /**
+   * 没按过按钮时跟随系统。
+   *
+   * 只在「用户还没表达过偏好」时生效：按过一次之后，系统再变也不动它 ——
+   * 那是用户明确选的，不该被系统的日落切换悄悄改回去。
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined
+    const media = window.matchMedia('(prefers-color-scheme: light)')
+    const onChange = (): void => {
+      if (storedTheme() !== undefined) return
+      // 没存过选择就重新按「宿主 → 系统」算一遍：宿主可能跟着系统一起换了。
+      setTheme(initialTheme())
+    }
+    media.addEventListener?.('change', onChange)
+    return () => { media.removeEventListener?.('change', onChange) }
+  }, [])
+
   /**
    * 后台悄悄查一次有没有新版（后端缓存 10 分钟，打开设置不会反复请求 npm）。
    * 有新版就在版本号旁边亮一个绿点 —— 不弹窗、不打断，读者想更新时点一下就能一键更新。
@@ -396,7 +430,8 @@ export function PoolShell({
   }, [active, select, tabs])
 
   return (
-    <div ref={appRef} className={wide ? 'app app-wide' : 'app'} data-w={tier} style={{ position: 'relative' }}>
+    <div ref={appRef} className={wide ? 'app app-wide' : 'app'} data-w={tier} data-theme={theme}
+      style={{ position: 'relative' }}>
       <nav className="rail" aria-label={'Pages'} ref={railRef} onKeyDown={onKeyDown}>
         {brand}
         {tabs.map(tab => (
@@ -419,6 +454,32 @@ export function PoolShell({
           </button>
         ))}
         <div className="rail-foot">
+          {/*
+            主题开关：左侧底部。
+
+            放在 rail-foot 的最上面，而不是塞进品牌行 —— 品牌行是「这是什么插件」，
+            rail-foot 是「界面自己的事」（Star / 群 / 外观），主题属于后者。
+            手机上 .rail-foot 整条被收进 dock，这一格在 responsive-css 里单独放回来，
+            所以手机也有得切。
+
+            图标画的是「按下去会变成什么」：现在是亮的，给月亮（切暗）；现在是暗的，
+            给太阳（切亮）。标题和 aria-label 把这句话说全，不靠图标猜。
+          */}
+          <button type="button" className="rail-item rail-theme"
+            data-testid="xdpool-theme-toggle"
+            title={theme === 'light'
+              ? (t?.('shell.themeToDark') ?? '切换到暗色')
+              : (t?.('shell.themeToLight') ?? '切换到亮色')}
+            aria-label={theme === 'light'
+              ? (t?.('shell.themeToDark') ?? '切换到暗色')
+              : (t?.('shell.themeToLight') ?? '切换到亮色')}
+            aria-pressed={theme === 'light'}
+            onClick={toggleTheme}>
+            <RailIcon name={theme === 'light' ? 'moon' : 'sun'} />
+            <span>{theme === 'light'
+              ? (t?.('shell.themeDark') ?? '暗色')
+              : (t?.('shell.themeLight') ?? '亮色')}</span>
+          </button>
           <a className="rail-item" href="https://github.com/XDTrees/dsh-xdpool" target="_blank" rel="noreferrer"
             title={t?.('shell.starHint') ?? 'Open this plugin on GitHub'}>
             <RailIcon name="star" />

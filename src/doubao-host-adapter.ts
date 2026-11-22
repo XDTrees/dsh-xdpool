@@ -98,8 +98,44 @@ interface DoubaoChatOptions {
 export interface DoubaoHostAdapterOptions {
   /** The stored session, read per call so a sign-in is visible without a restart. */
   session: () => DoubaoSession | undefined
+  /**
+   * The ids the user has switched OFF on the card, read per call so a toggle is
+   * visible without a restart — issue #196.
+   *
+   * Storage is a DISABLED list rather than an enabled one, and that is the whole
+   * reason this lane must not repeat the mistake the pool catalogue already paid
+   * for (#122): a settings list nobody has written yet reads as `[]`, so an
+   * enabled-allow-list would mean "serve nothing" on a fresh install — the
+   * Doubao group would vanish from the picker until the card happened to be
+   * opened once. A disabled-list reads the same `[]` as "nothing is switched
+   * off", which is exactly true, and "all switched off" stays expressible by
+   * listing every id.
+   */
+  disabled?: (() => readonly string[] | undefined) | undefined
   /** Called when the upstream reports its conversation id. */
   onConversationId?: ((id: string) => void) | undefined
+}
+
+/**
+ * Shrink a roster by the ids the user switched off — issue #196.
+ *
+ * Exported because it is the entire rule, and the rule is where this lane went
+ * wrong: `listModels` published the whole live roster while the card showed
+ * "4/16", so the picker offered twelve models the user had deliberately hidden.
+ * A pure function keeps that rule testable without a session or a network read.
+ *
+ * `undefined` and `[]` both mean "nothing switched off". They are not
+ * distinguished because the settings document cannot distinguish them (see the
+ * note on `disabled` above), and an empty disable-list is the safe reading:
+ * show everything, recoverable in one click.
+ */
+export function visibleDoubaoModels<T extends { id: string }>(
+  models: readonly T[],
+  disabled: readonly string[] | undefined,
+): readonly T[] {
+  if (disabled === undefined || disabled.length === 0) return models
+  const hidden = new Set(disabled)
+  return models.filter(model => !hidden.has(model.id))
 }
 
 /**
@@ -142,8 +178,17 @@ export class DoubaoHostAdapter extends LlmAdapter {
       return []
     }
     const models = await fetchLiveModels(session)
+    /**
+     * `cached` keeps the FULL roster on purpose — issue #196.
+     *
+     * An unchecked model must stay resolvable: a chain, a routing rule or an
+     * agent's pinned default may still name it, and the tick list governs what
+     * the picker OFFERS, never what the lane can serve. Filtering the cache
+     * would turn "hidden" into "broken" the next time one of those names it.
+     */
     this.cached = { at: Date.now(), models }
-    return models.map(model => this.describe(model))
+    const shown = visibleDoubaoModels(models, this.options.disabled?.())
+    return shown.map(model => this.describe(model))
   }
 
   override async resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo> {

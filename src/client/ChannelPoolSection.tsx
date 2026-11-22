@@ -170,6 +170,52 @@ async function saveDoubaoSkipped(modelId: string, disabled: boolean): Promise<vo
   globalThis.localStorage?.setItem(DOUBAO_SKIP_KEY, JSON.stringify([...next]))
 }
 
+/**
+ * The disable-list last pushed to the host (this browser session), for dedupe.
+ *
+ * The card re-reads itself after every action, and every read mirrors — without
+ * the fingerprint a single toggle would POST three times.
+ */
+let lastMirroredDoubaoDisabled: string | undefined
+
+/**
+ * Push this browser's Doubao ticks into the host — issue #196.
+ *
+ * The picker is built in the host process, which cannot read this card's
+ * localStorage; without the mirror it published the whole live roster however
+ * few models the card showed as enabled ("4/16" on the card, 16 in the picker).
+ *
+ * An UNSAVED list is not pushed: `readDoubaoSkipped() === undefined` is "the
+ * user never touched a tick", and leaving the host at its default (`[]`, meaning
+ * "nothing switched off, show everything") is the honest reading. Pushing `[]`
+ * there would be the same value but a different claim — and it also means a
+ * cleared browser can never wipe a list the host is still honouring.
+ *
+ * A refused write is not recorded as mirrored, so the next card read retries it.
+ */
+async function mirrorDoubaoDisabled(): Promise<void> {
+  const skipped = readDoubaoSkipped()
+  if (skipped === undefined) return
+  const ids = [...skipped]
+  const fingerprint = JSON.stringify([...ids].sort())
+  if (fingerprint === lastMirroredDoubaoDisabled) return
+  try {
+    const response = await fetch(POOL_DOUBAO_MODELS_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      // A Set serialises to `{}`, so the array is spelled out here.
+      body: JSON.stringify({ disabledModelIds: ids }),
+    })
+    // fetch does not reject on 4xx/5xx: a refused write stays unrecorded and is
+    // retried on the next card read or toggle, not silently marked mirrored.
+    if (!response.ok) return
+    lastMirroredDoubaoDisabled = fingerprint
+  } catch {
+    // Host unreachable or the route is not mounted: the local tick still holds.
+  }
+}
+
 /** What is stored per channel: counts, not accounts. */
 interface StoredCounts {
   /** Epoch ms of the read that produced these numbers. */
@@ -426,7 +472,7 @@ async function readDoubaoModels(): Promise<readonly { id: string; name: string; 
       | { models?: { id?: string; name?: string; badge?: string; rate?: string; contextWindow?: number }[] }
       | undefined
     const models = Array.isArray(body?.models) ? body.models : []
-    return models
+    const rows = models
       .filter(model => typeof model.id === 'string' && typeof model.name === 'string')
       .map(model => ({
         id: model.id as string,
@@ -442,6 +488,16 @@ async function readDoubaoModels(): Promise<readonly { id: string; name: string; 
         ...(typeof model.badge === 'string' && model.badge !== '' ? { description: model.badge } : {}),
         ...(typeof model.contextWindow === 'number' ? { contextWindow: model.contextWindow } : {}),
       }))
+    /**
+     * Close the restart gap — issue #196.
+     *
+     * A tick made before this fix, or in an earlier browser session, would leave
+     * the host's list stale until the user happened to toggle something. Every
+     * card read re-pushes the stored list, so opening the Doubao card once is
+     * enough to make the picker agree with it.
+     */
+    await mirrorDoubaoDisabled()
+    return rows
   } catch {
     return doubaoListing()
   }
@@ -1782,6 +1838,9 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
        */
       if (provider === 'doubao') {
         await saveDoubaoSkipped(modelId, !on)
+        // The localStorage write is only half the save: the host needs the list
+        // or the picker keeps publishing the whole roster (issue #196).
+        await mirrorDoubaoDisabled()
       } else {
         const envelope = await callPack('model.setDisabled', { provider, modelId, disabled: !on })
         if (!envelope.ok) {
@@ -1872,6 +1931,15 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
       if (provider === 'doubao') {
         const skipped = on ? [] : entry.models.map(model => model.id)
         globalThis.localStorage?.setItem(DOUBAO_SKIP_KEY, JSON.stringify(skipped))
+        /**
+         * Mirrored here as well, not left to the `finally { await load() }`.
+         *
+         * That re-read happens anyway, but it goes through `readDoubaoModels`,
+         * which exits early when the listing fetch fails — and 「全关」 is exactly
+         * the state a user reaches for when the upstream is misbehaving. Pushing
+         * here means the picker stops offering the models even then.
+         */
+        await mirrorDoubaoDisabled()
       } else {
         await callPack('model.setAllDisabled', { provider, disabled: !on })
       }

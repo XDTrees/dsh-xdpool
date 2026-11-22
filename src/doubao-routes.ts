@@ -47,6 +47,18 @@ export interface DoubaoRouteOptions {
   clear: () => void
   /** The credit automation, so the card can read and flip it. */
   automation: () => DoubaoAutomation
+  /**
+   * Persist the ids the user switched OFF on the card — issue #196.
+   *
+   * The tick list lives in the card's localStorage, which this half of the
+   * plugin can never read, so `DoubaoHostAdapter.listModels` published the whole
+   * live roster however few models the card showed as enabled. The card pushes
+   * its disable-list here and this callback mirrors it into the plugin settings.
+   *
+   * Absent means the settings service is unavailable, and the route answers 503
+   * rather than pretending the save stuck.
+   */
+  saveDoubaoSelection?: ((ids: readonly string[]) => void | Promise<void>) | undefined
   /** The authorities this deployment serves, so a proxied UI can sign in — see `origin-trust.ts`. */
   trustedHosts?: () => TrustedHosts
 }
@@ -209,8 +221,45 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
       kind: 'exact',
       path: POOL_DOUBAO_MODELS_PATH,
       handler: async (req: IncomingMessage, res: ServerResponse) => {
-        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+        if (req.method !== 'GET' && req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
         if (!originTrusted(req, deps.trustedHosts?.() ?? [])) return json(res, 403, { error: 'origin-not-trusted' })
+        /**
+         * POST stores the card's disable-list — issue #196.
+         *
+         * The picker is built in this process and cannot read the card's
+         * localStorage, so without this mirror it kept publishing every model the
+         * account owns while the card said "4/16".
+         *
+         * Validation is strict on purpose: a body with one non-string entry would
+         * otherwise be stored verbatim and silently hide nothing (or hide the
+         * wrong things), and a half-written list is indistinguishable from a
+         * deliberate one afterwards. A malformed body is refused whole.
+         *
+         * An EMPTY array is a real state — "nothing is switched off, show the whole
+         * roster" — and is stored as such. It is also what every install starts
+         * with, which is why the adapter reads it as "no restriction".
+         */
+        if (req.method === 'POST') {
+          if (deps.saveDoubaoSelection === undefined) {
+            return json(res, 503, { error: 'settings service unavailable; doubao selection cannot be saved' })
+          }
+          const body = await readJson(req)
+          const raw = body['disabledModelIds']
+          if (!Array.isArray(raw)) return json(res, 400, { error: 'disabledModelIds must be an array' })
+          const ids: string[] = []
+          for (const entry of raw) {
+            if (typeof entry !== 'string' || entry === '') {
+              return json(res, 400, { error: 'disabledModelIds must contain non-empty strings' })
+            }
+            if (!ids.includes(entry)) ids.push(entry)
+          }
+          try {
+            await deps.saveDoubaoSelection(ids)
+            return json(res, 200, { ok: true, disabledModelIds: ids })
+          } catch (error: unknown) {
+            return json(res, 500, { error: error instanceof Error ? error.message : String(error) })
+          }
+        }
         /**
          * The same list the picker gets.
          *

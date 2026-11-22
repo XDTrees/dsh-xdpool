@@ -7,6 +7,17 @@
   <a href="https://github.com/XDTrees/dsh-xdpool/stargazers"><img src="https://img.shields.io/github/stars/XDTrees/dsh-xdpool?style=flat-square" alt="GitHub stars"></a>
 </p>
 
+## 更新公告
+
+**3.0.1** — 亮色模式来了，五条反馈一次收完。
+
+- 新增护眼绿亮色模式：左栏一键切换，默认仍是暗色，选择会记住
+- 豆包渠道：卡片上的勾选状态同步进模型选择器，取消勾选即消失
+- 账号池：取消勾选的模型保存后立刻从选择器消失，不用再重启 DSH
+- 账号使用方式（优先/轮换/均衡/粘住/按到期）点了没反应、提示 HTTP 405 —— 已修
+- CodeArts 积分耗尽后不再被反复命中：识别 TM.00001050，冷却并换下一个账号
+- 渠道车道多轮对话第二轮必空响应 —— 已修，失败也会把上游原话透出来
+
 ## 先加群
 
 <p align="center">
