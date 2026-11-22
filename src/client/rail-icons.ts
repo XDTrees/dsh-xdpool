@@ -23,6 +23,12 @@ export const RAIL_ICONS = {
   group: '<path d="M21 12a9 9 0 11-4.5-7.8L21 3l-1 4.5"/><path d="M8 12h8M12 8v8"/>',
   sidebar: '<circle cx="12" cy="12" r="9"/><path d="M9 12h6"/>',
   dock: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  /*
+    外观切换用的一对：太阳 = 「点一下变亮」，月亮 = 「点一下变暗」。
+    和其余图标同一套 24 网格 / 1.8 描边，不另起风格。
+  */
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z"/>',
 } as const
 
 export type RailIconName = keyof typeof RAIL_ICONS

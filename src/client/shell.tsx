@@ -40,6 +40,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { CSSProperties, ReactNode } from 'react'
 import type { XdPoolSettingsKey } from './locales.ts'
 import { COMMUNITY_QR_QQ, COMMUNITY_QR_WECHAT } from './community-qr.ts'
+import { readTheme, rememberTheme, toggleTheme, type XdTheme } from './theme.ts'
 /** The translator the settings section injects. */
 type Translate = (key: XdPoolSettingsKey, params?: Record<string, unknown>) => string
 /** One page in the tab strip. `num` renders the OFM-style corner count. */
@@ -215,6 +216,20 @@ export function PoolShell({
    */
   const [pop, setPop] = useState<'update' | 'group' | undefined>(undefined)
   const [popAt, setPopAt] = useState<PopAnchor | undefined>(undefined)
+  /**
+   * 外观主题：暗色（设计稿原样）/ 护眼绿（亮色）。
+   *
+   * 初值在首次渲染时读 localStorage —— 晚一帧再读会先画暗色再跳成亮色，
+   * 每次打开设置都闪一下。`readTheme` 自己吞掉所有异常并回落暗色。
+   */
+  const [theme, setTheme] = useState<XdTheme>(readTheme)
+  const switchTheme = useCallback((): void => {
+    setTheme(current => {
+      const next = toggleTheme(current)
+      rememberTheme(next)
+      return next
+    })
+  }, [])
   /**
    * 后台悄悄查一次有没有新版（后端缓存 10 分钟，打开设置不会反复请求 npm）。
    * 有新版就在版本号旁边亮一个绿点 —— 不弹窗、不打断，读者想更新时点一下就能一键更新。
@@ -396,7 +411,7 @@ export function PoolShell({
   }, [active, select, tabs])
 
   return (
-    <div ref={appRef} className={wide ? 'app app-wide' : 'app'} data-w={tier} style={{ position: 'relative' }}>
+    <div ref={appRef} className={wide ? 'app app-wide' : 'app'} data-w={tier} data-theme={theme} style={{ position: 'relative' }}>
       <nav className="rail" aria-label={'Pages'} ref={railRef} onKeyDown={onKeyDown}>
         {brand}
         {tabs.map(tab => (
@@ -419,6 +434,22 @@ export function PoolShell({
           </button>
         ))}
         <div className="rail-foot">
+          {/*
+            外观切换：一行，图标是「你将得到的那套」—— 暗色下显示太阳（点一下变亮），
+            亮色下显示月亮（点一下变暗）。文案同理，避免出现「当前是暗色」这种
+            要读两遍才知道点了会怎样的标签。
+          */}
+          <button type="button" className="rail-item"
+            title={theme === 'dark'
+              ? (t?.('shell.themeToLight') ?? '切换到护眼绿（亮色）')
+              : (t?.('shell.themeToDark') ?? '切换到暗色')}
+            aria-pressed={theme === 'light'}
+            onClick={switchTheme}>
+            <RailIcon name={theme === 'dark' ? 'sun' : 'moon'} />
+            <span>{theme === 'dark'
+              ? (t?.('shell.themeLight') ?? '护眼绿')
+              : (t?.('shell.themeDark') ?? '暗色')}</span>
+          </button>
           <a className="rail-item" href="https://github.com/XDTrees/dsh-xdpool" target="_blank" rel="noreferrer"
             title={t?.('shell.starHint') ?? 'Open this plugin on GitHub'}>
             <RailIcon name="star" />

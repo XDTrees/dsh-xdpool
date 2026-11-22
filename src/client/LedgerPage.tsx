@@ -345,7 +345,13 @@ function FilterPick({ allLabel, value, options, onPick }: {
               background: 'var(--surface)',
               border: '1px solid var(--line-2)',
               borderRadius: 'var(--r-md)',
-              boxShadow: '0 8px 24px rgba(0,0,0,.35)',
+              /*
+                下拉浮层阴影。暗色里 .35 的纯黑是合适的（深底上要压出层次），
+                但亮色底上同样的值会变成一块明显偏脏的黑影，比卡片自带的
+                --sh-* 重得多。所以改走变量：亮色主题在 theme-css.ts 里给
+                --xd-pop-shadow 一个柔化的值，暗色取不到就退回原值 —— 外观不变。
+              */
+              boxShadow: 'var(--xd-pop-shadow, 0 8px 24px rgba(0,0,0,.35))',
             }}
           >
             {[{ key: '', label: allLabel }, ...options].map(option => (
