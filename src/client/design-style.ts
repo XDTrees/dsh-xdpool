@@ -14,12 +14,16 @@
 import { DESIGN_DETAIL_CSS, DESIGN_TOKENS_CSS } from './design-css.ts'
 import { RESPONSIVE_CSS } from './responsive-css.ts'
 import { CREDIT_DOT_CSS } from './credit-dot-css.ts'
+import { LIGHT_THEME_CSS } from './theme-css.ts'
 
 const STYLE_ID = 'dsh-xdpool/design.css'
 // 窄屏规则放最后：它们按插件宽度（.app[data-w]）覆盖前面的三列布局。
 // design-css.ts 是生成文件不能手改，所以单独一份。
 // 聊天框里的积分小图标在 .app 外面，用它自己的 dsm-xdpool-dot* 样式（credit-dot-css.ts）。
-const FULL_CSS = `${DESIGN_TOKENS_CSS}\n${DESIGN_DETAIL_CSS}\n${RESPONSIVE_CSS}\n${CREDIT_DOT_CSS}`
+//
+// 浅色主题排在最末：它只覆盖 `.app[data-theme="light"]` 下的变量（选择器权重也比
+// `.app` 高一层），放在最后是为了让「将来某份样式表也写了同名变量」时仍然是它说话。
+const FULL_CSS = `${DESIGN_TOKENS_CSS}\n${DESIGN_DETAIL_CSS}\n${RESPONSIVE_CSS}\n${CREDIT_DOT_CSS}\n${LIGHT_THEME_CSS}`
 
 /**
  * 装一次。重复调用不会重复插入。
