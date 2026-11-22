@@ -2029,45 +2029,13 @@ export function ChannelPoolSection({ t, active }: {
                   read as a caption rather than as a control, and it sat at the far edge where
                   the other cards put nothing.
                 */}
-                <div className="seg">
-                  <button
-                    type="button"
-                    className="seg"
-                    aria-expanded={fold === 'accounts'}
-                    disabled={accounts.length === 0}
-                    onClick={() => toggleFold(channel.id, 'accounts')}
-                  >
-                    <span className="" aria-hidden="true">▶</span>
-                    <span className="seg">
-                      {t?.('row.accountsTitle') ?? '池中账号'}
-                    </span>
-                    {accounts.length === 0 ? null : (
-                      <span className="num">{accounts.length}</span>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className="seg"
-                    aria-expanded={fold === 'models'}
-                    disabled={models.length === 0}
-                    onClick={() => toggleFold(channel.id, 'models')}
-                  >
-                    <span className="" aria-hidden="true">▸</span>
-                    <span className="seg">
-                      {t?.('row.modelsTitle') ?? '模型'}
-                    </span>
-                    {models.length === 0 ? null : (
-                      <span className="num">{models.length}</span>
-                    )}
-                  </button>
-                </div>
               </div>
               {entry.balanceError !== undefined && (
                 <p className="hint" role="status">
                   {entry.balanceError}
                 </p>
               )}
-              {fold === 'accounts' && (
+              {true && (
                 <ul className="facts">
                   {accounts.map(account => {
                     const balance = balanceOf(account.id)
@@ -2256,7 +2224,7 @@ export function ChannelPoolSection({ t, active }: {
                   })}
                 </ul>
               )}
-              {fold === 'models' && (
+              {true && (
                 <div className="models">
                   <div className="model-top">
                     <span>
