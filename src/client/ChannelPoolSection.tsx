@@ -1890,7 +1890,7 @@ export function ChannelPoolSection({ t, active }: {
         中栏的 .ch 行负责切换。原来这里 map 了全部二十家，平铺成网格 ——
         那不是这个页面的形状。
       */}
-      <div className="accts">
+      <div className="cpool-detail">
         {((): readonly ChannelEntry[] => {
           if (entries.length === 0) return []
           const picked = entries.find(entry => entry.channel.id === chosen)
@@ -2036,7 +2036,7 @@ export function ChannelPoolSection({ t, active }: {
                 </p>
               )}
               {true && (
-                <ul className="facts">
+                <div className="accts">
                   {accounts.map(account => {
                     const balance = balanceOf(account.id)
                     const amount1 = balance === undefined ? undefined : balanceAmount(balance.balance)
@@ -2222,14 +2222,18 @@ export function ChannelPoolSection({ t, active }: {
                       </li>
                     )
                   })}
-                </ul>
+                </div>
               )}
+              {/*
+                模型区块 —— 设计稿的 section.sec：标题「模型 4/21」+ 动作，下面才是列表。
+                原来是 .models + .model-top，没有区块标题层级。
+              */}
               {true && (
-                <div className="models">
-                  <div className="model-top">
-                    <span>
-                      {t?.('channelpool.metaModels', { enabled: modelsEnabled, total: models.length })
-                        ?? `${modelsEnabled}/${models.length}`}
+                <section className="sec">
+                  <div className="sec-head">
+                    <span className="sec-title">{t?.('row.modelsTitle') ?? '模型'}</span>
+                    <span className="sec-n num">
+                      {`${String(modelsEnabled)}/${String(models.length)}`}
                     </span>
                     <div className="sec-actions">
                       <button
@@ -2433,7 +2437,7 @@ export function ChannelPoolSection({ t, active }: {
                       })}
                     </ul>
                   )}
-                </div>
+                </section>
               )}
               {/*
                 `closed` is the pack's own word for "this channel has models but
