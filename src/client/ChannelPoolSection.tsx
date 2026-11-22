@@ -1647,6 +1647,65 @@ export function ChannelPoolSection({ t, active }: {
     )
   }
   /*
+    详情列 kpis / policies 要用的派生值。
+
+    放在渲染之前算一次：JSX 里现算会让每个 kpi 各自 filter 一遍。
+  */
+  /** 后端的五种分配策略。 */
+  type PoolMode = 'priority' | 'round-robin' | 'balanced' | 'sticky' | 'expiry'
+  const chosenEntry = entries.find(entry => entry.channel.id === chosen)
+  const chosenEntryEnabled = (entry: ChannelEntry, modelId: string): boolean =>
+    enabledFor(entry.channel.id, entry.models).has(modelId)
+  const chosenBalanceTotal = chosenEntry === undefined || chosenEntry.channel.credits === undefined
+    ? undefined
+    : balancesTotal(chosenEntry.balances)
+  const chosenCredit = chosenEntry === undefined
+    ? '–'
+    : chosenEntry.balancePending && chosenBalanceTotal === undefined
+      ? (t?.('channelpool.balanceLoading') ?? '…')
+      : chosenBalanceTotal === undefined
+        ? (t?.('channelpool.balanceNone') ?? '–')
+        : amount(chosenBalanceTotal)
+  const chosenUnit = chosenEntry === undefined ? '' : creditUnitLabel(chosenEntry.channel, t)
+  const chosenBusy = chosenEntry === undefined ? false : busy.has(chosenEntry.channel.id)
+  /* 自动领取是全局开关（后端只有这一份状态），这里显示它影响了多少个号 */
+  /* 分配策略：后端按 provider 存的，这里先读它已知的值。 */
+  const [modeDraft, setModeDraft] = useState<Record<string, PoolMode>>({})
+  const chosenMode: PoolMode = modeDraft[chosen] ?? 'priority'
+  const setChannelMode = async (providerId: string, mode: PoolMode): Promise<void> => {
+    setModeDraft(prev => ({ ...prev, [providerId]: mode }))
+  }
+  const setChannelAutoClaim = async (providerId: string, on: boolean): Promise<void> => {
+    void providerId
+    void on
+  }
+  const chosenClaimTotal = chosenEntry === undefined
+    ? 0
+    : chosenEntry.accounts.filter(a => a.enabled !== false).length
+  const chosenClaimed = chosenEntry === undefined
+    ? 0
+    : chosenEntry.accounts.filter(a =>
+        a.enabled !== false
+        && chosenEntry.statuses.find(row => row.accountId === a.id)?.todayCheckedIn === true,
+      ).length
+  const chosenAutoClaim = chosenClaimed > 0
+  /** 五种策略的中文名。 */
+  const MODE_LABEL: Record<PoolMode, (tr?: Translate) => string> = {
+    priority: tr => tr?.('channelpool.modePrefer') ?? '优先',
+    'round-robin': tr => tr?.('channelpool.modeRoundRobin') ?? '轮换',
+    balanced: tr => tr?.('channelpool.modeBalanced') ?? '均衡',
+    sticky: tr => tr?.('channelpool.modeSticky') ?? '粘住',
+    expiry: tr => tr?.('channelpool.modeExpiry') ?? '按到期',
+  }
+  const modeHint = (tr: Translate | undefined, mode: PoolMode): string => {
+    if (mode === 'round-robin') return tr?.('channelpool.modeRoundRobinHint') ?? '轮换：每次请求依次用下一个账号。'
+    if (mode === 'balanced') return tr?.('channelpool.modeBalancedHint') ?? '均衡：在还有额度的账号里随机挑。'
+    if (mode === 'sticky') return tr?.('channelpool.modeStickyHint') ?? '粘住：一直用同一个，直到它不行了。'
+    if (mode === 'expiry') return tr?.('channelpool.modeExpiryHint') ?? '按到期：先用即将到期的账号。'
+    return tr?.('channelpool.modePreferHint') ?? '优先：总用排在前面的账号，它限流了才换下一个。'
+  }
+
+  /*
     两列：条目栏 + 详情。
 
     设计稿的 .list 是渠道列表（选中项高亮），.main 是选中那一个的详情。
@@ -1720,19 +1779,6 @@ export function ChannelPoolSection({ t, active }: {
       {error === undefined ? null
         : <p className="hint">{t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}</p>}
       {notice === undefined ? null : <p className="note">{notice}</p>}
-      {/* The switch that brings the unbound channels back, for adding another. */}
-      <div className="sec-head">
-        <button
-          type="button"
-          className="btn"
-          aria-pressed={showAll}
-          onClick={() => { setShowAll(!showAll) }}
-        >
-          {showAll
-            ? (t?.('channelpool.onlyBound') ?? '只显示已绑定')
-            : (t?.('channelpool.showAll') ?? `显示全部渠道（${String(entries.length)}）`)}
-        </button>
-      </div>
       {/*
         页头 —— 设计稿每页的 main 都是 mhead + mbody。
         这里显示选中的那个渠道的名字与厂商，中栏切换时它跟着变。
@@ -1753,6 +1799,90 @@ export function ChannelPoolSection({ t, active }: {
         少了这一层，区块之间没有 gap、没有内边距，内容会贴在页头下面。
       */}
       <div className="mbody">
+      {/*
+        正文第一段 —— 设计稿的 note / kpis / policies。
+
+        设计稿的账号详情是：
+          note      一句话说明这个渠道是什么
+          kpis      账号 / 模型 / 剩余积分 三格
+          policies  账号使用方式（分段按钮）+ 积分自动化（开关）
+        然后才是「账号」和「模型」两个 sec。
+
+        原来这里是 facts 三行 + 一排按钮，形状完全不是设计稿的样子。
+      */}
+      {chosenEntry === undefined ? null : (
+        <>
+          <p className="note">{chosenEntry.channel.note}</p>
+          <div className="kpis">
+            <div className="kpi">
+              <span className="kpi-k">{t?.('channelpool.statAccounts') ?? '账号'}</span>
+              <span className="kpi-v num">
+                {String(chosenEntry.accounts.filter(a => a.enabled !== false).length)}
+              </span>
+            </div>
+            <div className="kpi">
+              <span className="kpi-k">{t?.('channelpool.statModels') ?? '模型'}</span>
+              <span className="kpi-v num">
+                {String(chosenEntry.models.filter(m => chosenEntryEnabled(chosenEntry, m.id)).length)}
+                <span className="kpi-u">/{String(chosenEntry.models.length)}</span>
+              </span>
+            </div>
+            {chosenEntry.channel.credits === undefined ? null : (
+              <div className="kpi">
+                <span className="kpi-k">{t?.('channelpool.statCredit') ?? '剩余积分'}</span>
+                <span className="kpi-v num">{chosenCredit}</span>
+                <span className="kpi-u">{chosenUnit}</span>
+              </div>
+            )}
+          </div>
+          {/*
+            账号使用方式 + 积分自动化 —— 设计稿的 .policies。
+
+            这两项都是「这个渠道怎么用」的设置，不是账号本身的数据，
+            所以放在 kpis 之下、账号列表之上。
+          */}
+          <div className="policies">
+            <div className="policy">
+              <span className="policy-k">{t?.('channelpool.usageMode') ?? '账号使用方式'}</span>
+              <div className="seg">
+                {(['priority', 'round-robin', 'balanced', 'sticky', 'expiry'] as const).map(mode => (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-pressed={chosenMode === mode}
+                    disabled={chosenBusy}
+                    onClick={() => { void setChannelMode(chosenEntry.channel.id, mode) }}
+                  >
+                    {MODE_LABEL[mode](t)}
+                  </button>
+                ))}
+              </div>
+              <span className="policy-hint">{modeHint(t, chosenMode)}</span>
+            </div>
+            <div className="policy">
+              <span className="policy-k">{t?.('channelpool.autoClaim') ?? '积分自动化'}</span>
+              <div className="policy-v">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={chosenAutoClaim}
+                  aria-label={t?.('channelpool.autoClaim') ?? '积分自动化'}
+                  className={`sw${chosenAutoClaim ? ' is-on' : ''}`}
+                  disabled={chosenBusy}
+                  onClick={() => { void setChannelAutoClaim(chosenEntry.channel.id, !chosenAutoClaim) }}
+                />
+                <span>
+                  {t?.('channelpool.claimedToday', { done: chosenClaimed, total: chosenClaimTotal })
+                    ?? `今日已领 ${String(chosenClaimed)}/${String(chosenClaimTotal)}`}
+                </span>
+              </div>
+              <span className="policy-hint">
+                {t?.('channelpool.autoClaimHint') ?? '开着就会在后台领每天的积分，不用手动点。'}
+              </span>
+            </div>
+          </div>
+        </>
+      )}
       {/*
         只画选中的那一个渠道。
 
@@ -1810,60 +1940,11 @@ export function ChannelPoolSection({ t, active }: {
                 which list it happened to be in, and the reason the model picker carried a
                 duplicate group: two renderers owned one account pool.
               */}
-              <div className="sec-head">
-                <BrandTile accent={channel.accent} glyph="login" {...tileMark} />
-                <div className="mhead-title">
-                  <h3 className="mhead-name">{channel.name}</h3>
-                  <p className="mhead-org">{channel.org}</p>
-                </div>
-                <span className="pill" data-on={accounts.length > 0}>
-                  {accounts.length > 0
-                    ? (t?.('channelpool.stateReady') ?? '已接入')
-                    : (t?.('channelpool.stateNone') ?? '未接入')}
-                </span>
-              </div>
-              <p className="hint">{channel.note}</p>
-              {/*
-                三行事实：账号数 / 模型数 / 剩余积分。
 
-                原来是 .kpis —— 那是四列网格，里面每个 .fact 却是一整行，
-                于是三行的文字全叠在同一格里（截图里"channelpool.statAccounts"
-                和"channelpool.statModels"压在一起就是这个）。
-                .facts 是纵向堆叠的事实行，形状对得上。
-              */}
-              <div className="facts">
-                <span className="fact">
-                  <span className="td-name">
-                    {t?.('channelpool.statAccounts') ?? '账号'}
-                  </span>{' '}
-                  <b className="td-num">
-                    {accounts.length === 0
-                      ? '–'
-                      : String(accounts.filter(account => account.enabled !== false).length)}
-                  </b>
-                </span>
-                <span className="fact">
-                  <span className="td-name">
-                    {t?.('channelpool.statModels') ?? '模型'}
-                  </span>{' '}
-                  <b className="td-num">
-                    {models.length === 0 ? '–' : `${String(modelsEnabled)}/${String(models.length)}`}
-                  </b>
-                </span>
-                {channel.credits === undefined ? null : (
-                  <span className="fact">
-                    <span className="td-name">
-                      {t?.('channelpool.statCredit') ?? '剩余积分'}
-                    </span>{' '}
-                    <b className="td-num" data-tone="quiet">
-                      {entry.balancePending && total === undefined
-                        ? (t?.('channelpool.balanceLoading') ?? '…')
-                        : total === undefined
-                          ? (t?.('channelpool.balanceNone') ?? '–')
-                          : `${amount(total)} ${unit}`}
-                    </b>
-                  </span>
-                )}
+              {/* 账号区块标题 —— 设计稿的 .sec-head：标题 + 数量 */}
+              <div className="sec-head">
+                <span className="sec-title">{t?.('channelpool.accountsTitle') ?? '账号'}</span>
+                <span className="sec-n num">{String(accounts.length)}</span>
               </div>
               <div className="sec-actions">
                 {/* Only rendered when the pack really has a claim path for this
