@@ -33,6 +33,7 @@ import { channelIcon, channelInitials } from './channel-icons.ts'
 import { ModelFactsRow } from './model-facts-row.tsx'
 import { modelFactsFor, formatModelCapacity, type ModelFacts, baseName, multiplierOf, multiplierTone } from './model-facts.ts'
 import { recommendUse } from './recommend-use.ts'
+import { PASTE_ROUTES, WINDOW_LOGIN_ROUTES, canStartLoginInPlace, loginKindOf } from './login-routes.ts'
 import {
   accountsFrom,
   autoCheckinFrom,
@@ -42,10 +43,12 @@ import {
   balancePackages,
   callPack,
   claimResultFrom,
+  createdFrom,
   creditStatusesFrom,
   fetchChannelModels,
   fetchChannels,
   modelsFrom,
+  pollFrom,
   providerStatusesFrom,
   setChannelModelContextBudget,
   sortChannelModels,
@@ -1166,6 +1169,20 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
   */
   const [ownActive, setOwnActive] = useState<string>('')
   /*
+    「添加账号」直接在账号池里发起登录的状态。
+
+    原来这个按钮只是 `setPage('channels')` —— 把读者扔到另一页，还要再找一次渠道、再点一次。
+    现在点它就地开始登录：开窗／粘贴／pack 登录页三种，各自走各自的路。
+      · working  正在等（窗口开着，或轮询中）
+      · paste    需要用户贴一段凭据
+      · failed   失败，附原因
+  */
+  const [loginState, setLoginState] = useState<
+    { channelId: string; phase: 'working' | 'paste' | 'failed'; message?: string } | undefined
+  >(undefined)
+  /** 页面卸载或换渠道时让在跑的轮询停下来。 */
+  const loginAbort = useRef<{ cancelled: boolean } | undefined>(undefined)
+  /*
     外部没传（或传了空串）时用自己那份。
 
     原来是 `active ?? ownActive` —— 但 `active` 的默认值是 `''`，
@@ -2102,6 +2119,138 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
     }
   }
 
+  /**
+   * 就地发起登录 —— 不再把读者扔到登录通道。
+   *
+   * 三条路，判据在 `login-routes.ts`：
+   *   · window  后端开一个独立浏览器窗口，等用户登完才返回（可能几分钟）
+   *   · paste   需要用户贴一段凭据，弹一个小框
+   *   · pack    pack 自带登录页：拿 loginUrl 开新标签，再轮询 login.poll
+   */
+  const startLogin = async (channelId: string, channelName: string): Promise<void> => {
+    /* 上一次还没跑完就取消它 —— 换渠道连着点时不能两条轮询同时在跑 */
+    if (loginAbort.current !== undefined) loginAbort.current.cancelled = true
+    const token = { cancelled: false }
+    loginAbort.current = token
+
+    const kind = loginKindOf(channelId)
+    if (kind === 'paste') {
+      setLoginState({ channelId, phase: 'paste' })
+      return
+    }
+
+    setLoginState({
+      channelId,
+      phase: 'working',
+      message: kind === 'window'
+        ? '已打开登录窗口，在里面登完之后会自动接入。'
+        : '正在打开登录页…',
+    })
+
+    if (kind === 'window') {
+      const route = WINDOW_LOGIN_ROUTES[channelId]
+      if (route === undefined) {
+        setLoginState({ channelId, phase: 'failed', message: '这个渠道没有配置登录路由' })
+        return
+      }
+      try {
+        const response = await fetch(route, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          /* Marvis 要选 QQ / 微信，这里默认 QQ；要选就回登录通道 */
+          body: JSON.stringify({}),
+        })
+        const body = await response.json().catch((): undefined => undefined) as
+          { ok?: boolean; signedIn?: boolean; reason?: string; message?: string } | undefined
+        if (token.cancelled) return
+        if (body?.signedIn === true || body?.ok === true) {
+          setLoginState(undefined)
+          invalidateProviderStatusCache()
+          await load()
+          setNotice(`${channelName} 已接入`)
+          return
+        }
+        setLoginState({
+          channelId,
+          phase: 'failed',
+          message: body?.reason ?? body?.message ?? '没有等到登录完成，可以再试一次。',
+        })
+      } catch (cause: unknown) {
+        if (token.cancelled) return
+        setLoginState({
+          channelId,
+          phase: 'failed',
+          message: cause instanceof Error ? cause.message : String(cause),
+        })
+      }
+      return
+    }
+
+    /* pack：拿登录页 → 开标签 → 轮询 */
+    let accountId = ''
+    try {
+      const envelope = await callPack('account.create', { provider: channelId })
+      if (token.cancelled) return
+      if (!envelope.ok) {
+        setLoginState({ channelId, phase: 'failed', message: envelope.error?.message ?? '登录失败' })
+        return
+      }
+      const created = createdFrom(envelope)
+      if (created === undefined) {
+        setLoginState({ channelId, phase: 'failed', message: '没有拿到登录页' })
+        return
+      }
+      accountId = created.accountId
+      window.open(created.loginUrl, '_blank', 'noopener')
+      setLoginState({
+        channelId,
+        phase: 'working',
+        message: '已打开登录页，登完之后这里会自动接入。',
+      })
+    } catch (cause: unknown) {
+      if (token.cancelled) return
+      setLoginState({
+        channelId,
+        phase: 'failed',
+        message: cause instanceof Error ? cause.message : String(cause),
+      })
+      return
+    }
+
+    /*
+      轮询。10 分钟和登录通道那边一致：手机验证码、看条款、输错一次密码都够用，
+      再久几乎肯定是人走了 —— 一直挂着会把一个待登录账号留在那儿。
+    */
+    for (let tick = 0; tick < 300; tick += 1) {
+      await new Promise<void>((resolve) => { setTimeout(resolve, 2_000) })
+      if (token.cancelled) return
+      try {
+        const envelope = await callPack('login.poll', { provider: channelId, accountId })
+        if (token.cancelled) return
+        if (!envelope.ok) continue
+        const answer = pollFrom(envelope)
+        if (!answer.done) continue
+        if (answer.success === false) {
+          setLoginState({
+            channelId,
+            phase: 'failed',
+            message: answer.error ?? '登录失败，可以再试一次。',
+          })
+          return
+        }
+        setLoginState(undefined)
+        invalidateProviderStatusCache()
+        await load()
+        setNotice(`${channelName} 已接入`)
+        return
+      } catch {
+        /* 单次查询失败不算结束，继续等 */
+      }
+    }
+    setLoginState({ channelId, phase: 'failed', message: '等了 10 分钟还没完成，可以再试一次。' })
+  }
+
   const accountAction = async (
     provider: string,
     accountId: string,
@@ -2459,11 +2608,27 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
             ? <span className="pill" data-tone="ok">{t?.('channelpool.stateReady') ?? '已连接'}</span>
             : <span className="pill">{t?.('channelpool.stateNone') ?? '未登录'}</span>}
         </div>
-        {onAddAccount === undefined ? null : (
+        {onAddAccount === undefined && !canStartLoginInPlace(channel.id) ? null : (
           <div className="mhead-actions">
-            {/* addAccount —— 加号就在账号旁边：去登录通道再登一个 */}
-            <button type="button" className="btn btn-primary" onClick={() => { onAddAccount() }}>
-              添加账号
+            {/*
+              就地登录：能自己发起的渠道直接在这里开始，不再跳去登录通道。
+              剩下真正做不了的（既没有开窗路由也没有粘贴路由）才回退到跳转。
+            */}
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={loginState?.channelId === channel.id && loginState.phase === 'working'}
+              onClick={() => {
+                if (canStartLoginInPlace(channel.id)) {
+                  void startLogin(channel.id, channel.name)
+                  return
+                }
+                onAddAccount?.()
+              }}
+            >
+              {loginState?.channelId === channel.id && loginState.phase === 'working'
+                ? '等待登录…'
+                : '添加账号'}
             </button>
           </div>
         )}
@@ -2471,6 +2636,54 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
 
       <div className="mbody">
         {banner}
+        {/*
+          就地登录的状态条。
+          因为不再跳页，读者需要在这一页看到「窗口已经开了 / 还在等 / 失败了为什么」。
+        */}
+        {loginState !== undefined && loginState.channelId === channel.id && (
+          loginState.phase === 'paste' ? (
+            <div className="banner">
+              <span className="banner-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                  <rect x="8" y="3" width="12" height="14" rx="2" />
+                  <path d="M16 17v2a2 2 0 01-2 2H6a2 2 0 01-2-2V9a2 2 0 012-2h2" />
+                </svg>
+              </span>
+              <span className="banner-body">
+                <span className="banner-t">这个渠道要粘贴凭据</span>
+                <span className="banner-d">
+                  它的登录要过验证码或桌面流程，这里接不住。去「登录通道」里点这一家的登录即可。
+                </span>
+              </span>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => { setLoginState(undefined); onAddAccount?.() }}
+              >
+                去登录通道
+              </button>
+            </div>
+          ) : (
+            <div className="banner">
+              <span className="banner-icon">
+                {loginState.phase === 'working'
+                  ? <span className="spinner" />
+                  : <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16v.01" /></svg>}
+              </span>
+              <span className="banner-body">
+                <span className="banner-t">
+                  {loginState.phase === 'working' ? '正在等登录完成' : '这一步没成'}
+                </span>
+                <span className="banner-d">{loginState.message ?? ''}</span>
+              </span>
+              {loginState.phase === 'failed' && (
+                <button type="button" className="btn" onClick={() => { setLoginState(undefined) }}>
+                  知道了
+                </button>
+              )}
+            </div>
+          )
+        )}
         {error === undefined ? null : (
           <p className="hint">
             {t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}
