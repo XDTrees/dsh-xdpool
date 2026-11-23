@@ -35,10 +35,18 @@ const TTL_MS = 10 * 60 * 1000
 
 let cached: { at: number; models: readonly DoubaoModelInfo[] } | undefined
 
-/** The reasoning ladder's numeric levels, as the vendor names them. */
+/**
+ * The reasoning ladder's numeric levels, as the vendor names them.
+ *
+ * Level 4 is `mid`, matching `DOUBAO_REASONING_LEVELS` in `doubao-catalog.ts`. It
+ * used to read `medium` in this module alone, so the same level had two spellings
+ * depending on which file produced it — and `doubao-upstream.ts`'s fallback was
+ * written against THIS spelling, which is why that fallback never matched a real
+ * level and silently resolved to the catalog default instead.
+ */
 const LEVEL_NAMES: Readonly<Record<number, string>> = {
   3: 'low',
-  4: 'medium',
+  4: 'mid',
   5: 'high',
   6: 'xhigh',
   7: 'max',
