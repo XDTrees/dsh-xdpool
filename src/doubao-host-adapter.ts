@@ -37,6 +37,7 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import { sessionUsable, type DoubaoSession } from './doubao-auth.ts'
 import { DOUBAO_MODELS, type DoubaoModelInfo } from './doubao-models.ts'
+import { DOUBAO_REASONING_LEVELS } from './doubao-catalog.ts'
 import { fetchLiveModels } from './doubao-catalog-live.ts'
 import { chat, type DoubaoImage } from './doubao-upstream.ts'
 
@@ -56,7 +57,15 @@ export const DOUBAO_PROVIDER_NAME = '豆包'
  */
 const CONTEXT_WINDOW = 256_000
 
-/** The ladder's display names, in the vendor's own words for this language. */
+/**
+ * The ladder's display names, in the vendor's own words for this language.
+ *
+ * `medium` is kept as an alias of `mid` rather than removed: the two spellings were
+ * in use at the same time (`doubao-menu.ts` said `medium`, `doubao-catalog.ts` said
+ * `mid`), so a menu row produced by either build still gets a name here. That
+ * module now says `mid`; this alias is what keeps an already-cached document from
+ * rendering a raw id.
+ */
 const EFFORT_LABELS: Readonly<Record<string, string>> = {
   low: '低',
   mid: '中',
@@ -65,6 +74,61 @@ const EFFORT_LABELS: Readonly<Record<string, string>> = {
   xhigh: '极高',
   max: '最高',
   auto: '自动',
+}
+
+/**
+ * Collapse a model's own ladder to three rungs: bottom, middle, top.
+ *
+ * WHY NOT A FIXED LIST OF NAMES
+ *
+ * The account publishes a DIFFERENT ladder per model, and the ladders differ in
+ * LENGTH, not just in naming. Measured 2026-11-23 on one account:
+ *
+ *   person-qwen4-max        低 / 高 / 极高                 (3 rungs, no 最高 at all)
+ *   person-deepseek-v4-1…   低 / 中 / 高 / 极高 / 最高      (5 rungs)
+ *
+ * Filtering by name (`['low','high','max']`) therefore cannot work: it erases
+ * `xhigh` on the Qwen entry and leaves it with TWO rungs — fewer than the app
+ * itself offers. Selecting by position gives every model the same three-rung
+ * SHAPE while each one keeps its own names, and the top rung is always a level
+ * that model really publishes.
+ *
+ * A ladder of three or fewer rungs is returned untouched: there is no middle to
+ * collapse, and de-duplicating would silently drop a rung the account can use.
+ */
+function collapseLadder(efforts: readonly string[] | undefined): readonly string[] {
+  if (efforts === undefined || efforts.length === 0) return []
+  if (efforts.length <= 3) return efforts
+  return [
+    efforts[0]!,
+    efforts[Math.floor((efforts.length - 1) / 2)]!,
+    efforts[efforts.length - 1]!,
+  ]
+}
+
+/**
+ * The reasoning block the picker renders, or nothing when the model has no ladder.
+ *
+ * A model that publishes no ladder at all (the image lane) gets NO `reasoning` key
+ * rather than three invented levels — the rule every other adapter here follows.
+ * `defaultEffort` is always one of the offered ids by construction: `high` when the
+ * ladder has it, otherwise the top rung.
+ */
+function reasoningOf(
+  efforts: readonly string[] | undefined,
+): Pick<LlmResolvedModelInfo, 'reasoning'> | Record<string, never> {
+  const ladder = collapseLadder(efforts)
+  if (ladder.length === 0) return {}
+  const fallback = ladder.includes('high') ? 'high' : ladder[ladder.length - 1]!
+  return {
+    reasoning: {
+      efforts: ladder.map(id => ({
+        id: ReasoningEffortId(id),
+        name: EFFORT_LABELS[id] ?? id,
+      })),
+      defaultEffort: ReasoningEffortId(fallback),
+    },
+  }
 }
 
 /** The output ceiling the lane requests. */
@@ -232,9 +296,20 @@ export class DoubaoHostAdapter extends LlmAdapter {
     if (prompt === '') throw new LlmError('这条请求没有可发送的文字', 'invalid')
 
     const requested = options['reasoningEffort']
-    const level = typeof requested === 'string' && ['low', 'mid', 'high'].includes(requested)
-      ? requested
-      : 'mid'
+    /**
+     * Accept any level the catalog knows, not just the three this lane used to publish.
+     *
+     * This gate used to whitelist `low`/`mid`/`high` and fall back to `mid`, so a level
+     * offered above `high` was silently rewritten before it reached the wire — the
+     * picker could display 极高 or 最高 and the request still went out as 中. The two
+     * sides have to agree or every rung past `high` is decorative.
+     *
+     * `DOUBAO_REASONING_LEVELS` is the authority here rather than a literal list: it is
+     * the same table `findReasoningLevel` resolves against, so a level this gate lets
+     * through is one the upstream can map to an ordinal.
+     */
+    const known = DOUBAO_REASONING_LEVELS.some(entry => entry.id === requested)
+    const level = typeof requested === 'string' && known ? requested : 'high'
     const signal = options['signal'] instanceof AbortSignal
       ? options['signal'] as AbortSignal
       : new AbortController().signal
@@ -300,14 +375,7 @@ export class DoubaoHostAdapter extends LlmAdapter {
       inputModalities: ['text', 'image'],
       defaultMaxTokens: MAX_OUTPUT_TOKENS,
       context: { contextWindow: model.contextWindow ?? CONTEXT_WINDOW },
-      reasoning: {
-        efforts: [
-          { id: ReasoningEffortId('low'), name: '低' },
-          { id: ReasoningEffortId('mid'), name: '中' },
-          { id: ReasoningEffortId('high'), name: '高' },
-        ],
-        defaultEffort: ReasoningEffortId('mid'),
-      },
+      ...reasoningOf(model.efforts),
       ...(rate === undefined
         ? {}
         : { tags: [{ text: rate, tone: free ? 'free' as const : 'price' as const }] }),
