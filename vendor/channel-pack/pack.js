@@ -30199,7 +30199,28 @@ var AccountPool = class {
    * **必须连同黑名单一起写回**：两种后端都是整体写入，
    * 只写 `{ accounts }` 会把同一文档里的 `disabledModels` 抹掉。
    */
-  async writeAccounts(accounts) {
+  async writeAccounts(accounts, options = {}) {
+    /**
+     * [xdpool-local] 空表保护 —— issue #200。
+     *
+     * 升级/重装过程中出现过「账号表被写成空、且没有 .bak」的报告：用户的 5 个
+     * 账号在界面上消失，磁盘上也没有可恢复的旧版本。一条空快照覆盖一张非空表
+     * 几乎总是故障（读失败、并发写、装包时的空状态），而不是用户意图 —— 逐个
+     * 删除账号走的是 `removeAccount`，那条路径显式传 `allowEmpty`。
+     *
+     * 拒绝时保留内存与磁盘上的旧表，并留下可查的日志；真要一次性清空（迁移、
+     * 重置）可以设 `DSH_XDPOOL_ALLOW_EMPTY_ACCOUNTS=1`。
+     */
+    const empty = Array.isArray(accounts) && accounts.length === 0
+    const hadRows = Array.isArray(this.cache) && this.cache.length > 0
+    const forced = typeof process !== 'undefined' && process.env.DSH_XDPOOL_ALLOW_EMPTY_ACCOUNTS === '1'
+    if (empty && hadRows && options.allowEmpty !== true && !forced) {
+      this.ctx.logger?.warn?.(
+        `[channel-pack] 拒绝用空账号表覆盖现有 ${this.cache.length} 个账号（疑似升级/重装时的空快照）；`
+        + '确需清空请逐个删除，或设 DSH_XDPOOL_ALLOW_EMPTY_ACCOUNTS=1'
+      )
+      return
+    }
     this.cache = accounts;
     this.loaded = true;
     if (this.store.kind === "memory") {
@@ -30664,7 +30685,8 @@ var AccountPool = class {
       await this.ctx.credentials.unset(credentialRef(entry.credentialRef));
     } catch {
     }
-    await this.writeAccounts(this.readAccounts().filter((a) => a.id !== id));
+    // 显式删除：删到空也要写进去，所以带上 allowEmpty。
+    await this.writeAccounts(this.readAccounts().filter((a) => a.id !== id), { allowEmpty: true });
   }
   /**
    * 重排某 provider 下账号的顺序（Channel Pack 拖拽排序）。

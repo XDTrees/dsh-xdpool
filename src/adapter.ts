@@ -136,6 +136,16 @@ export interface WorkBuddyAdapterOptions {
    * without a restart.
    */
   extraRows?: (() => readonly FreeModelRow[]) | undefined
+  /**
+   * Whether this region's pool holds at least one account — issue #204.
+   *
+   * Without it the provider published the built-in roster even on a machine with
+   * nobody signed in: the picker showed a full WorkBuddy group whose every call
+   * could only fail. Both other adapters answer "no catalogue" when they have no
+   * credential (`providerCatalogVisible` in the pack, and the Doubao adapter
+   * since #169), and this one is no different.
+   */
+  hasAccounts?: (() => boolean) | undefined
 }
 /** What {@link createWorkBuddyAdapter} hands back. */
 export interface WorkBuddyAdapter {
@@ -355,6 +365,12 @@ export function createWorkBuddyAdapter(options: WorkBuddyAdapterOptions): WorkBu
   const aggregateCatalog = isAggregateCatalog(catalog)
   const extraRows = options.extraRows
   const buildModels = (): Model<Api>[] => {
+    /**
+     * No account, no catalogue — issue #204. Answered before anything else so a
+     * machine that never signed in shows no group at all rather than a list of
+     * models that cannot answer.
+     */
+    if (options.hasAccounts?.() === false) return []
     const baseUrl = `${shim.baseUrl()}/v1`
     if (extraRows !== undefined) {
       return (extraRows() ?? []).map(row => toExtraLaneModel(row, baseUrl, providerId))

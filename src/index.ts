@@ -2276,6 +2276,14 @@ function canonicalJson(value: unknown): string {
             catalog: core.catalogs.cn,
             providerId: POOL_PROVIDER_BY_REGION.cn,
             displayName: POOL_NAME_BY_REGION.cn,
+            /**
+             * 池里没有这个区域的账号时，不发布任何模型 —— issue #204。
+             *
+             * 之前会照发内置目录，于是没登录的人也看到一整组 WorkBuddy 模型，
+             * 点任何一个都只会失败。区域按账号自己的 domain 判定，和池子的
+             * 选号逻辑用同一个函数。
+             */
+            hasAccounts: () => core.pool.list('cn').length > 0,
           }),
           global: createWorkBuddyAdapter({
             ctx,
@@ -2283,6 +2291,14 @@ function canonicalJson(value: unknown): string {
             catalog: core.catalogs.global,
             providerId: POOL_PROVIDER_BY_REGION.global,
             displayName: POOL_NAME_BY_REGION.global,
+            /**
+             * 池里没有这个区域的账号时，不发布任何模型 —— issue #204。
+             *
+             * 之前会照发内置目录，于是没登录的人也看到一整组 WorkBuddy 模型，
+             * 点任何一个都只会失败。区域按账号自己的 domain 判定，和池子的
+             * 选号逻辑用同一个函数。
+             */
+            hasAccounts: () => core.pool.list('global').length > 0,
           }),
           // The third lane: providers the user holds a key for. It reuses the CN
           // shim's loopback (the composite model id in the request is what

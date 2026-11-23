@@ -3661,6 +3661,16 @@ interface WorkBuddyAdapterOptions {
    * without a restart.
    */
   extraRows?: (() => readonly FreeModelRow[]) | undefined;
+  /**
+   * Whether this region's pool holds at least one account — issue #204.
+   *
+   * Without it the provider published the built-in roster even on a machine with
+   * nobody signed in: the picker showed a full WorkBuddy group whose every call
+   * could only fail. Both other adapters answer "no catalogue" when they have no
+   * credential (`providerCatalogVisible` in the pack, and the Doubao adapter
+   * since #169), and this one is no different.
+   */
+  hasAccounts?: (() => boolean) | undefined;
 }
 /** What {@link createWorkBuddyAdapter} hands back. */
 interface WorkBuddyAdapter {
