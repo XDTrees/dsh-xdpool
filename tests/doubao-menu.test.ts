@@ -56,7 +56,8 @@ describe('one model entry', () => {
     expect(model?.name).toBe('Kimi K3')
     expect(model?.contextWindow).toBe(300000)
     expect(model?.rate).toBe('1.48x')
-    expect(model?.efforts).toEqual(['low', 'medium', 'high'])
+    // 档位 id 与 catalog / adapter 一致用 `mid`：同一个档位两个名字会让选择器拿不到它（#207）。
+    expect(model?.efforts).toEqual(['low', 'mid', 'high'])
   })
 
   it('keeps the ladder PER MODEL', () => {

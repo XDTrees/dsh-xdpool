@@ -501,6 +501,15 @@ export interface Config {
    * for `enabledModelIds`, and it is avoided by keeping the polarity.
    */
   doubaoDisabledModels?: string[]
+  /**
+   * The card's 「全关」 — issue: 「豆包模型全关了但选择器还在」.
+   *
+   * The disable-list alone cannot carry this: an all-off that stored `[]` (the
+   * card's roster had not loaded yet) reads back as "nothing disabled", and an
+   * all-off that stored every id stops working the moment a NEW model appears
+   * upstream. One explicit flag says exactly what the user pressed.
+   */
+  doubaoHideAllModels?: boolean
 }
 /** One region's saved model selection. */
 export interface ModelSelectionConfig {
@@ -720,6 +729,11 @@ export const Config: z<Config> = z.object({
   doubaoDisabledModels: asVolatile(
     z.array(z.string()).default([])
       .description('Doubao model ids switched off in the picker (mirrored from the Doubao card; empty shows the whole roster)'),
+  ),
+  /** The card's 「全关」, mirrored so the picker can empty the group (see the Config doc). */
+  doubaoHideAllModels: asVolatile(
+    z.boolean().default(false)
+      .description('Hide every Doubao model in the picker (the card\'s 全关 switch)'),
   ),
 })
 /** Everything the CLI needs from a live plugin instance. */
@@ -1713,9 +1727,10 @@ function canonicalJson(value: unknown): string {
        * `setSetting` re-reads and throws when the document did not change, so a
        * refused write reaches the card as a 500 instead of looking saved.
        */
-      saveDoubaoSelection: async (ids) => {
+      saveDoubaoSelection: async (ids, hideAll) => {
         const payload = [...ids]
         await setSetting('doubaoDisabledModels', payload, payload)
+        await setSetting('doubaoHideAllModels', hideAll === true, hideAll === true)
       },
     })
     /**
@@ -2385,6 +2400,8 @@ function canonicalJson(value: unknown): string {
                * unlike the pi-ai lanes, which need `invalidateCatalog`.
                */
               disabled: () => current().doubaoDisabledModels,
+              /** 「全关」 — an explicit state, not a long disable-list. */
+              hideAll: () => current().doubaoHideAllModels === true,
             }),
           )
           /**

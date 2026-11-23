@@ -4837,6 +4837,15 @@ export interface Config {
    * for `enabledModelIds`, and it is avoided by keeping the polarity.
    */
   doubaoDisabledModels?: string[];
+  /**
+   * The card's 「全关」 — issue: 「豆包模型全关了但选择器还在」.
+   *
+   * The disable-list alone cannot carry this: an all-off that stored `[]` (the
+   * card's roster had not loaded yet) reads back as "nothing disabled", and an
+   * all-off that stored every id stops working the moment a NEW model appears
+   * upstream. One explicit flag says exactly what the user pressed.
+   */
+  doubaoHideAllModels?: boolean;
 }
 /** One region's saved model selection. */
 export interface ModelSelectionConfig {

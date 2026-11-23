@@ -39,6 +39,7 @@ import { sessionUsable, type DoubaoSession } from './doubao-auth.ts'
 import { DOUBAO_MODELS, type DoubaoModelInfo } from './doubao-models.ts'
 import { fetchLiveModels } from './doubao-catalog-live.ts'
 import { chat, type DoubaoImage } from './doubao-upstream.ts'
+import { DOUBAO_REASONING_LEVELS } from './doubao-catalog.ts'
 
 /** The provider id the picker groups by. */
 export const DOUBAO_PROVIDER_ID = 'doubao'
@@ -65,6 +66,36 @@ const EFFORT_LABELS: Readonly<Record<string, string>> = {
   xhigh: '极高',
   max: '最高',
   auto: '自动',
+}
+
+/**
+ * What a model falls back to when the listing carried no ladder of its own.
+ *
+ * The five static rows have no `efforts`, and the picker has always shown
+ * 低/中/高 for them — keeping that is what makes this change invisible to
+ * anyone whose account does not publish ladders (issue #207).
+ */
+const FALLBACK_EFFORTS: readonly string[] = ['low', 'mid', 'high']
+
+/**
+ * Three levels that sit at the same POSITIONS on whatever ladder a model has.
+ *
+ * Not "filter by name": Qwen 4 Max publishes 低/高/极高 (three levels, no 最高 at
+ * all), so a `['low','high','max']` filter left it with two — fewer than the
+ * client itself offers. Taking the first, the middle and the last gives every
+ * model three levels, and the top one is always the top one it really publishes.
+ */
+export function collapseLadder(efforts: readonly string[] | undefined): readonly string[] {
+  const ladder = (efforts ?? []).filter(level => typeof level === 'string' && level !== '')
+  if (ladder.length === 0) return FALLBACK_EFFORTS
+  if (ladder.length <= 3) return ladder
+  const middle = ladder[Math.floor((ladder.length - 1) / 2)] as string
+  return [ladder[0] as string, middle, ladder[ladder.length - 1] as string]
+}
+
+/** The label for one level id, falling back to the id itself. */
+function effortLabel(level: string): string {
+  return EFFORT_LABELS[level] ?? level
 }
 
 /** The output ceiling the lane requests. */
@@ -112,6 +143,17 @@ export interface DoubaoHostAdapterOptions {
    * listing every id.
    */
   disabled?: (() => readonly string[] | undefined) | undefined
+  /**
+   * The user pressed 「全关」 on the card — every model off, grouped.
+   *
+   * A separate flag because the disable-LIST cannot express it: "all models
+   * switched off" has to be stored as every id, and the card does not always
+   * know the whole roster (the listing can still be loading when the button is
+   * pressed), so an all-off that stored `[]` was read back as "nothing
+   * disabled" — the picker kept showing every model, which is the report this
+   * flag exists for.
+   */
+  hideAll?: (() => boolean) | undefined
   /** Called when the upstream reports its conversation id. */
   onConversationId?: ((id: string) => void) | undefined
 }
@@ -160,6 +202,15 @@ export class DoubaoHostAdapter extends LlmAdapter {
   }
 
   override async listModels(_provider: string): Promise<readonly LlmModelInfo[]> {
+    /**
+     * 「全关」 is an explicit state, not a very long disable-list — see the
+     * `hideAll` option. Answered before the session read so it holds even when
+     * the listing itself cannot be fetched.
+     */
+    if (this.options.hideAll?.() === true) {
+      this.cached = undefined
+      return []
+    }
     const session = this.options.session()
     /**
      * No session, no models — issue #169.
@@ -232,7 +283,15 @@ export class DoubaoHostAdapter extends LlmAdapter {
     if (prompt === '') throw new LlmError('这条请求没有可发送的文字', 'invalid')
 
     const requested = options['reasoningEffort']
-    const level = typeof requested === 'string' && ['low', 'mid', 'high'].includes(requested)
+    /**
+     * Accept every level the vendor publishes — issue #207.
+     *
+     * The whitelist used to be the literal `['low','mid','high']`, so a picker
+     * showing 极高/最高 still had them silently downgraded to 中 on the way out:
+     * the display and the wire disagreed. `DOUBAO_REASONING_LEVELS` is the same
+     * table the picker's labels come from, so the two cannot drift.
+     */
+    const level = typeof requested === 'string' && DOUBAO_REASONING_LEVELS.some(entry => entry.id === requested)
       ? requested
       : 'mid'
     const signal = options['signal'] instanceof AbortSignal
@@ -300,14 +359,28 @@ export class DoubaoHostAdapter extends LlmAdapter {
       inputModalities: ['text', 'image'],
       defaultMaxTokens: MAX_OUTPUT_TOKENS,
       context: { contextWindow: model.contextWindow ?? CONTEXT_WINDOW },
-      reasoning: {
-        efforts: [
-          { id: ReasoningEffortId('low'), name: '低' },
-          { id: ReasoningEffortId('mid'), name: '中' },
-          { id: ReasoningEffortId('high'), name: '高' },
-        ],
-        defaultEffort: ReasoningEffortId('mid'),
-      },
+      /**
+       * The ladder each model actually publishes — issue #207.
+       *
+       * This used to be a hard-coded 低/中/高 for every row, so Kimi's 最高 and
+       * Qwen's 极高 were unreachable from the picker even though the client's own
+       * menu had been parsed into `efforts` all along. `collapseLadder` keeps
+       * three levels for the picker but takes them from the model's real list.
+       *
+       * `reasoning: false` (豆包快速) carries no ladder at all: offering a
+       * thinking control for a model that does not think is worse than offering
+       * none.
+       */
+      ...(model.reasoning === false
+        ? {}
+        : ((): LlmResolvedModelInfo['reasoning'] => {
+            const levels = collapseLadder(model.efforts)
+            const middle = levels[Math.floor((levels.length - 1) / 2)] as string
+            return {
+              efforts: levels.map(level => ({ id: ReasoningEffortId(level), name: effortLabel(level) })),
+              defaultEffort: ReasoningEffortId(middle),
+            }
+          })()),
       ...(rate === undefined
         ? {}
         : { tags: [{ text: rate, tone: free ? 'free' as const : 'price' as const }] }),

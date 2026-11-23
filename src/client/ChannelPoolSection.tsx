@@ -143,6 +143,35 @@ const COUNTS_STORE_KEY = 'dsh-xdpool.channel-counts.v1'
 const DOUBAO_SKIP_KEY = 'dsh-xdpool.doubao-skipped-models.v1'
 
 /**
+ * Whether the user pressed 「全关」 on the Doubao card.
+ *
+ * Kept beside the skip list because the skip list cannot express it: pressing
+ * 全关 before the roster has loaded writes `[]`, which reads back as "nothing
+ * switched off" and left the picker showing every model. This flag says exactly
+ * what was pressed, and survives a card reopen.
+ */
+const DOUBAO_HIDE_ALL_KEY = 'dsh-xdpool.doubao-hide-all.v1'
+
+/** Read the 「全关」 flag; false when it was never set. */
+function readDoubaoHideAll(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(DOUBAO_HIDE_ALL_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+/** Record the 「全关」 flag. */
+function saveDoubaoHideAll(hidden: boolean): void {
+  try {
+    if (hidden) globalThis.localStorage?.setItem(DOUBAO_HIDE_ALL_KEY, 'true')
+    else globalThis.localStorage?.removeItem(DOUBAO_HIDE_ALL_KEY)
+  } catch {
+    // A blocked storage leaves the flag unset; the id list still carries the rest.
+  }
+}
+
+/**
  * The Doubao models the user switched off.
  *
  * `undefined` means "never configured", which is different from "none switched off": the first
@@ -195,9 +224,13 @@ let lastMirroredDoubaoDisabled: string | undefined
  */
 async function mirrorDoubaoDisabled(): Promise<void> {
   const skipped = readDoubaoSkipped()
-  if (skipped === undefined) return
-  const ids = [...skipped]
-  const fingerprint = JSON.stringify([...ids].sort())
+  const hideAll = readDoubaoHideAll()
+  if (skipped === undefined && !hideAll) return
+  const ids = [...(skipped ?? [])]
+  // The flag is part of the fingerprint: 全关 then 全开 sends the same (empty)
+  // list twice, and the second one has to reach the host or the picker stays
+  // empty.
+  const fingerprint = JSON.stringify([[...ids].sort(), hideAll])
   if (fingerprint === lastMirroredDoubaoDisabled) return
   try {
     const response = await fetch(POOL_DOUBAO_MODELS_PATH, {
@@ -205,7 +238,7 @@ async function mirrorDoubaoDisabled(): Promise<void> {
       headers: { 'content-type': 'application/json' },
       credentials: 'same-origin',
       // A Set serialises to `{}`, so the array is spelled out here.
-      body: JSON.stringify({ disabledModelIds: ids }),
+      body: JSON.stringify({ disabledModelIds: ids, hideAll }),
     })
     // fetch does not reject on 4xx/5xx: a refused write stays unrecorded and is
     // retried on the next card read or toggle, not silently marked mirrored.
@@ -1218,7 +1251,7 @@ async function fetchOwnSession(channel: string): Promise<
  * `active` 为空时（首次进入、或选中的渠道被移除）退回第一家，这样右栏
  * 永远不会是空的。
  */
-export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoClaimBusy, onAutoClaim, banner }: {
+export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoClaimBusy, onAutoClaim, autoClaimRunning, onAutoClaimRun, banner }: {
   readonly t?: Translate | undefined
   /** 中栏选中的渠道 id；空则显示第一家。 */
   readonly active?: string | undefined
@@ -1227,6 +1260,10 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
   /** 积分自动化（全局调度器）当前是否开着。 */
   readonly autoClaim?: boolean | undefined
   readonly autoClaimBusy?: boolean | undefined
+  /** True while a 「立即执行」 run is in flight. */
+  readonly autoClaimRunning?: boolean | undefined
+  /** Run one automation pass now, instead of waiting for the scheduled hour. */
+  readonly onAutoClaimRun?: (() => void) | undefined
   readonly onAutoClaim?: ((on: boolean) => void) | undefined
   /** 外层的提示条，放进详情列 mbody 顶部（不能落在 .app 网格里）。 */
   readonly banner?: ReactNode | undefined
@@ -1838,6 +1875,8 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
        */
       if (provider === 'doubao') {
         await saveDoubaoSkipped(modelId, !on)
+        // Ticking any one model means "not all off" any more.
+        saveDoubaoHideAll(false)
         // The localStorage write is only half the save: the host needs the list
         // or the picker keeps publishing the whole roster (issue #196).
         await mirrorDoubaoDisabled()
@@ -1931,6 +1970,9 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
       if (provider === 'doubao') {
         const skipped = on ? [] : entry.models.map(model => model.id)
         globalThis.localStorage?.setItem(DOUBAO_SKIP_KEY, JSON.stringify(skipped))
+        // 全关 also carries an explicit flag: the id list alone cannot say it
+        // when the roster was still loading.
+        saveDoubaoHideAll(!on)
         /**
          * Mirrored here as well, not left to the `finally { await load() }`.
          *
@@ -2893,6 +2935,22 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
                 <span>
                   {`${t?.('channelpool.claimedToday') ?? '今日已领'} ${String(claimedToday)}/${String(enabledAccounts.length)}`}
                 </span>
+                {/*
+                  「立即执行」—— 自动化开着只是「到点会跑」，用户想马上领的时候没有入口。
+                  3.0 重做时 `runAutomationJob` 写好了却没人调用，这里把它接回来：
+                  按钮自己转圈到这一轮跑完，结果落在「今日已领」上。
+                */}
+                <button
+                  type="button"
+                  className="tiny"
+                  disabled={autoClaimRunning === true}
+                  title={t?.('channelpool.autoClaimRunHint') ?? '立刻跑一轮领取，不用等到预定时间'}
+                  onClick={() => { onAutoClaimRun?.() }}
+                >
+                  {autoClaimRunning === true
+                    ? (t?.('channelpool.autoClaimRunning') ?? '领取中…')
+                    : (t?.('channelpool.autoClaimRun') ?? '立即执行')}
+                </button>
               </div>
               <span className="policy-hint">
                 {t?.('channelpool.autoClaimHint') ?? '开着就会在后台领每天的积分，不用手动点。'}

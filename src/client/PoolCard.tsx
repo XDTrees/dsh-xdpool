@@ -1572,6 +1572,8 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                 autoClaim={statusOf('cn')?.automation?.enabled === true}
                 autoClaimBusy={automationBusyRegion !== undefined}
                 onAutoClaim={on => { void setAutomationEnabled('cn', on) }}
+                autoClaimRunning={automationRun !== undefined}
+                onAutoClaimRun={() => { void runAutomationJob('cn') }}
                 /*
                   提示条放进详情列的 mbody 里。之前它们是 .app 网格的直接子元素，
                   一出现就占一个格子，把三列挤乱。

@@ -141,10 +141,22 @@ export async function fetchLiveModels(
   for (const model of DOUBAO_MODELS) byId.set(model.id, model)
   for (const model of discovered) {
     if (byId.has(model.id)) {
-      // Keep the known-good name; add the badge the server published, if it has one.
+      /**
+       * Keep the known-good name; add what the SERVER published, if it has any.
+       *
+       * The effort ladder has to survive this merge — issue #207. Before, only
+       * `badge` was copied, so every model already present in the static table
+       * threw away the 低/中/高/极高/最高 it had just been handed, and the picker
+       * fell back to three fixed levels. Only overwrite when the server really
+       * said something: the IndexedDB-cache path carries no ladder, and an empty
+       * value there must not wipe one that is already known.
+       */
       const known = byId.get(model.id)
-      if (known !== undefined && known.badge === undefined && model.badge !== undefined) {
-        byId.set(model.id, { ...known, badge: model.badge })
+      if (known !== undefined) {
+        const next = { ...known }
+        if (known.badge === undefined && model.badge !== undefined) next.badge = model.badge
+        if (model.efforts !== undefined && model.efforts.length > 0) next.efforts = model.efforts
+        if (next.badge !== known.badge || next.efforts !== known.efforts) byId.set(model.id, next)
       }
       continue
     }

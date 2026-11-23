@@ -85,7 +85,8 @@ describe('极性：存的是「关掉的」，不是「留下的」', () => {
   it('未勾选列表「没配」时不写 host，避免把 host 上的列表清空', () => {
     // 清过浏览器的浏览器读不到 skipped；这时推送 `[]` 等于替用户做了一次
     // 「全部恢复」的声明。不推，host 保持它已有的答案。
-    expect(cardSource).toMatch(/const skipped = readDoubaoSkipped\(\)\s*\n\s*if \(skipped === undefined\) return/)
+    // 「全关」是例外：那时 skipped 可能为空但 hideAll 为真，仍然要推。
+    expect(cardSource).toMatch(/if \(skipped === undefined && !hideAll\) return/)
   })
 })
 

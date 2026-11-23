@@ -58,7 +58,7 @@ export interface DoubaoRouteOptions {
    * Absent means the settings service is unavailable, and the route answers 503
    * rather than pretending the save stuck.
    */
-  saveDoubaoSelection?: ((ids: readonly string[]) => void | Promise<void>) | undefined
+  saveDoubaoSelection?: ((ids: readonly string[], hideAll: boolean) => void | Promise<void>) | undefined
   /** The authorities this deployment serves, so a proxied UI can sign in — see `origin-trust.ts`. */
   trustedHosts?: () => TrustedHosts
 }
@@ -254,8 +254,16 @@ export function registerDoubaoRoutes(ctx: Context, deps: DoubaoRouteOptions): vo
             if (!ids.includes(entry)) ids.push(entry)
           }
           try {
-            await deps.saveDoubaoSelection(ids)
-            return json(res, 200, { ok: true, disabledModelIds: ids })
+            /**
+             * `hideAll` is the card's 「全关」 button.
+             *
+             * It travels separately from the id list because the list cannot say
+             * it: an all-off stored as `[]` (the card's roster had not loaded)
+             * reads back as "nothing disabled", and one stored as "every id"
+             * breaks the moment upstream adds a model.
+             */
+            await deps.saveDoubaoSelection(ids, body['hideAll'] === true)
+            return json(res, 200, { ok: true, disabledModelIds: ids, hideAll: body['hideAll'] === true })
           } catch (error: unknown) {
             return json(res, 500, { error: error instanceof Error ? error.message : String(error) })
           }

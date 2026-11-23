@@ -38,7 +38,10 @@ let cached: { at: number; models: readonly DoubaoModelInfo[] } | undefined
 /** The reasoning ladder's numeric levels, as the vendor names them. */
 const LEVEL_NAMES: Readonly<Record<number, string>> = {
   3: 'low',
-  4: 'medium',
+  // 4 是「中」。这里以前写 `medium`，而 catalog 与 adapter 都叫 `mid` —— 同一档位
+  // 两个名字，选择器因此拿不到它（issue #207）。EFFORT_LABELS 仍保留 medium 作为
+  // mid 的别名，已缓存的旧菜单文档不会渲染出裸 id。
+  4: 'mid',
   5: 'high',
   6: 'xhigh',
   7: 'max',
