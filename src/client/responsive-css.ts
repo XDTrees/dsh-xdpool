@@ -145,24 +145,4 @@ export const RESPONSIVE_CSS = `
 .app[data-w="phone"] .sec-actions{margin-left:0;width:100%}
 .app[data-w="phone"] .vendors{grid-template-columns:minmax(0,1fr)}
 .app[data-w="phone"] .kpis .kpi:last-child:nth-child(odd){grid-column:1 / -1}
-/* ============================================================
-   插件自己加的：右上角关闭
-   ------------------------------------------------------------
-   不属于设计稿。设置对话框撑满整个插件页面，宿主的关闭按钮在它自己的
-   标题栏里、位置随宿主管；这里给一个就地入口，点击的落点见 shell.tsx
-   的 closeHostDialog。样式跟随设计变量，两套主题都不用另写。
-   ============================================================ */
-.app-close{
-  position:absolute;top:8px;right:8px;z-index:70;
-  width:28px;height:28px;display:grid;place-items:center;
-  border:1px solid var(--line-2);border-radius:var(--r-sm);
-  background:color-mix(in oklch, var(--surface) 88%, transparent);
-  color:var(--muted);cursor:pointer;
-  transition:color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
-}
-.app-close svg{width:14px;height:14px}
-.app-close:hover{color:var(--text);background:var(--surface-2);border-color:var(--line-3)}
-.app-close:active{transform:translateY(1px)}
-.app[data-w="phone"] .app-close{top:6px;right:6px;width:24px;height:24px}
-
 `

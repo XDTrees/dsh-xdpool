@@ -15,6 +15,7 @@ import { DESIGN_DETAIL_CSS, DESIGN_TOKENS_CSS } from './design-css.ts'
 import { RESPONSIVE_CSS } from './responsive-css.ts'
 import { CREDIT_DOT_CSS } from './credit-dot-css.ts'
 import { LIGHT_THEME_CSS } from './theme-css.ts'
+import { ACCOUNT_CARD_CSS } from './account-card.tsx'
 
 const STYLE_ID = 'dsh-xdpool/design.css'
 // 窄屏规则放最后：它们按插件宽度（.app[data-w]）覆盖前面的三列布局。
@@ -24,7 +25,7 @@ const STYLE_ID = 'dsh-xdpool/design.css'
 // 护眼绿亮色排在最末：它只覆盖 `.app[data-theme="light"]` 下的变量与几处字面色
 // （选择器权重也比 `.app` 高一层）。放最后是为了将来某份样式表也写了同名变量时，
 // 仍然是它说话。
-const FULL_CSS = `${DESIGN_TOKENS_CSS}\n${DESIGN_DETAIL_CSS}\n${RESPONSIVE_CSS}\n${CREDIT_DOT_CSS}\n${LIGHT_THEME_CSS}`
+const FULL_CSS = `${DESIGN_TOKENS_CSS}\n${DESIGN_DETAIL_CSS}\n${RESPONSIVE_CSS}\n${CREDIT_DOT_CSS}\n${ACCOUNT_CARD_CSS}\n${LIGHT_THEME_CSS}`
 
 /**
  * 装一次。重复调用不会重复插入。

@@ -429,30 +429,6 @@ export function PoolShell({
     if (next !== undefined) select(next.id)
   }, [active, select, tabs])
 
-  /**
-   * 关掉宿主承载插件的那个对话框。
-   *
-   * 没有宿主 API 可调（设置对话框不是插件开的），所以走两条最稳的路：
-   *
-   *  1. 在最近的 `[role="dialog"]` 里找关闭控件点它 —— 宿主的关闭按钮按语言
-   *     不同，认 aria-label 里的 close / 关闭 / dismiss 就够了；
-   *  2. 找不到就派发 Escape。宿主的对话框和我们的浮层都监听它。
-   *
-   * 两条都失败时什么也不做：宁可让用户去找宿主的按钮，也不要关掉一个不是
-   * 我们开的窗口。
-   */
-  const closeHostDialog = useCallback((): void => {
-    if (typeof document === 'undefined') return
-    const dialog = document.querySelector('[role="dialog"]')
-    const candidate = dialog?.querySelector<HTMLElement>(
-      '[aria-label*="lose" i], [aria-label*="关闭"], [aria-label*="ismiss" i], [data-dismiss]',
-    )
-    if (candidate !== undefined && candidate !== null) {
-      candidate.click()
-      return
-    }
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-  }, [])
 
   return (
     <div ref={appRef} className={wide ? 'app app-wide' : 'app'} data-w={tier} data-theme={theme}
@@ -521,29 +497,6 @@ export function PoolShell({
           {links}
         </div>
       </nav>
-
-      {/*
-        右上角关闭。
-        
-        插件的页面撑满设置对话框，用户想退出得去找宿主的关闭按钮 —— 它的位置
-        随宿主办，和插件的内容区并不在一起。这里给一个就地入口：先找最近的
-        dialog 里那个关闭控件并点它（宿主的写法各不相同，所以按 aria-label
-        认「close / 关闭」），找不到就派发一次 Escape，宿主与插件的关闭监听
-        都会收到。两条路都不需要宿主提供 API。
-      */}
-      <button
-        type="button"
-        className="app-close"
-        data-testid="xdpool-close"
-        title={t?.('shell.close') ?? '关闭'}
-        aria-label={t?.('shell.close') ?? '关闭'}
-        onClick={closeHostDialog}
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
-          strokeLinecap="round" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18" />
-        </svg>
-      </button>
 
       {pop !== 'update' ? null : (
         <div ref={popRef} className="pop" role="dialog" aria-label={t?.('update.title') ?? '检查更新'}

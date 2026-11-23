@@ -424,7 +424,6 @@ export const en = {
 
   'chan.empty': 'No channel is connected yet.',
   'shell.brand': 'XD Pool',
-  'shell.close': 'Close',
   'shell.themeLight': 'Eye-care green',
   'shell.themeDark': 'Dark',
   'shell.themeToLight': 'Switch to the eye-care green (light) theme',
@@ -1170,7 +1169,6 @@ export const zh: Record<XdPoolSettingsKey, string> = {
 
   'chan.empty': '还没有任何渠道连上来。',
   'shell.brand': 'XD Pool',
-  'shell.close': '关闭',
   'shell.themeLight': '护眼绿',
   'shell.themeDark': '暗色',
   'shell.themeToLight': '切换到护眼绿（亮色）主题',

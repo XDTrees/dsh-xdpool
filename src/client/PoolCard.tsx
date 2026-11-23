@@ -46,6 +46,7 @@ import {
 } from '../status-paths.ts'
 import { DEFAULT_AUTOMATION_HOURS } from '../status-paths.ts'
 import { POOL_CARD_AVATAR } from './avatar.ts'
+import { AccountCard } from './account-card.tsx'
 import { PoolShell, PageHero, RailIcon, initialShellTab, rememberedShellTab } from './shell.tsx'
 import { LedgerPage } from './LedgerPage.tsx'
 import { AggregatePage } from './AggregatePage.tsx'
@@ -1572,7 +1573,7 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                 const rows = here?.accounts ?? []
                 if (rows.length === 0) return null
                 return (
-                  <section key={region} className="sec dsm-xdpool-accounts">
+                  <section key={region} className="sec">
                     <div className="sec-head">
                       <span className="sec-title">
                         {region === 'cn'
@@ -1581,22 +1582,23 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
                         {` · ${String(rows.length)}`}
                       </span>
                     </div>
-                    <div className="accts">
+                    {/*
+                      自包含的小卡片（account-card.tsx），不是 2.x 的 AccountBlock：
+                      后者用渠道行的类名，挂进 3.0 的页面会把布局挤坏。
+                    */}
+                    <div className="xdp-accts">
                       {rows.map(account => (
-                        <AccountBlock
+                        <AccountCard
                           key={account.id}
                           account={account}
-                          models={here?.models ?? []}
-                          t={t}
-                          {...checkinBusyId === undefined ? {} : { checkinBusyId }}
-                          onClaimCheckin={id => { void claimCheckin(region, id) }}
-                          {...accountBusyId === undefined ? {} : { accountBusyId }}
-                          onToggleDisabled={(id, disabled) => { void toggleAccountDisabled(region, id, disabled) }}
-                          onIgnoreAccount={id => { void setAccountIgnored(region, id, true) }}
-                          onPreferAccount={id => { void setPreferredAccount(region, id) }}
-                          onSaveCreditReserve={(id, reserve) => saveCreditReserve(region, id, reserve)}
-                          {...reserveBusy === undefined ? {} : { reserveBusyId: reserveBusy }}
+                          t={t as never}
                           serving={here?.activeAccountId === account.id}
+                          {...checkinBusyId === account.id ? { claiming: true } : {}}
+                          {...accountBusyId === account.id ? { busy: true } : {}}
+                          onClaim={() => { void claimCheckin(region, account.id) }}
+                          onToggle={disabled => { void toggleAccountDisabled(region, account.id, disabled) }}
+                          onPrefer={id => { void setPreferredAccount(region, id) }}
+                          onIgnore={() => { void setAccountIgnored(region, account.id, true) }}
                         />
                       ))}
                     </div>
