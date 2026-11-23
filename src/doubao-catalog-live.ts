@@ -141,11 +141,24 @@ export async function fetchLiveModels(
   for (const model of DOUBAO_MODELS) byId.set(model.id, model)
   for (const model of discovered) {
     if (byId.has(model.id)) {
-      // Keep the known-good name; add the badge the server published, if it has one.
       const known = byId.get(model.id)
-      if (known !== undefined && known.badge === undefined && model.badge !== undefined) {
-        byId.set(model.id, { ...known, badge: model.badge })
-      }
+      if (known === undefined) continue
+      /**
+       * Keep the known-good name; take the badge AND the ladder the server published.
+       *
+       * The ladder is the point. Only `badge` used to be merged, so every model the
+       * static catalog already knew kept its own (absent) ladder and the picker fell
+       * back to one hardcoded three-rung list for the whole account — measured
+       * 2026-11-23: the menu published five levels for the DeepSeek and Kimi entries,
+       * the picker offered three and silently dropped 极高 with them.
+       *
+       * `efforts` is taken only when the server actually published one: a source that
+       * carries no ladder (the IndexedDB cache) must not erase what we already knew.
+       */
+      const next = { ...known }
+      if (known.badge === undefined && model.badge !== undefined) next.badge = model.badge
+      if (model.efforts !== undefined && model.efforts.length > 0) next.efforts = model.efforts
+      byId.set(model.id, next)
       continue
     }
     byId.set(model.id, model)
