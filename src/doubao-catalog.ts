@@ -315,27 +315,6 @@ export interface DoubaoModelInfo {
    * publishes 低/中/高, so one shared list is wrong for at least one of them.
    */
   reasoningOptions?: readonly DoubaoReasoningOption[]
-  /**
-   * The levels this model offers, by id, exactly as the client menu published them.
-   *
-   * Measured 2026-11-23 on three models from one account — the ladders differ in
-   * LENGTH, not just in naming:
-   *
-   *   person-qwen4-max        低 / 高 / 极高                 (3 rungs)
-   *   person-deepseek-v4-1…   低 / 中 / 高 / 极高 / 最高      (5 rungs)
-   *   person-kimi-k2…         低 / 中 / 高 / 极高 / 最高      (5 rungs)
-   *
-   * `doubao-menu.ts` has always produced this array from
-   * `reasoning_effort_config.option_list`; it was simply not declared here, so it
-   * was dropped the moment a menu row was typed as this interface — which is why
-   * the picker fell back to a hardcoded three-rung list that was wrong for every
-   * model on the account.
-   *
-   * Ids, not ordinals: `reasoningOptions` carries the float `level` the wire wants,
-   * while this carries what the picker shows. {@link EFFORT_LABELS} in
-   * `doubao-host-adapter.ts` names them.
-   */
-  efforts?: readonly string[]
 }
 
 /** A menu tag that states a price multiplier or a campaign. */
