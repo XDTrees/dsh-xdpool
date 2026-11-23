@@ -258,6 +258,44 @@ export function ChannelsPage(_props: ChannelsPageProps) {
    * no account at all. `provider.status` counts every channel in one answer; the accounts
    * themselves only need fetching for the channels it reports as connected.
    */
+  /**
+   * 插件主池里的 WorkBuddy 账号 —— issue #205。
+   *
+   * 「登录通道」页只问 pack 的 `account.list`，而桌面客户端读到的账号活在插件
+   * 自己的池里（`~/.dsh/.xdpool/accounts.json`），manifest 里根本没有它们。于是
+   * 主池有 5 个账号、这一页写着「1 个」。两套池子谁也看不见谁，所以这里把插件
+   * 池的那部分并进来：编号用插件自己的 account id，昵称沿用卡片上的显示名。
+   */
+  const loadPoolAccounts = useCallback(async (): Promise<readonly ChannelAccount[]> => {
+    const routes: readonly (readonly [string, string])[] = [
+      ['buddy', '/plugins/dsh-xdpool/status?region=cn'],
+      ['workbuddy', '/plugins/dsh-xdpool/status?region=global'],
+    ]
+    const pairs = await Promise.all(routes.map(async ([provider, route]): Promise<ChannelAccount[]> => {
+      try {
+        const response = await fetch(route, { credentials: 'same-origin', headers: { accept: 'application/json' } })
+        if (!response.ok) return []
+        const body = await response.json().catch(() => undefined) as
+          | { accounts?: { id?: unknown; nickname?: unknown; label?: unknown }[] }
+          | undefined
+        const rows = Array.isArray(body?.accounts) ? body.accounts : []
+        return rows
+          .filter(row => typeof row.id === 'string' && row.id !== '')
+          .map(row => ({
+            id: row.id as string,
+            provider,
+            nickname: typeof row.nickname === 'string' && row.nickname !== ''
+              ? row.nickname
+              : typeof row.label === 'string' && row.label !== '' ? row.label : (row.id as string),
+            enabled: true,
+          }))
+      } catch {
+        return []
+      }
+    }))
+    return pairs.flat()
+  }, [])
+
   const loadConnected = useCallback(async (): Promise<readonly ChannelAccount[]> => {
     const roster = await fetchChannels()
     const statuses = providerStatusesFrom(await callPack('provider.status', {
@@ -267,7 +305,7 @@ export function ChannelsPage(_props: ChannelsPageProps) {
       .map(channel => channel.id)
       .filter(id => (statuses.get(id)?.accountsTotal ?? 0) > 0)
     const perChannel = await Promise.all(connectedIds.map(id => callPack('account.list', { provider: id })))
-    const accounts = perChannel.flatMap(accountsFrom)
+    const accounts = [...perChannel.flatMap(accountsFrom), ...await loadPoolAccounts()]
     if (mounted.current) setConnected(accounts)
     return accounts
   }, [])

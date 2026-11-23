@@ -1556,6 +1556,54 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
               {/* dsm-xdpool-regions 是几处测试的锚点，挂在这里标记「这一页是账号池」 */}
               <div className="dsm-xdpool-regions dsm-xdpool-region-grid" style={{ display: 'contents' }}>
               {/*
+                插件池账号卡 —— 202/203 的那个洞。
+
+                3.0 重做时这块渲染被整段砍掉，`AccountBlock` 组件却原样留着
+                （文件底部），于是两件事同时发生：桌面客户端读到的账号在界面上
+                消失了（用户以为「更新后账号丢了」），每日签到按钮也跟着没了
+                （它就在这张卡里）。组件本来还带着 `serving` —— 那正是「正在
+                使用这个账号」的徽章，挂回来就一起有了。
+
+                两个 region 各自渲染：数据来自 statusOf(region)、操作走这个组件
+                里已经写好的 handler，所以这里只补一层列表，不加新逻辑。
+              */}
+              {(['cn', 'global'] as const).map(region => {
+                const here = statusOf(region)
+                const rows = here?.accounts ?? []
+                if (rows.length === 0) return null
+                return (
+                  <section key={region} className="sec dsm-xdpool-accounts">
+                    <div className="sec-head">
+                      <span className="sec-title">
+                        {region === 'cn'
+                          ? (t?.('row.tabCn') ?? 'CN')
+                          : (t?.('row.tabGlobal') ?? 'Global')}
+                        {` · ${String(rows.length)}`}
+                      </span>
+                    </div>
+                    <div className="accts">
+                      {rows.map(account => (
+                        <AccountBlock
+                          key={account.id}
+                          account={account}
+                          models={here?.models ?? []}
+                          t={t}
+                          {...checkinBusyId === undefined ? {} : { checkinBusyId }}
+                          onClaimCheckin={id => { void claimCheckin(region, id) }}
+                          {...accountBusyId === undefined ? {} : { accountBusyId }}
+                          onToggleDisabled={(id, disabled) => { void toggleAccountDisabled(region, id, disabled) }}
+                          onIgnoreAccount={id => { void setAccountIgnored(region, id, true) }}
+                          onPreferAccount={id => { void setPreferredAccount(region, id) }}
+                          onSaveCreditReserve={(id, reserve) => saveCreditReserve(region, id, reserve)}
+                          {...reserveBusy === undefined ? {} : { reserveBusyId: reserveBusy }}
+                          serving={here?.activeAccountId === account.id}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )
+              })}
+              {/*
                 两张 region-card（WorkBuddy 国内/国际）不再渲染。
 
                 设计稿的右栏是「中栏选中那一个渠道的详情」，不是两张并列的汇总卡。
