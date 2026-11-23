@@ -107,22 +107,36 @@ function collapseLadder(efforts: readonly string[] | undefined): readonly string
 }
 
 /**
- * The reasoning block the picker renders, or nothing when the model has no ladder.
+ * The three rungs this lane falls back to when a model publishes no ladder of its own.
  *
- * A model that publishes no ladder at all (the image lane) gets NO `reasoning` key
- * rather than three invented levels — the rule every other adapter here follows.
- * `defaultEffort` is always one of the offered ids by construction: `high` when the
- * ladder has it, otherwise the top rung.
+ * Every entry in the static `DOUBAO_MODELS` table is in that position: those five rows carry
+ * `reasoning: true` and no `efforts`. Reporting nothing for them would REMOVE the picker the
+ * channel has always had — the rungs are unpinned from the account, not absent — so they keep
+ * the list this adapter hardcoded before the ladder was wired through.
+ */
+const FALLBACK_EFFORTS: readonly string[] = ['low', 'mid', 'high']
+
+/**
+ * The reasoning block the picker renders, or nothing when the model cannot think.
+ *
+ * Order of preference: the model's own published ladder, narrowed to three rungs; then
+ * {@link FALLBACK_EFFORTS} for a model that reasons but publishes no ladder; and no
+ * `reasoning` key at all for a model whose `reasoning` is false (the no-CoT `0` route) or
+ * which is absent from both lists (an unrecognised id).
+ *
+ * `defaultEffort` is always one of the offered ids by construction: `high` when the ladder
+ * has it, otherwise the top rung.
  */
 function reasoningOf(
-  efforts: readonly string[] | undefined,
+  model: DoubaoModelInfo,
 ): Pick<LlmResolvedModelInfo, 'reasoning'> | Record<string, never> {
-  const ladder = collapseLadder(efforts)
-  if (ladder.length === 0) return {}
-  const fallback = ladder.includes('high') ? 'high' : ladder[ladder.length - 1]!
+  if (model.reasoning === false) return {}
+  const ladder = collapseLadder(model.efforts)
+  const rungs = ladder.length > 0 ? ladder : FALLBACK_EFFORTS
+  const fallback = rungs.includes('high') ? 'high' : rungs[rungs.length - 1]!
   return {
     reasoning: {
-      efforts: ladder.map(id => ({
+      efforts: rungs.map(id => ({
         id: ReasoningEffortId(id),
         name: EFFORT_LABELS[id] ?? id,
       })),
@@ -375,7 +389,7 @@ export class DoubaoHostAdapter extends LlmAdapter {
       inputModalities: ['text', 'image'],
       defaultMaxTokens: MAX_OUTPUT_TOKENS,
       context: { contextWindow: model.contextWindow ?? CONTEXT_WINDOW },
-      ...reasoningOf(model.efforts),
+      ...reasoningOf(model),
       ...(rate === undefined
         ? {}
         : { tags: [{ text: rate, tone: free ? 'free' as const : 'price' as const }] }),
