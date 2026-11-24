@@ -165,7 +165,7 @@ function checkinError(account: PoolWebAccount): ReactElement | null {
  * 类 —— 3.0 的设计体系改了也不会连带把这张卡弄坏。
  */
 export const ACCOUNT_CARD_CSS = `
-.xdp-accts{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--s3);padding:0 var(--s5) var(--s4)}
+.xdp-accts{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--s3)}
 .xdp-acct{display:flex;flex-direction:column;gap:var(--s2);min-width:0;padding:var(--s3);border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface)}
 .xdp-acct[data-serving="true"]{border-color:var(--accent-line)}
 .xdp-acct .xdp-acct-head{display:block;min-width:0}
