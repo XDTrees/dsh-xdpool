@@ -796,7 +796,17 @@ function toWebAccount(account: WorkBuddyAccount, disabled: boolean, preferred: b
   const now = Date.now()
   const cooling = account.cooldownUntilMs > now
   const deadUntil = account.credentialDeadUntilMs ?? 0
-  const credentialDead = deadUntil > now
+  /**
+   * 凭据本身已经过期、且 refresh 也过期 —— 这种情况不必等用户点一次失败才知道。
+   *
+   * 实测：一个 access 过期 9 天、refresh 过期 7 天的账号，点领取只会得到上游 401，
+   * 而卡片上什么标记都没有，用户唯一的线索是「领取失败」。现在这种账号直接标成
+   * 「登录失效」，卡片上就能看到，点它也会得到一句能照做的中文提示。
+   */
+  const credential = account.credential
+  const refreshExpired = credential.refreshExpiresAtMs === undefined || credential.refreshExpiresAtMs <= now
+  const expiredBeyondRepair = credential.expiresAtMs > 0 && credential.expiresAtMs <= now && refreshExpired
+  const credentialDead = deadUntil > now || expiredBeyondRepair
   const modelCooldowns = Object.entries(account.modelCooldowns)
     .filter(([, until]) => until > now)
     .sort((a, b) => a[1] - b[1])
@@ -1193,17 +1203,44 @@ export function registerPoolStatusRoute(ctx: Context, deps: PoolStatusRouteOptio
           if (accountId === '') return json(res, 400, { error: 'accountId is required' })
           const account = deps.pool.list().find(item => item.id === accountId)
           if (account === undefined) return json(res, 404, { error: 'unknown account' })
-          const before = await deps.client.fetchCheckinStatus(account.credential)
+          /**
+           * 先拿一份「能用」的凭据再发请求。
+           *
+           * 以前这里直接用 `account.credential`：凭据过期时上游回 401，用户看到
+           * 的只有「领取失败」，而同一时刻对话正常（对话路径会先 ensureFresh）。
+           */
+          const credential = deps.pool.freshCredential === undefined
+            ? account.credential
+            : await deps.pool.freshCredential(accountId)
+          if (credential === undefined) {
+            return json(res, 409, {
+              error: "this account's sign-in has expired and could not be renewed; sign in again in the WorkBuddy desktop app, then retry",
+            })
+          }
+          const before = await deps.client.fetchCheckinStatus(credential)
           // Second guard: never re-claim a reward the status already reports as
           // collected. Protects against a double-click or a stale card.
           if (!before.active) return json(res, 409, { error: 'check-in activity is not active' })
           if (before.todayCheckedIn) {
             return json(res, 200, { ok: true, alreadyCheckedIn: true, claim: { credit: 0, streakDays: before.streakDays, isStreakDay: before.isStreakDay } })
           }
-          const claim = await deps.client.claimDailyCheckin(account.credential)
+          const claim = await deps.client.claimDailyCheckin(credential)
           json(res, 200, { ok: true, claim })
         } catch (error: unknown) {
-          json(res, 500, { error: safeMessage(error) })
+          const message = safeMessage(error)
+          /**
+           * 401 说清楚该做什么。
+           *
+           * 「领取失败」没有信息量：它可能是活动没有、可能今天已经领过、也可能是
+           * 登录态彻底过期（refresh token 也过了）。实测这一类占失败的大多数，
+           * 而用户能做的动作只有一个 —— 回 WorkBuddy 桌面端重新登录这个账号。
+           */
+          if (/401|rejected this credential/i.test(message)) {
+            return json(res, 409, {
+              error: '这个账号的登录已失效（上游返回 401），refresh token 也过期了。请在 WorkBuddy 桌面端重新登录这个账号，然后在卡片上重新检测账号后再领取。',
+            })
+          }
+          json(res, 500, { error: message })
         }
       },
     })

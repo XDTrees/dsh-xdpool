@@ -1251,7 +1251,7 @@ async function fetchOwnSession(channel: string): Promise<
  * `active` 为空时（首次进入、或选中的渠道被移除）退回第一家，这样右栏
  * 永远不会是空的。
  */
-export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoClaimBusy, onAutoClaim, autoClaimRunning, onAutoClaimRun, banner }: {
+export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoClaimBusy, onAutoClaim, autoClaimRunning, onAutoClaimRun, banner, regionCards }: {
   readonly t?: Translate | undefined
   /** 中栏选中的渠道 id；空则显示第一家。 */
   readonly active?: string | undefined
@@ -1267,6 +1267,14 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
   readonly onAutoClaim?: ((on: boolean) => void) | undefined
   /** 外层的提示条，放进详情列 mbody 顶部（不能落在 .app 网格里）。 */
   readonly banner?: ReactNode | undefined
+  /**
+   * 外层的插件池账号卡，和 banner 一样进详情列 mbody。
+   *
+   * 这一页是 .app 的三列网格（rail | 渠道列表 | 详情），detail 列之外没有第四格。
+   * 多出来的内容挂在 .app 层都会自己占一格，把 list 和 main 顶到第二行，
+   * 而 .app 是 height:100vh + overflow:hidden —— 第二行直接被裁掉。
+   */
+  readonly regionCards?: ReactNode | undefined
 }): ReactElement {
   /*
     选中哪一家。外部传了就用外部的（中栏在别的组件里时），
@@ -2492,14 +2500,26 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
   // So: while the first read is in flight, say so; when it failed, say why;
   // only a successful read that found nothing stays silent.
   if (entries.length === 0 && error === undefined) {
-    if (!loading) return <></>
-    return (
-      <section className="dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
-        <p className="note" role="status">
-          {t?.('channelpool.loading') ?? 'Reading scan channels…'}
-        </p>
-      </section>
-    )
+    /*
+      一条渠道都没读到，但插件池账号卡（regionCards）不属于任何渠道：
+      账号可能已经存好了、只是渠道还没扫出来，这种情况不能返回空。
+
+      所以这里留一个出口，让「有卡且已读完」的情况落到下面
+      chosenEntry === undefined 那条分支 —— 它本来就渲染 {list} + main > mbody，
+      列表头显示 0 / 0 / —，读起来是「确实没有渠道」而不是一片空白，
+      而不是另写一套 list + main。那条分支在 error 存在时本来就一直在走，是既有代码。
+    */
+    const keepForRegionCards = regionCards !== undefined && !loading
+    if (!keepForRegionCards) {
+      if (!loading) return <></>
+      return (
+        <section className="dsm-xdpool-cpool" aria-label={t?.('channelpool.title') ?? 'Channels'}>
+          <p className="note" role="status">
+            {t?.('channelpool.loading') ?? 'Reading scan channels…'}
+          </p>
+        </section>
+      )
+    }
   }
   /*
     ---------------------------------------------------------------
@@ -2610,6 +2630,7 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
         <main className="main dsm-xdpool-cpool dsm-xdpool-regions" aria-label={t?.('channelpool.title') ?? 'Channels'}>
           <div className="mbody" style={{ paddingTop: 'var(--s5)' }}>
             {banner}
+            {regionCards}
             {error === undefined ? null : (
               <p className="hint">
                 {t?.('channelpool.loadError', { message: error }) ?? `Could not load channels: ${error}`}
@@ -2758,6 +2779,7 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
 
       <div className="mbody">
         {banner}
+        {regionCards}
         {/*
           就地登录的状态条。
           因为不再跳页，读者需要在这一页看到「窗口已经开了 / 还在等 / 失败了为什么」。

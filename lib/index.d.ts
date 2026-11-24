@@ -1716,6 +1716,18 @@ export declare class WorkBuddyAccountPool {
    * Returns true when the token is known good afterwards (refreshed, or still
    * valid), false when the credential was proven dead.
    */
+  /**
+   * 取一个账号「可以用来发一次请求」的凭据：过期就先刷新。
+   *
+   * 签到 / 积分这些端点走的是「按 id 直接找账号」的路径，和选号路径不同 ——
+   * 以前它们直接拿池里的 `account.credential`，凭据过期时上游回 401，界面只能
+   * 说「领取失败」，而同一时刻对话却正常（对话走 `getAvailableAccount`，那里会
+   * 先 `ensureFresh`）。用户反馈的「积分领取全部失败」就是这一处。
+   *
+   * 返回 undefined 表示「刷新失败」：调用方应当直接告诉用户重新登录，
+   * 而不是拿旧 token 再去撞一次 401。
+   */
+  freshCredential(id: string): Promise<WorkBuddyCredential | undefined>;
   private ensureFresh;
   /**
    * Cool a whole account after the upstream reports its credits are spent.
@@ -2148,7 +2160,7 @@ interface PoolWebRelayStatus {
   stats?: {
     requests: number;
     failed: number;
-    avgLatencyMs?: number;
+    avgLatencyMs?: number | undefined;
     inputTokens: number;
     outputTokens: number;
   } | undefined;

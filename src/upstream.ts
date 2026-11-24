@@ -321,6 +321,19 @@ const SESSION_DEAD_MARKERS = [
 const ALREADY_CHECKIN_MARKERS = ['已签到', 'already']
 
 /**
+ * 签到相关的业务码。
+ *
+ * 上游用 `code` 区分三种「不是成功也不是故障」的结果，而我们此前一律当失败抛出：
+ * 今天已经领过（1001/10001）会在每次自动领取时记一条失败；活动未开放（1002/1003/
+ * 40901/41000）也会，而且永远重试不到结果。它们必须分开对待：
+ *
+ *   已领   → 幂等成功（今天的分就在账上，不是错）
+ *   未开放 → inactive（等下一次，不报错、不重试）
+ */
+const CHECKIN_ALREADY_CODES: ReadonlySet<number> = new Set([1001, 10001])
+const CHECKIN_INACTIVE_CODES: ReadonlySet<number> = new Set([1002, 1003, 40901, 41000])
+
+/**
  * Markers for "there is no compensation offer to collect".
  *
  * The offer is seasonal — an outage announcement opens one, and it closes on a
@@ -764,6 +777,16 @@ function billingHeaders(credential: WorkBuddyCredential): Record<string, string>
     'Authorization': `Bearer ${credential.accessToken}`,
     'Accept': 'application/json',
     'Content-Type': 'application/json',
+    /**
+     * 产品身份头 —— 缺了它们，计费/签到端点会把请求当成「不是客户端发的」。
+     *
+     * 这三个头一直在客户端那边发（网页/IDE 的每个 billing 请求都带），我们只发了
+     * Authorization + X-Domain + X-User-Id。上游收紧校验之后，签到就只剩一个笼统的
+     * 失败，看不出原因。UA 用本插件已经在别处使用的桌面版本号，不再另造一个。
+     */
+    'X-Product': 'SaaS',
+    'X-Product-Code': 'workbuddy',
+    'User-Agent': DESKTOP_UA,
   }
   if (credential.uid !== '' && credential.uid !== undefined) headers['X-User-Id'] = credential.uid
   if (credential.enterpriseId !== undefined && credential.enterpriseId !== '') {
@@ -1925,6 +1948,20 @@ export class WorkBuddyUpstreamClient {
       signal: AbortSignal.timeout(JSON_TIMEOUT_MS),
     })
     const envelope = await readEnvelope(response)
+    // 「活动未开放 / 无资格」不是故障：照实回答 active=false，让卡片说「当前无签到活动」。
+    if (response.ok && CHECKIN_INACTIVE_CODES.has(envelope.code)) {
+      return {
+        active: false,
+        todayCheckedIn: false,
+        streakDays: 0,
+        dailyCredit: 0,
+        todayCredit: 0,
+        isStreakDay: false,
+        nextStreakDay: 0,
+        streakBonusDays: 0,
+        streakBonusCredit: 0,
+      }
+    }
     if (!response.ok || envelope.code !== 0) throw envelopeError(response.status, envelope)
     const data = typeof envelope.data === 'object' && envelope.data !== null
       ? envelope.data as Record<string, unknown>
@@ -1955,10 +1992,26 @@ export class WorkBuddyUpstreamClient {
       signal: AbortSignal.timeout(JSON_TIMEOUT_MS),
     })
     const envelope = await readEnvelope(response)
-    if (!response.ok || envelope.code !== 0) throw envelopeError(response.status, envelope)
-    const data = typeof envelope.data === 'object' && envelope.data !== null
+    const neutral = (data_: Record<string, unknown>): WorkBuddyCheckinClaim => ({
+      credit: 0,
+      streakDays: typeof data_['streak_days'] === 'number' ? data_['streak_days'] as number : 0,
+      isStreakDay: false,
+    })
+    const payload = typeof envelope.data === 'object' && envelope.data !== null
       ? envelope.data as Record<string, unknown>
       : {}
+    /**
+     * 已领过（1001/10001）就是成功：今天的分在账上，重复领取不该被记成失败 ——
+     * 自动化每小时跑一次，记成失败会刷出一整片红字。
+     *
+     * 未开放（1002/1003/40901/41000）同样是「今天没有可领的」，不是故障；
+     * 抛错会让调度器一直重试一个永远不会成功的结果。
+     */
+    if (response.ok && (CHECKIN_ALREADY_CODES.has(envelope.code) || CHECKIN_INACTIVE_CODES.has(envelope.code))) {
+      return neutral(payload)
+    }
+    if (!response.ok || envelope.code !== 0) throw envelopeError(response.status, envelope)
+    const data = payload
     const numberField = (key: string): number => typeof data[key] === 'number' ? data[key] as number : 0
     return {
       credit: numberField('credit'),

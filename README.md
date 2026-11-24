@@ -9,6 +9,12 @@
 
 ## 更新公告
 
+**3.0.7** — UI 错位修复、一键更新真正生效、代际守卫不再空转。
+
+- 修复账号池页整页错乱：账号卡回到详情列里，只在选中 WorkBuddy 国内版/国际版时显示
+- 修复一键更新「更新了但版本号一直没变」：现在会同步 lockfile 和 node_modules，不再被 DSH 启动时装回旧版
+- pi-ai 代际守卫修正宿主路径，mismatch / aligned / unknown 都会写进启动日志，切 xdpool 模型崩溃时不再毫无线索
+
 **3.0.6** — 账号卡重做。
 
 - 账号池页的账号卡重画成自包含的卡片：昵称、状态徽章（当前使用 / 已停用 / 冷却中）、令牌到期、积分、以及优先/停用/签到/移出池子一排按钮
@@ -299,6 +305,22 @@ xdpool:
   折叠卡片外壳沿用宿主内置卡的 `dsm-plugin-card*` 样式语言（`--dsw-alias-*` 主题变量），内容类名统一 `dsm-xdpool-*` 前缀，不污染宿主其它卡片；文案命名空间 `settings.xdpool`。
 - **构建**
   `tsdown` 产出 `lib/index.js`（宿主入口）+ `lib/index.d.ts`（类型）+ `lib/bin.js`（CLI）+ `lib/client.js`（CJS，用 `window.__ModuleLoader__.load` 包起来的浏览器 bundle）。四个产物都随仓库提交，所以安装时不需要任何构建脚本。
+
+## π-ai 代际对齐（重要）
+
+本插件在宿主里用 pi-ai 组装 provider，宿主适配器用**它自己**那份 pi-ai 消费事件流。
+两份大版本不一致时（典型：插件侧 0.82.x、宿主侧 1.5.x），第一次请求就会崩在适配器接缝，
+宿主把它归成不可重试的 `PI_AI_ERROR` —— 现象是「切到 xdpool 系模型，第一条就没内容」。
+
+如何确认：重启 DSH 后看 `~/.dsh/.xdpool/startup.log`，会写 `pi-ai generation: aligned at …`
+或 `mismatch`。一旦看到 mismatch，在 profile 的 `package.json` 里钉到宿主代：
+
+```json
+{ "pnpm": { "overrides": { "@earendil-works/pi-ai": "<宿主版本>" } } }
+```
+
+然后重装依赖并重启。日志里写 `unknown` 表示两侧只读到一份（比如宿主把它打进了 bundle），
+插件会继续工作，但代际无法自动核对。
 
 ## 已知限制
 

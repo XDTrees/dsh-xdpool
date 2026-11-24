@@ -56,6 +56,7 @@
  *
  * @module dsh-xdpool/update-install
  */
+import { spawn } from 'node:child_process'
 import { createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -82,9 +83,50 @@ function profileDir(): string | undefined {
   return undefined
 }
 
+/** 可替换的依赖同步钩子：测试用临时 profile，没有真实 pnpm 环境，注入一个 no-op。 */
+type SyncImplementation = (profile: string) => Promise<{ ok: boolean; detail: string }>
+let syncImplementation: SyncImplementation = syncWithPnpm
+export function setSyncImplementationForTest(fn: SyncImplementation): void {
+  syncImplementation = fn
+}
+
+/**
+ * 写完 package.json 后用 pnpm 同步 lockfile 与 node_modules。
+ *
+ * 这是「更新了却一直没生效」的真正原因：以前只改 profile 的 package.json，没碰
+ * pnpm-lock.yaml。DSH 下次启动按 lockfile 装回旧版本 —— 用户看到的就是
+ * 「一键更新从没成功过」。现在交给 pnpm 把 package.json / lockfile / node_modules
+ * 三处一次对齐。失败时调用方会回滚 manifest：半更新的 profile 会让宿主 repair。
+ */
+async function syncWithPnpm(profile: string): Promise<{ ok: boolean; detail: string }> {
+  return await new Promise<{ ok: boolean; detail: string }>((resolve) => {
+    const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+    let child
+    try {
+      child = spawn(command, ['install', '--config.auto-install-peers=false', '--ignore-scripts'], {
+        cwd: profile,
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: process.platform === 'win32',
+      })
+    } catch (error: unknown) {
+      resolve({ ok: false, detail: error instanceof Error ? error.message : String(error) })
+      return
+    }
+    let output = ''
+    child.stdout?.on('data', (chunk: Buffer) => { output += chunk.toString() })
+    child.stderr?.on('data', (chunk: Buffer) => { output += chunk.toString() })
+    child.on('error', (error: Error) => { resolve({ ok: false, detail: error.message }) })
+    child.on('close', (code: number | null) => {
+      if (code === 0) resolve({ ok: true, detail: 'pnpm install ok' })
+      else resolve({ ok: false, detail: output.slice(-400) || `pnpm exit ${String(code)}` })
+    })
+  })
+}
+
 /** 一步的执行结果；id 和前端 UpdatePanel 的四步（下载 · 校验 · 备份数据 · 写入配置）一一对应。 */
 export interface InstallStep {
-  id: 'download' | 'verify' | 'backup' | 'write'
+  id: 'download' | 'verify' | 'backup' | 'write' | 'sync'
   ok: boolean
   detail?: string
 }
@@ -233,6 +275,8 @@ export async function installVersion(version: string): Promise<InstallResult> {
 
   // 3. 备份 —— 先只读地记下原来的 spec，再复制数据。这里任何失败都不碰 package.json。
   const pkgPath = join(profile, 'package.json')
+  // pnpm 同步失败时回滚，避免留下「spec 新 / lockfile 旧」的不一致状态。
+  const originalManifest = readFileSync(pkgPath, 'utf8')
   const read = readProfilePackage(pkgPath)
   if ('error' in read) {
     steps.push({ id: 'backup', ok: false, detail: read.error })
@@ -279,6 +323,20 @@ export async function installVersion(version: string): Promise<InstallResult> {
     writeFileSync(`${pkgPath}.tmp`, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8')
     renameSync(`${pkgPath}.tmp`, pkgPath)
     steps.push({ id: 'write', ok: true })
+
+    /**
+     * 关键：让 pnpm 同步 lockfile 与 node_modules。
+     * 以前只到上一行就返回成功，DSH 下次启动按旧 lockfile 装回旧版，版本号从不变化。
+     * 同步失败就回滚，宁可这次没更新，也不留下会触发宿主 repair 的半更新 profile。
+     */
+    const synced = await syncImplementation(profile)
+    if (!synced.ok) {
+      writeFileSync(`${pkgPath}.tmp`, originalManifest, 'utf8')
+      renameSync(`${pkgPath}.tmp`, pkgPath)
+      steps.push({ id: 'write', ok: false, detail: `pnpm 同步失败，已回滚：${synced.detail}` })
+      return failed(`安装依赖失败，已回滚，插件和数据都没有改动：${synced.detail}`, { path: target, backupPath })
+    }
+    steps.push({ id: 'sync', ok: true, detail: synced.detail })
     return { ok: true, version, path: target, restartRequired: true, backupPath, previousVersion, steps }
   } catch (error: unknown) {
     steps.push({ id: 'write', ok: false, detail: error instanceof Error ? error.message : String(error) })

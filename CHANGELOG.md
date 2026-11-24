@@ -1,6 +1,33 @@
 # Changelog
 本项目的所有重要变更都会记录在此文件。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+## 3.0.7 — UI 错位修复、一键更新真正生效、代际守卫
+
+### UI 错位：账号卡回到正确的列
+
+3.0.4 起插件池账号卡被挂成了 `.app` 的网格子项。`.app` 是「功能栏 | 渠道列表 | 详情」三列，
+而 `display:contents` 容器让新增的 `section` 直接参与网格排列，把渠道列表和详情挤到第二行、
+被 `overflow:hidden` 裁掉 —— 账号池页整页错乱。
+
+现在账号卡由 `ChannelPoolSection` 渲染进**详情列的 `.mbody`**（和提示条同一条通路），
+并且只在选中 WorkBuddy 国内版 / 国际版时显示；选 CodeArts 等其它渠道、或未选渠道时不显示。
+结构复用设计稿的 `.sec / .sec-head / .accts / .acct*` 类名，没有新造一套样式。
+
+### 一键更新：之前从来没有真正生效过
+
+更新接口原来只改 profile 的 `package.json`，不碰 `pnpm-lock.yaml`。DSH 下次启动按 lockfile
+安装（或 frozen-lockfile 校验失败后从快照恢复），spec 被打回旧版本 —— 用户看到的就是
+「点了一键更新，版本号一直没变」。现在写完后调用 pnpm 同步 **package.json / lockfile /
+node_modules** 三处；同步失败会回滚 manifest，宁可这次没更新，也不留下半更新的 profile。
+
+### pi-ai 代际守卫不再空转
+
+宿主模块路径原来多拼了一层 `node_modules`（`…/node_modules/node_modules/…`），
+守卫永远返回 `unknown` 且日志里和「对齐」一样静默 —— 真正撞上 0.82 / 1.5 代际错配时
+（切到 xdpool 系模型第一条就报 PI_AI_ERROR）没有任何线索。现在先用 `createRequire` 解析
+宿主包，失败再退回少一层的相对路径；`unknown` / `aligned` / `mismatch` 都会写 startup.log。
+README 补了「profile 需 `pnpm.overrides` 把 pi-ai 钉到宿主代」的说明。
+
 ## 3.0.6 — 账号卡重做，撤掉没用的关闭按钮
 
 3.0.4 把账号卡挂回账号池页时，直接用了 2.x 的 `AccountBlock`：它的根元素是渠道行的类名

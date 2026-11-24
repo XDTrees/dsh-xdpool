@@ -30203,21 +30203,19 @@ var AccountPool = class {
     /**
      * [xdpool-local] 空表保护 —— issue #200。
      *
-     * 升级/重装过程中出现过「账号表被写成空、且没有 .bak」的报告：用户的 5 个
-     * 账号在界面上消失，磁盘上也没有可恢复的旧版本。一条空快照覆盖一张非空表
-     * 几乎总是故障（读失败、并发写、装包时的空状态），而不是用户意图 —— 逐个
-     * 删除账号走的是 `removeAccount`，那条路径显式传 `allowEmpty`。
-     *
-     * 拒绝时保留内存与磁盘上的旧表，并留下可查的日志；真要一次性清空（迁移、
-     * 重置）可以设 `DSH_XDPOOL_ALLOW_EMPTY_ACCOUNTS=1`。
+     * 升级/重装期间出现过「账号表被空快照覆盖、且没有 .bak」的报告：用户的账号
+     * 在界面上全部消失。用空表覆盖一张非空表几乎总是故障（读失败、并发写、装包时
+     * 的空状态），不是用户意图 —— 逐个删号走 removeAccount，那条路径显式允许清空。
+     * 真要一次性重置可设 DSH_XDPOOL_ALLOW_EMPTY_ACCOUNTS=1。
      */
     const empty = Array.isArray(accounts) && accounts.length === 0
     const hadRows = Array.isArray(this.cache) && this.cache.length > 0
     const forced = typeof process !== 'undefined' && process.env.DSH_XDPOOL_ALLOW_EMPTY_ACCOUNTS === '1'
     if (empty && hadRows && options.allowEmpty !== true && !forced) {
       this.ctx.logger?.warn?.(
-        `[channel-pack] 拒绝用空账号表覆盖现有 ${this.cache.length} 个账号（疑似升级/重装时的空快照）；`
-        + '确需清空请逐个删除，或设 DSH_XDPOOL_ALLOW_EMPTY_ACCOUNTS=1'
+        '[channel-pack] 拒绝用空账号表覆盖现有 ' + this.cache.length
+        + ' 个账号（疑似升级/重装时的空快照）；逐个删除可正常清空，'
+        + '强制重置请设 DSH_XDPOOL_ALLOW_EMPTY_ACCOUNTS=1'
       )
       return
     }
@@ -30685,7 +30683,7 @@ var AccountPool = class {
       await this.ctx.credentials.unset(credentialRef(entry.credentialRef));
     } catch {
     }
-    // 显式删除：删到空也要写进去，所以带上 allowEmpty。
+    // 显式删除：可以删到空，带上 allowEmpty。
     await this.writeAccounts(this.readAccounts().filter((a) => a.id !== id), { allowEmpty: true });
   }
   /**
@@ -32811,23 +32809,19 @@ async function* recordThroughStream(openStream, meta) {
 }
 function registerAdapterIdempotent(llm, providers, adapter, warn) {
   /**
-   * [xdpool-local] 让位：dsh-xdpool 自己服务 buddy / workbuddy 时，pack 不再注册。
+   * [xdpool-local] lane 让位 —— issue #201。
    *
-   * 这两个 lane 有两条注册来源 —— 本插件注册 `xdpool` / `xdpool-global`（桌面
-   * 客户端读到的账号只活在我们的池里），pack 注册 `buddy` / `workbuddy`。两边
-   * 都注册时，模型选择器里「WorkBuddy 国内版 / 国际版」各出现两次（issue #201）。
-   *
-   * 插件在 mount 时按「自己池里有没有账号」决定要不要写
-   * `DSH_XDPOOL_OWNS_POOL_LANES`：有账号就让位，没账号就删掉这个变量让 pack
-   * 继续提供目录（否则那台机器上一个模型都看不到）。判断放在注册这一层，是因为
-   * pack 的 pool-owned 清单只负责「不静音」，从来不是「不注册」。
+   * buddy / workbuddy 两条 lane 有两条注册来源：本插件注册 xdpool / xdpool-global，
+   * pack 注册 buddy / workbuddy。两边都注册时，选择器里 WorkBuddy 国内版/国际版
+   * 各出现两次。插件在 mount 时按「自己池里有没有账号」写
+   * DSH_XDPOOL_OWNS_POOL_LANES：有账号就让位，没账号删掉变量让 pack 继续提供目录。
    */
   const owned = (typeof process === 'undefined' ? '' : process.env.DSH_XDPOOL_OWNS_POOL_LANES ?? '')
     .split(',')
     .map((id) => id.trim())
     .filter((id) => id !== '')
   if (owned.length > 0 && providers.length > 0 && providers.every((id) => owned.includes(id))) {
-    warn?.(`[llm-register] ${providers.join(', ')} 由 dsh-xdpool 自己服务，pack 跳过注册（避免重复分组）`)
+    warn?.('[llm-register] ' + providers.join(', ') + ' 由 dsh-xdpool 自己服务，pack 跳过注册')
     return void 0
   }
   let target = wrapAdapterWithTokenLedger(providers, adapter);

@@ -24,6 +24,7 @@ import {
   type RestoreManifest,
 } from '../src/pre-update-backup.ts'
 import { installVersion } from '../src/update-install.ts'
+import { setSyncImplementationForTest } from '../src/update-install.ts'
 import { POOL_VERSION } from '../src/version.ts'
 
 /** 2.7.5 在 <DSH_HOME>/.xdpool 下写的文件。 */
@@ -343,7 +344,7 @@ describe('installVersion：下载 → 校验 → 备份 → 写入', () => {
     expect(result.restartRequired).toBe(true)
     expect(result.previousVersion).toBe(POOL_VERSION)
     expect(result.steps?.map(step => [step.id, step.ok])).toEqual([
-      ['download', true], ['verify', true], ['backup', true], ['write', true],
+      ['download', true], ['verify', true], ['backup', true], ['write', true], ['sync', true],
     ])
     const backupPath = result.backupPath ?? ''
     expect(backupPath.startsWith(join(w.data, 'pre-update'))).toBe(true)
@@ -441,4 +442,6 @@ describe('installVersion：下载 → 校验 → 备份 → 写入', () => {
     expect(left).toHaveLength(PRE_UPDATE_KEEP)
     expect(left.map(name => join(w.data, 'pre-update', name))).toContain(last)
   })
+
+  setSyncImplementationForTest(async () => ({ ok: true, detail: 'test stub' }))
 })

@@ -278,6 +278,7 @@ import {
 import { adoptLegacyDataDir, describeProviderIdRename } from './migrate.ts'
 import { runCompatMigrations } from './compat-migrate.ts'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 /**
  * This plugin's install root, the tree its own provider is assembled from.
  *
@@ -294,10 +295,25 @@ const PLUGIN_ROOT = fileURLToPath(new URL('..', import.meta.url))
  * other side; comparing one tree with itself would always agree.
  */
 const HOST_MODULE_ROOT = ((): string => {
+  /**
+   * issue #208：原来用 `../../node_modules/@deepseek-ai/dsh-llm-pi-ai/`：
+   * `import.meta.url` 是 `<profile>/node_modules/dsh-xdpool/lib/index.js`，`../../`
+   * 已经落到 `<profile>/node_modules/`，再拼 `node_modules/...` 就成了
+   * `<profile>/node_modules/node_modules/...` —— 多一层，永远解析不到，守卫因此
+   * 长期返回 unknown、日志里一个字都不写，而真正的 0.82 / 1.5 代际错配照样崩。
+   *
+   * 现在优先用 createRequire 从插件自身解析宿主包（pnpm / hoisted / 全局安装都
+   * 能覆盖），再退回少一层的相对路径。createRequire 在 ESM bundle 里也可用。
+   */
   try {
-    return fileURLToPath(new URL('../../node_modules/@deepseek-ai/dsh-llm-pi-ai/', import.meta.url))
+    const require_ = createRequire(import.meta.url)
+    return dirname(require_.resolve('@deepseek-ai/dsh-llm-pi-ai/package.json'))
   } catch {
-    return ''
+    try {
+      return fileURLToPath(new URL('../node_modules/@deepseek-ai/dsh-llm-pi-ai/', import.meta.url))
+    } catch {
+      return ''
+    }
   }
 })()
 export { XDPOOL_PROVIDER, createWorkBuddyAdapter, type WorkBuddyAdapter } from './adapter.ts'
@@ -810,9 +826,20 @@ function warnOnPiAiGenerationMismatch(ctx: Context): void {
     const check = checkPiAiGeneration(PLUGIN_ROOT, HOST_MODULE_ROOT)
     const message = piAiMismatchMessage(check)
     if (message !== undefined) ctx.logger.warn(message)
-  } catch {
+    /**
+     * issue #208：`unknown` 曾经和「对齐」在日志上完全一样，用户撞上代际错配时
+     * 没有任何线索。现在至少留一行，说明是「读不到某一侧」还是「两侧对齐」。
+     * 这一行不是警告 —— 单侧可见（比如宿主把 pi-ai 打进 bundle）是合法安装。
+     */
+    if (check.kind === 'unknown') {
+      recordStartupNote('pi-ai generation: unknown (one or both resolutions unavailable)')
+    } else if (check.kind === 'aligned') {
+      recordStartupNote(`pi-ai generation: aligned at ${check.generation}`)
+    }
+  } catch (error: unknown) {
     // A generation check that breaks startup would be a worse bug than the
-    // mismatch it looks for.
+    // mismatch it looks for — but leave a note so silence is not mistaken for health.
+    recordStartupNote(`pi-ai generation check skipped: ${describeError(error)}`)
   }
 }
 /**
@@ -1709,7 +1736,25 @@ function canonicalJson(value: unknown): string {
       adopted: () => {},
       trustedHosts,
     })
-    registerDoubaoRoutes(webCtx, {
+    /**
+     * 探针：确认 webServer 这条注入真的进来了。
+     *
+     * 插件有两层注册 —— `ctx.inject(['webServer'])` 里的 HTTP 路由，和
+     * `ctx.inject(['llm'])` 里的 provider。前者若整段没执行（服务没注入、或回调里
+     * 某条注册抛错），界面就只剩 `HTTP 404`，而 provider 层照常工作、日志里也有
+     * `providers registered`。所以这一条 note 是判断「路由层到底有没有起来」的分界线。
+     */
+    recordStartupNote('routes: webCtx callback entered')
+    /**
+     * 每一层路由各自兜住自己的失败。
+     *
+     * 以前这里是三段落顺序执行的裸调用：任何一段抛错（重复路由、依赖没就位），
+     * 后面的注册就再也不执行 —— 界面上表现为「模型能用、点任何按钮都是 HTTP 404」，
+     * 而且日志里只剩一条 `providers registered`，看不出断在哪。
+     * 现在每段独立 try/catch，失败写进 startup.log，其余照常注册。
+     */
+    try {
+      registerDoubaoRoutes(webCtx, {
       session: () => doubaoSession,
       trustedHosts,
       save: (session) => {
@@ -1732,7 +1777,11 @@ function canonicalJson(value: unknown): string {
         await setSetting('doubaoDisabledModels', payload, payload)
         await setSetting('doubaoHideAllModels', hideAll === true, hideAll === true)
       },
-    })
+      })
+      recordStartupNote('routes: doubao ok')
+    } catch (error: unknown) {
+      recordStartupNote(`routes: doubao FAILED: ${describeError(error)}`)
+    }
     /**
      * The 「账号使用方式」 route — the one 3.0.0 forgot to register.
      *
@@ -1742,11 +1791,22 @@ function canonicalJson(value: unknown): string {
      * Registering it here is the whole fix — the read, the atomic write and the
      * publish to the pack were already written and tested.
      */
-    registerChannelUsageRoute(webCtx, {
-      pool: () => current().distribution ?? 'priority',
-      trustedHosts,
-    })
-    return registerPoolStatusRoute(webCtx, {
+    try {
+      registerChannelUsageRoute(webCtx, {
+        pool: () => current().distribution ?? 'priority',
+        trustedHosts,
+      })
+      recordStartupNote('routes: channel-usage ok')
+    } catch (error: unknown) {
+      recordStartupNote(`routes: channel-usage FAILED: ${describeError(error)}`)
+    }
+    // 路由注册是「静默失败」的典型：任何一条抛错，后面的都不再执行，而界面上只会
+    // 说「HTTP 404」。这一条 note 让 startup.log 能回答「到底注册到哪一步」。
+    recordStartupNote('routes: doubao + channel-usage registered; registering the rest')
+    recordStartupNote('routes: status + checkin + models routes registering')
+    try {
+      // `registerPoolStatusRoute` 自己用 ctx.effect 管生命周期，返回 void。
+      registerPoolStatusRoute(webCtx, {
     pool: core.pool,
     trustedHosts,
     /**
@@ -2167,7 +2227,11 @@ function canonicalJson(value: unknown): string {
       // the share list itself.
       return relayDocument()
     },
-    })
+      })
+      recordStartupNote('routes: status family ok')
+    } catch (error: unknown) {
+      recordStartupNote(`routes: status family FAILED: ${describeError(error)}`)
+    }
   })
   api = {
     ...core,
