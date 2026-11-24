@@ -783,7 +783,7 @@ export interface PoolWebRelayStatus {
   stats?: {
     requests: number
     failed: number
-    avgLatencyMs?: number
+    avgLatencyMs?: number | undefined
     inputTokens: number
     outputTokens: number
   } | undefined

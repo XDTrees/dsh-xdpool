@@ -1557,55 +1557,6 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
               {/* dsm-xdpool-regions 是几处测试的锚点，挂在这里标记「这一页是账号池」 */}
               <div className="dsm-xdpool-regions dsm-xdpool-region-grid" style={{ display: 'contents' }}>
               {/*
-                插件池账号卡 —— 202/203 的那个洞。
-
-                3.0 重做时这块渲染被整段砍掉，`AccountBlock` 组件却原样留着
-                （文件底部），于是两件事同时发生：桌面客户端读到的账号在界面上
-                消失了（用户以为「更新后账号丢了」），每日签到按钮也跟着没了
-                （它就在这张卡里）。组件本来还带着 `serving` —— 那正是「正在
-                使用这个账号」的徽章，挂回来就一起有了。
-
-                两个 region 各自渲染：数据来自 statusOf(region)、操作走这个组件
-                里已经写好的 handler，所以这里只补一层列表，不加新逻辑。
-              */}
-              {(['cn', 'global'] as const).map(region => {
-                const here = statusOf(region)
-                const rows = here?.accounts ?? []
-                if (rows.length === 0) return null
-                return (
-                  <section key={region} className="sec">
-                    <div className="sec-head">
-                      <span className="sec-title">
-                        {region === 'cn'
-                          ? (t?.('row.tabCn') ?? 'CN')
-                          : (t?.('row.tabGlobal') ?? 'Global')}
-                        {` · ${String(rows.length)}`}
-                      </span>
-                    </div>
-                    {/*
-                      自包含的小卡片（account-card.tsx），不是 2.x 的 AccountBlock：
-                      后者用渠道行的类名，挂进 3.0 的页面会把布局挤坏。
-                    */}
-                    <div className="xdp-accts">
-                      {rows.map(account => (
-                        <AccountCard
-                          key={account.id}
-                          account={account}
-                          t={t as never}
-                          serving={here?.activeAccountId === account.id}
-                          {...checkinBusyId === account.id ? { claiming: true } : {}}
-                          {...accountBusyId === account.id ? { busy: true } : {}}
-                          onClaim={() => { void claimCheckin(region, account.id) }}
-                          onToggle={disabled => { void toggleAccountDisabled(region, account.id, disabled) }}
-                          onPrefer={id => { void setPreferredAccount(region, id) }}
-                          onIgnore={() => { void setAccountIgnored(region, account.id, true) }}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                )
-              })}
-              {/*
                 两张 region-card（WorkBuddy 国内/国际）不再渲染。
 
                 设计稿的右栏是「中栏选中那一个渠道的详情」，不是两张并列的汇总卡。
@@ -1617,6 +1568,60 @@ export function PoolCard({ t, settingsScope }: PoolCardProps) {
               */}
               <ChannelPoolSection
                 t={t}
+                /*
+                  插件池账号卡 —— 202/203 的那个洞。
+
+                  3.0 重做时这块渲染被整段砍掉，`AccountBlock` 组件却原样留着
+                  （文件底部），于是两件事同时发生：桌面客户端读到的账号在界面上
+                  消失了（用户以为「更新后账号丢了」），每日签到按钮也跟着没了
+                  （它就在这张卡里）。组件本来还带着 `serving` —— 那正是「正在
+                  使用这个账号」的徽章，挂回来就一起有了。
+
+                  两个 region 各自渲染：数据来自 statusOf(region)、操作走这个组件
+                  里已经写好的 handler，所以这里只补一层列表，不加新逻辑。
+
+                  它们不能做 .app 网格的子项：这一页是「rail | 渠道列表 | 详情」
+                  三列，多挂一块就多占一格，把渠道列表和详情顶到第二行，而 .app
+                  是 height:100vh + overflow:hidden —— 第二行直接被裁掉。所以交给
+                  ChannelPoolSection 渲染进详情列的 mbody，和 banner 同一条通路。
+                */
+                regionCards={(['cn', 'global'] as const).map(region => {
+                  const here = statusOf(region)
+                  const rows = here?.accounts ?? []
+                  if (rows.length === 0) return null
+                  return (
+                    <section key={region} className="sec">
+                      <div className="sec-head">
+                        <span className="sec-title">
+                          {region === 'cn'
+                            ? (t?.('row.tabCn') ?? 'CN')
+                            : (t?.('row.tabGlobal') ?? 'Global')}
+                          {` · ${String(rows.length)}`}
+                        </span>
+                      </div>
+                      {/*
+                        自包含的小卡片（account-card.tsx），不是 2.x 的 AccountBlock：
+                        后者用渠道行的类名，挂进 3.0 的页面会把布局挤坏。
+                      */}
+                      <div className="xdp-accts">
+                        {rows.map(account => (
+                          <AccountCard
+                            key={account.id}
+                            account={account}
+                            t={t as never}
+                            serving={here?.activeAccountId === account.id}
+                            {...checkinBusyId === account.id ? { claiming: true } : {}}
+                            {...accountBusyId === account.id ? { busy: true } : {}}
+                            onClaim={() => { void claimCheckin(region, account.id) }}
+                            onToggle={disabled => { void toggleAccountDisabled(region, account.id, disabled) }}
+                            onPrefer={id => { void setPreferredAccount(region, id) }}
+                            onIgnore={() => { void setAccountIgnored(region, account.id, true) }}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  )
+                })}
                 active={selectedChannel}
                 onAddAccount={() => { setPage('channels') }}
                 autoClaim={statusOf('cn')?.automation?.enabled === true}
