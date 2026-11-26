@@ -242,6 +242,31 @@ function withCatalogDisplay(name: string, info: WorkBuddyModelInfo): string {
   const suffix = displaySuffix(info)
   return suffix === undefined ? name : `${name}${DISPLAY_SEPARATOR}${suffix}`
 }
+/**
+ * The `compat` every row pointing at the loopback shim carries.
+ *
+ * `sendSessionAffinityHeaders` is the whole reason this exists. pi-ai offers
+ * `GenerateOptions.sessionId` to an OpenAI-shaped API as session-affinity
+ * headers, but it defaults the flag OFF for any endpoint it does not recognise
+ * (`detectCompat` returns `sendSessionAffinityHeaders: false`). Our rows point
+ * at `127.0.0.1`, so without this override the session id the agent loop puts on
+ * every request is silently dropped, and the shim cannot tell which
+ * conversation a turn belongs to — the ledger files each call under a
+ * per-request id and the panel can only show "some account served something".
+ *
+ * Turning it on costs one header pair on a request that goes to our own loopback
+ * listener. `openai` format is chosen deliberately over `openrouter`: the
+ * shim reads `x-session-affinity`, and the `openrouter` format sends
+ * `x-session-id` instead, which nothing on this path reads.
+ *
+ * Verified present in both pi-ai generations this plugin has shipped against
+ * (0.85.1 pinned here, and the 1.x line the current host bundles), so this does
+ * not pin the plugin to one host release.
+ */
+const LOOPBACK_COMPAT = {
+  sendSessionAffinityHeaders: true,
+  sessionAffinityFormat: 'openai',
+} as const
 /** Build one pi-ai model descriptor pointing at the loopback shim. */
 function toPiModel(info: WorkBuddyModelInfo, baseUrl: string, providerId: string): Model<Api> {
   const map = thinkingLevelMap(info)
@@ -257,7 +282,7 @@ function toPiModel(info: WorkBuddyModelInfo, baseUrl: string, providerId: string
     maxTokens: info.maxOutputTokens,
     reasoning: map !== undefined,
     ...map === undefined ? {} : { thinkingLevelMap: map },
-    compat: { supportsReasoningEffort: map !== undefined },
+    compat: { ...LOOPBACK_COMPAT, supportsReasoningEffort: map !== undefined },
   } as unknown as Model<Api>
 }
 /**
@@ -346,7 +371,7 @@ function toExtraLaneModel(row: FreeModelRow, baseUrl: string, providerId: string
     maxTokens: row.maxOutput,
     reasoning: row.reasoning,
     ...map === undefined ? {} : { thinkingLevelMap: map },
-    compat: { supportsReasoningEffort: map !== undefined },
+    compat: { ...LOOPBACK_COMPAT, supportsReasoningEffort: map !== undefined },
   } as unknown as Model<Api>
 }
 /**
