@@ -32,7 +32,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
 import { createPortal } from 'react-dom'
-import { POOL_CREDITS_SPEND_PATH, POOL_STATUS_PATH, POOL_USAGE_PATH } from '../status-paths.ts'
+import { POOL_CREDITS_SPEND_PATH, POOL_SESSION_ROUTE_PATH, POOL_STATUS_PATH, POOL_USAGE_PATH } from '../status-paths.ts'
 import { POOL_NAV_ICON_MASK_URL } from './nav-icon.ts'
 import { brandKey, brandName } from './ledger-charts.tsx'
 import { balancesFrom, balancesTotal, callPack, type ChannelBalance as PackBalance } from './channel-rpc.ts'
@@ -504,10 +504,59 @@ function compose(raw: Raw, live: ReadonlyMap<string, number>, caption: { model: 
   }
 }
 
-export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactElement | null {
+/**
+ * 本会话的归属：哪家、哪个号。
+ *
+ * 与卡片上「当前模型走哪家」是两件事，所以是两次读：卡片那半是猜出来的（按模型名
+ * 对渠道、对倍率、对余额，`compose` 里四条依据），而这半是**记下来的**——池子真的
+ * 把这一轮交给了哪个号，只有服务端知道。用户问「我这个会话用的是谁的号」时，
+ * 猜出来的答案不算答案。
+ */
+export interface SessionRouteAnswer {
+  known: boolean
+  channel: string
+  region: string
+  model: string
+  account: string
+  at: number
+}
+
+/** 读一次会话归属。失败一律读成「未知」：这是角标上的小字，不是错误页。 */
+async function fetchSessionRoute(sessionId: string): Promise<SessionRouteAnswer | undefined> {
+  const url = `${POOL_SESSION_ROUTE_PATH}?sessionId=${encodeURIComponent(sessionId)}`
+  const response = await fetch(url, { headers: { accept: 'application/json' }, credentials: 'same-origin' })
+    .catch(() => undefined)
+  if (response === undefined || !response.ok) return undefined
+  const body = await response.json().catch(() => undefined) as Record<string, unknown> | undefined
+  if (body === undefined || body['known'] !== true) {
+    return body === undefined ? undefined : { known: false, channel: '', region: '', model: '', account: '', at: 0 }
+  }
+  const text = (key: string): string => (typeof body[key] === 'string' ? body[key] as string : '')
+  return {
+    known: true,
+    channel: text('channel'),
+    region: text('region'),
+    model: text('model'),
+    account: text('account'),
+    at: typeof body['at'] === 'number' ? body['at'] as number : 0,
+  }
+}
+
+export function CreditDot(input: {
+  readonly t?: Translate | undefined
+  /**
+   * The DSH Session this composer belongs to.
+   *
+   * Delivered by the slot framework, not by this plugin: `conversation.composer.dock`
+   * is declared `scope: 'session'`, so `sessionId` is one of its standard props.
+   */
+  readonly sessionId?: string | undefined
+}): ReactElement | null {
+  const { t, sessionId } = input
   const [snapshot, setSnapshot] = useState<Snapshot | undefined>(undefined)
   const [open, setOpen] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [route, setRoute] = useState<SessionRouteAnswer | undefined>(undefined)
   const anchorRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | undefined>(undefined)
@@ -629,12 +678,25 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
       }
       rawRef.current = { status, spendChannels, spendRows, usage }
       void activeChannels
+      /*
+        会话归属单独一读，和上面三个并发请求分开。
+
+        这不是能合并进 `Promise.all` 的一条：会话 id 可能没有（在没有会话的
+        hero 页、在做兼容的宿主上），而上面三个请求无论如何都要发。为了一个
+        可有可无的小字，让整张卡片依赖它的成败，是最容易被一次 404 打掉的做法。
+      */
+      if (sessionId !== undefined && sessionId !== '') {
+        const answered = await fetchSessionRoute(sessionId).catch(() => undefined)
+        if (mounted.current) setRoute(answered)
+      }
       recompose()
       setFailed(false)
     } catch {
       if (mounted.current) setFailed(true)
     }
-  }, [recompose])
+    // `sessionId` is a dependency because the id is what the route is asked
+    // about: a session switch must re-ask, not reuse the previous chat's answer.
+  }, [recompose, sessionId])
 
   useEffect(() => {
     mounted.current = true
@@ -873,6 +935,30 @@ export function CreditDot({ t }: { readonly t?: Translate | undefined }): ReactE
                   {snapshot.multiplier === undefined ? '' : ` · x${rate(snapshot.multiplier)}`}
                 </span>
               </div>
+              {/*
+                本会话真正被谁服务。
+
+                与上面几行刻意分开：那几行是「按当前模型猜渠道」，这一行是服务端记下来
+                的事实。账号那一格可能是空的 —— 扫码登录渠道的号由宿主自己挑、不回传，
+                留空比编一个名字诚实（见 `session-route.ts` 的 `account` 说明）。
+              */}
+              {route === undefined || !route.known ? null : (
+                <>
+                  <div className="dsm-xdpool-dotpanel-sec">
+                    <span className="dsm-xdpool-dotpanel-k">{t?.('dot.sessionChannel') ?? '本会话走'}</span>
+                    <span className="dsm-xdpool-dotpanel-v">
+                      {route.channel === '' ? '—' : brandName(route.channel)}
+                      {route.region === '' ? '' : ` · ${route.region === 'global' ? '国际版' : '国内版'}`}
+                    </span>
+                  </div>
+                  <div className="dsm-xdpool-dotpanel-sec">
+                    <span className="dsm-xdpool-dotpanel-k">{t?.('dot.sessionAccount') ?? '本会话账号'}</span>
+                    <span className="dsm-xdpool-dotpanel-v" title={route.account === '' ? (t?.('dot.sessionAccountUnknown') ?? '这个渠道的账号由它自己挑选') : route.account}>
+                      {route.account === '' ? (t?.('dot.sessionAccountUnknown') ?? '由渠道自行挑选') : route.account}
+                    </span>
+                  </div>
+                </>
+              )}
               {/* 同一个模型还能走的其他渠道：今天用过的名字亮一点 */}
               {(snapshot.all ?? []).length === 0 ? null : (
                 <div className="dsm-xdpool-dotpanel-more">
