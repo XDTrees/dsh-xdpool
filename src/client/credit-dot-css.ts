@@ -2,10 +2,10 @@
  * 输入框旁边那个积分小图标（CreditDot）的样式。
  *
  * 必须单独一份、不能用设计稿的类名：
- *   设计稿的样式（design-css.ts）只在插件页面的 .app 里生效，变量（--accent 等）也定义在 .app 上。
- *   小图标长在 DSH 的聊天输入框里，面板 portal 到 document.body —— 都在 .app 外面。
- *   改版时它的类名被换成了 strip / ch-dot / pop，结果在聊天框里一条样式都没有：
- *   小图标只剩一个空的圆角框，点开的面板也没有定位和背景（「点不出来」）。
+ * 设计稿的样式（design-css.ts）只在插件页面的 .app 里生效，变量（--accent 等）也定义在 .app 上。
+ * 小图标长在 DSH 的聊天输入框里，面板 portal 到 document.body —— 都在 .app 外面。
+ * 改版时它的类名被换成了 strip / ch-dot / pop，结果在聊天框里一条样式都没有：
+ * 小图标只剩一个空的圆角框，点开的面板也没有定位和背景（「点不出来」）。
  *
  * 所以恢复成 2.7.x 的 dsm-xdpool-dot* 命名空间和这份样式（原样取自 styles.ts 的 CREDIT_DOT_CSS），
  * 颜色走宿主自己的 --dsw-alias-* 变量，深浅色都跟着 DSH 走。
@@ -56,4 +56,9 @@ export const CREDIT_DOT_CSS = `
 /* 认出渠道的依据、「同一模型的其他渠道」这种小字 */
 .dsm-xdpool-dotpanel-k-sub{display:block;font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary,#8a90a0);margin-top:-3px}
 .dsm-xdpool-dotpanel-more .dsm-xdpool-dotpanel-k-sub{margin:0 0 2px}
+/* 工具行里的落位（conversation.input.right）：20px 高，与模型选择器那一排对齐。
+   克劳德风格把工具行收进卡片，圆点落在模型名左边；它自家的 seat 自带 4px 内边距，
+   这里再让出 6px 呼吸。 */
+.dsm-xdpool-dotwrap{height:20px}
+body[data-dsh-claude-style] .dsm-xdpool-dotwrap{margin:0 6px 0 0}
 `
