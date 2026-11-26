@@ -9,6 +9,7 @@ import { creditReservesWith } from './credit-reserve.ts'
 import { createDoubaoLlm, DOUBAO_CHANNEL as DOUBAO_LANE_CHANNEL } from './doubao-llm.ts'
 import { registerDoubaoRoutes } from './doubao-routes.ts'
 import { registerChannelUsageRoute } from './channel-usage-route.ts'
+import { registerSessionRoute } from './session-route-handler.ts'
 import { createDoubaoAutomation } from './doubao-automation.ts'
 import { isUsageStrategy, readChannelUsage, writeChannelUsage } from './channel-usage.ts'
 import { DoubaoHostAdapter, DOUBAO_PROVIDER_ID } from './doubao-host-adapter.ts'
@@ -260,6 +261,7 @@ import { backfillUsageFromLedger, readCreditSpend } from './credit-report.ts'
 import { ratesFor, type CreditRates } from './credits.ts'
 import { createPoolRelay, newRelayKey, relayDocumentOf, RELAY_DEFAULT_PORT, RELAY_HOSTS, type RelaySettings } from './relay.ts'
 import { UsageRecorder } from './stats.ts'
+import { SessionRouteBook } from './session-route.ts'
 import { buildStatus } from './status.ts'
 export {
   AUTOMATION_JOB_KINDS, AUTOMATION_TICK_MS, EVENT_SCORE_WAIT_MS, WorkBuddyScheduler, dayKey,
@@ -1324,6 +1326,16 @@ function canonicalJson(value: unknown): string {
   // I call today", and two recorders would make that total a sum of two
   // unrelated half-tables - a number that looks authoritative and is wrong.
   const usageRecorder = new UsageRecorder()
+  /**
+   * 会话归属那一本账。
+   *
+   * 和 `usageRecorder` 一样只建一份、两个 region 的 shim 与渠道车道共用：一个会话
+   * 在轮换中换过网关，读者要看到的是「现在是谁」，而不是按地区分成两半的两条记录。
+   *
+   * 与账本分开的理由见 `session-route.ts`：账本按请求记账且有窗口上限，回答不了
+   * 「这个会话现在是谁」，而这个问题正是聊天框旁角标要的。
+   */
+  const sessionRoutes = new SessionRouteBook()
   // A chain may name a pool model as well as a third-party one, so the catalog
   // is handed the CN roster: without it a chain pointing at `hy3` would drop
   // that member and advertise only the aggregate half. The CN rows are the
@@ -1519,6 +1531,11 @@ function canonicalJson(value: unknown): string {
       logger: ctx.logger,
       region: 'cn',
       usageRecorder,
+      // The composer chip's readout. Both regions share the one book, so a
+      // conversation that rotated from the CN gateway to the international one
+      // still reports a single current answer instead of leaving a stale row
+      // under the region it used to run on.
+      sessionRoutes,
       // The aggregate lane rides on the CN shim and nowhere else: it has no
       // gateway to be scoped to, so mounting it twice would list the same
       // third-party models under two providers the user cannot tell apart.
@@ -1546,7 +1563,7 @@ function canonicalJson(value: unknown): string {
       // other machines.
       lanModels: lanModelsOf,
     }),
-    global: createWorkBuddyShim({ pool: core.pool, client: core.client, catalog: core.catalogs.global, logger: ctx.logger, region: 'global', usageRecorder }),
+    global: createWorkBuddyShim({ pool: core.pool, client: core.client, catalog: core.catalogs.global, logger: ctx.logger, region: 'global', usageRecorder, sessionRoutes }),
   } as const
   const shim = shims.cn
   /** Resolve a region's loopback origin once it has bound a port. */
@@ -1799,6 +1816,22 @@ function canonicalJson(value: unknown): string {
       recordStartupNote('routes: channel-usage ok')
     } catch (error: unknown) {
       recordStartupNote(`routes: channel-usage FAILED: ${describeError(error)}`)
+    }
+    /**
+     * 会话归属那条路由 —— 聊天框旁角标读的就是它。
+     *
+     * 它必须在 `sessionRoutes` 之后注册（下面 shims 已经建好），而 shims 在更上面，
+     * 所以这里读到的是同一个 `SessionRouteBook` 实例：两个 region 的 shim 和渠道
+     * 车道都往这一本账里写，读侧只有一条路径把它交出去。
+     */
+    try {
+      registerSessionRoute(webCtx, {
+        book: () => sessionRoutes,
+        trustedHosts,
+      })
+      recordStartupNote('routes: session ok')
+    } catch (error: unknown) {
+      recordStartupNote(`routes: session FAILED: ${describeError(error)}`)
     }
     // 路由注册是「静默失败」的典型：任何一条抛错，后面的都不再执行，而界面上只会
     // 说「HTTP 404」。这一条 note 让 startup.log 能回答「到底注册到哪一步」。

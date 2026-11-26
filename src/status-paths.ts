@@ -846,6 +846,37 @@ export interface PoolWebAggregateProbe {
  * instead of a second one that could quietly drift.
  */
 export const POOL_USAGE_PATH = '/plugins/dsh-xdpool/usage'
+/**
+ * 某个会话「现在走哪家、用哪个号」。
+ *
+ * GET only，`?sessionId=<id>`。它是 `POOL_USAGE_PATH` 回答不了的那一问：
+ * 用量账本按「一次请求一个 turnId」记账，还不知道 DSH 的会话是谁；这一条按会话 id
+ * 直接回答当前归属，所以聊天框旁边的角标可以只画一行字，不必把整张表拉下来。
+ *
+ * 路径与账本分开，而不是给账本再加一个查询参数，理由有两条：读取频次不同
+ * （角标每次换模型/每轮结束都要读，账本是用户主动点开），以及形状不同
+ * （这里只有一条记录，账本是一份多表文档）。
+ */
+export const POOL_SESSION_ROUTE_PATH = '/plugins/dsh-xdpool/session'
+/** The session-route answer, mirrored by the browser half. */
+export interface PoolWebSessionRoute {
+  /** Echoes the id that was asked for, so a late answer cannot be applied to the wrong chat. */
+  sessionId: string
+  /** Unknown id: nothing has served this conversation yet in this process. */
+  known: boolean
+  /**
+   * The serving route, present only when `known`.
+   *
+   * Field-by-field rather than a nested object so the browser half can read it
+   * without importing the server's type: the two halves share this declaration.
+   */
+  channel?: string
+  region?: string
+  model?: string
+  account?: string
+  /** Epoch milliseconds of the last answered call. */
+  at?: number
+}
 /** Body of the reserve route: exactly one account per request. */
 export interface PoolWebCreditReserve {
   /** Pool account id, as reported in `PoolWebAccount.id`. */

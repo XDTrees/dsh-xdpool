@@ -45,6 +45,7 @@ import {
 } from './non-streaming.ts'
 import { FREE_CHANNEL, FREE_MODEL_PREFIX } from './free-catalog.ts'
 import { ChannelRequestError, type ChannelLane } from './channel-lane.ts'
+import { sessionIdFromHeaders, type SessionRouteBook } from './session-route.ts'
 export interface ShimLogger {
   info?(...args: unknown[]): void
   warn(...args: unknown[]): void
@@ -253,6 +254,15 @@ export interface WorkBuddyShimOptions {
    * for other machines.
    */
   lanModels?: () => readonly string[] | undefined
+  /**
+   * Where one conversation's serving route is remembered.
+   *
+   * Optional like `usageRecorder`, and for the same reason: the CLI and the
+   * tests run a shim with no panel, and threading an argument nobody reads would
+   * only be noise. When absent, nothing about a request's behaviour changes —
+   * only the readout the composer chip draws is missing.
+   */
+  sessionRoutes?: SessionRouteBook
 }
 const REQUEST_BODY_LIMIT = 64 * 1024 * 1024
 /**
@@ -456,6 +466,7 @@ export function createWorkBuddyShim(options: WorkBuddyShimOptions): WorkBuddyShi
   const extra = options.extra
   const channels = options.channels
   const lanModels = options.lanModels
+  const sessionRoutes = options.sessionRoutes
   const maxAttempts = options.maxAttempts ?? 8
   // Per-process secret. The adapter resolves this as the OpenAI apiKey; the
   // shim never forwards it, because the real token comes from the pool.
@@ -473,6 +484,43 @@ export function createWorkBuddyShim(options: WorkBuddyShimOptions): WorkBuddyShi
   const server: Server = createServer((req, res) => {
     void handle(req, res)
   })
+  /**
+   * The conversation this request belongs to, from the session-affinity header.
+   *
+   * Read ONCE per request and carried down, rather than re-read at each record
+   * site: the header is on the incoming request, and several record sites run
+   * after the response has begun, where `req` is no longer a natural argument.
+   *
+   * `undefined` is the honest answer for a caller that sends no session header —
+   * a LAN client, a direct `curl` against the shim, or a host generation that
+   * predates the affinity flag. Nothing downstream may treat that as an error.
+   */
+  function sessionOf(req: IncomingMessage): string | undefined {
+    return sessionIdFromHeaders(req.headers as Readonly<Record<string, string | string[] | undefined>>)
+  }
+  /**
+   * Remember which channel and account served one conversation.
+   *
+   * Called at the point a call is CONFIRMED served, never at selection time: a
+   * gateway that 429s the account the pool just picked has not served anything,
+   * and writing it here would make the chip report an account the user never
+   * actually ran on. No-op without a book or a session id, so both optional
+   * inputs stay genuinely optional.
+   */
+  function noteSessionRoute(
+    sessionId: string | undefined,
+    served: { channel: string; region?: string | undefined; model: string; account?: string | undefined },
+  ): void {
+    if (sessionRoutes === undefined || sessionId === undefined) return
+    sessionRoutes.record({
+      sessionId,
+      channel: served.channel,
+      region: served.region ?? '',
+      model: served.model,
+      account: served.account ?? '',
+      at: Date.now(),
+    })
+  }
   // Try ordinary eligible accounts first: a reserve on another account must
   // never put a catalog request on the healthy account's critical path.
   async function acquireForRequest(modelId: string | undefined, conversationKey: string | undefined, signal: AbortSignal) {
@@ -606,6 +654,7 @@ function withBareModelId(raw: string, modelId: string): string {
     modelId: string,
     target: { source: ExtraLaneSource; modelId: string; lane: string },
     signal: AbortSignal,
+    sessionId: string | undefined,
   ): Promise<void> {
     const frames: string[] = []
     try {
@@ -625,6 +674,11 @@ function withBareModelId(raw: string, modelId: string): string {
       writeOpenAIError(res, KIND_STATUS[kind], `${target.lane}_${kind}`, message)
       return
     }
+    // Recorded only after the lane returned normally: the free lane owns a pooled
+    // gateway credential rather than an account this plugin picked, so there is no
+    // account label to name — `''` is the honest value and the chip prints the
+    // channel alone.
+    noteSessionRoute(sessionId, { channel: target.lane, model: modelId })
     if (wantsNonStreaming(raw)) {
       writeJson(res, 200, bufferedFramesToCompletion(frames, modelId))
       return
@@ -661,6 +715,7 @@ function withBareModelId(raw: string, modelId: string): string {
     modelId: string,
     target: { channel: string; modelId: string },
     signal: AbortSignal,
+    sessionId: string | undefined,
   ): Promise<void> {
     if (channels === undefined) return
     let body: Record<string, unknown>
@@ -710,6 +765,7 @@ function withBareModelId(raw: string, modelId: string): string {
         modelId: target.modelId,
         body,
         signal,
+        sessionId,
       })) {
         if (event.kind === 'usage') {
           usage = event.usage
@@ -778,6 +834,12 @@ function withBareModelId(raw: string, modelId: string): string {
       writeOpenAIError(res, 502, 'channel_upstream_error', `channel ${target.channel}: ${message}`)
       return
     }
+    // Past this point the channel genuinely answered, so this conversation's
+    // route is a fact rather than a guess. The account is left empty on purpose:
+    // a sign-in channel picks its own account inside the host's adapter, which
+    // does not report it back, and naming one here would put an unverified label
+    // on screen.
+    noteSessionRoute(sessionId, { channel: target.channel, model: target.modelId })
     if (nonStreaming) {
       writeJson(res, 200, {
         id: completionId,
@@ -850,6 +912,7 @@ function withBareModelId(raw: string, modelId: string): string {
     modelId: string,
     parsed: { providerId: string; modelId: string },
     signal: AbortSignal,
+    sessionId: string | undefined,
   ): Promise<void> {
     const store = aggregate?.readStore()
     if (store === undefined) {
@@ -901,6 +964,11 @@ function withBareModelId(raw: string, modelId: string): string {
       writeOpenAIError(res, 500, 'aggregate_internal', error instanceof Error ? error.message : String(error))
       return
     }
+    // The provider answered, so this conversation's route is a fact. The
+    // aggregate lane's "account" is the user's own key, which
+    // `resolveAggregateProvider` already resolved — repeating the vendor id in
+    // the account slot would print the same string twice on the chip.
+    noteSessionRoute(sessionId, { channel: parsed.providerId, model: parsed.modelId })
     if (wantsNonStreaming(raw)) {
       writeJson(res, 200, bufferedFramesToCompletion(frames, modelId))
       return
@@ -1121,6 +1189,7 @@ function withBareModelId(raw: string, modelId: string): string {
     raw: string,
     row: ComboModelRow,
     signal: AbortSignal,
+    sessionId: string | undefined,
   ): Promise<void> {
     const store = aggregate?.readStore()
     const sources = {
@@ -1308,6 +1377,14 @@ function withBareModelId(raw: string, modelId: string): string {
         }
         // Buffered payloads become the response, exactly as the aggregate branch
         // does below.
+        // A sign-in channel member answered. The account stays empty: its adapter
+        // picked one from the vendor account pool and does not report which.
+        noteSessionRoute(sessionId, {
+          channel: channelTarget.channel,
+          region: '',
+          model: member.modelId,
+          account: '',
+        })
         if (wantsNonStreaming(raw)) {
           writeJson(res, 200, bufferedFramesToCompletion(hostFrames, member.modelId))
           return
@@ -1357,6 +1434,14 @@ function withBareModelId(raw: string, modelId: string): string {
           const memberUsage = usageRecorder === undefined
             ? undefined
             : { recorder: usageRecorder, region: region ?? 'cn', model: member.modelId, turnId }
+          // A pool member answered on this account, so the chain resolved to a
+          // real account the reader can go find on the pool card.
+          noteSessionRoute(sessionId, {
+            channel: 'workbuddy',
+            region: region ?? 'cn',
+            model: member.modelId,
+            account: account.label,
+          })
           if (wantsNonStreaming(raw)) {
             await serveSuccessfulJson(
               res,
@@ -1439,6 +1524,21 @@ function withBareModelId(raw: string, modelId: string): string {
             + `${String(switches.length)}/${String(members.length)}: ${switches.join('; ')}`,
         )
       }
+      /*
+        哪个成员答的，就记哪个。
+        链条的卖点正是「坏的那家被跳过了」，把整条会话记成 `combo:<id>` 会让读者
+        以为世界上有一个叫这个名字的厂商。
+
+        这里只可能是聚合成员：扫码渠道成员和池成员各自有自己的成功分支，都在上面
+        提前 return 了，所以到达这一行的必然是第三方厂商。region 留空是对的 ——
+        地区是 WorkBuddy 那一层的事实，对聚合车道没有意义。
+      */
+      noteSessionRoute(sessionId, {
+        channel: member.providerId ?? member.modelId,
+        region: '',
+        model: member.modelId,
+        account: '',
+      })
       if (wantsNonStreaming(raw)) {
         writeJson(res, 200, bufferedFramesToCompletion(frames, member.modelId))
         return
@@ -1488,6 +1588,7 @@ function withBareModelId(raw: string, modelId: string): string {
       return
     }
     const raw = (await readBody(req)).toString('utf8')
+    const sessionId = sessionOf(req)
     const controller = new AbortController()
     req.on('close', () => controller.abort())
     // The request's target model. Read BEFORE any WorkBuddy preparation: the
@@ -1528,7 +1629,7 @@ function withBareModelId(raw: string, modelId: string): string {
       ? undefined
       : aggregate.catalog.findCombo(modelId)
     if (comboRow !== undefined) {
-      await serveComboCompletion(res, raw, comboRow, controller.signal)
+      await serveComboCompletion(res, raw, comboRow, controller.signal, sessionId)
       return
     }
     // A `combo:` id that no longer resolves — the chain was disabled, or every
@@ -1546,7 +1647,7 @@ function withBareModelId(raw: string, modelId: string): string {
     }
     const aggregateRow = aggregateRowFor(modelId)
     if (aggregateRow !== undefined) {
-      await serveAggregateCompletion(res, raw, modelId as string, aggregateRow, controller.signal)
+      await serveAggregateCompletion(res, raw, modelId as string, aggregateRow, controller.signal, sessionId)
       return
     }
     // The pooled免密 and sealed co-paid lanes are decided by the id PREFIX. They
@@ -1556,7 +1657,7 @@ function withBareModelId(raw: string, modelId: string): string {
     // to run on every pool request.
     const extraTarget = extraLaneFor(modelId)
     if (extraTarget !== undefined) {
-      await serveExtraCompletion(res, raw, modelId as string, extraTarget, controller.signal)
+      await serveExtraCompletion(res, raw, modelId as string, extraTarget, controller.signal, sessionId)
       return
     }
     const lane = extraLaneNamed(modelId)
@@ -1584,7 +1685,7 @@ function withBareModelId(raw: string, modelId: string): string {
     if (channels !== undefined && modelId !== undefined) {
       const target = channels.resolve(modelId)
       if (target !== undefined) {
-        await serveChannelCompletion(res, raw, modelId, target, controller.signal)
+        await serveChannelCompletion(res, raw, modelId, target, controller.signal, sessionId)
         return
       }
     }
@@ -1728,6 +1829,22 @@ function withBareModelId(raw: string, modelId: string): string {
       tried.push(account.label)
       const result = await client.chatStream(account.credential, prepared, controller.signal, conversationKey)
       if (result.ok) {
+        /**
+         * The pool answered on THIS account, so that is what this conversation
+         * is running on.
+         *
+         * Recorded here rather than in the stream forwarder because this is the
+         * one frame that sees both facts together: `account` is the one the
+         * upstream accepted, and `sessionId` is this request's own. A failed
+         * attempt above deliberately records nothing — a 429 on the account the
+         * pool picked first is not "this session is on that account".
+         */
+        noteSessionRoute(sessionId, {
+          channel: 'workbuddy',
+          region: region ?? 'cn',
+          model: modelId ?? '(none)',
+          account: account.label,
+        })
         // Success is filed by the stream forwarder, the only place that knows
         // when the stream really ended and what it cost.
         if (wantsNonStreaming(raw)) {
@@ -1863,6 +1980,19 @@ function withBareModelId(raw: string, modelId: string): string {
         })(),
       })
       if (recovered.ok) {
+        /**
+         * The compaction retry is another physical call for the SAME user
+         * request, and it may land on a different account than the first try
+         * did. That makes this record the later, truer one: "what is this
+         * conversation running on right now" is answered by the account that
+         * actually produced the answer the user reads.
+         */
+        noteSessionRoute(sessionId, {
+          channel: 'workbuddy',
+          region: region ?? 'cn',
+          model: modelId ?? '(none)',
+          account: recovered.account.label,
+        })
         if (wantsNonStreaming(raw)) {
           await serveSuccessfulJson(
             res,

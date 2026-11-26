@@ -158,6 +158,17 @@ export interface ChannelLane {
     modelId: string
     body: Record<string, unknown>
     signal: AbortSignal
+    /**
+     * The DSH Session this turn belongs to, when the caller knows it.
+     *
+     * Forwarded onto the host call as `sessionId`. The host's own `LlmAdapter`
+     * seam already carries that field (`GenerateOptions.sessionId`), and dropping
+     * it here was the reason a channel model's turn could not be attributed to
+     * the conversation that caused it: the pool lanes get the id from pi-ai's
+     * affinity header, and this lane — which rebuilds the request by hand — has
+     * to pass it explicitly.
+     */
+    sessionId?: string | undefined
   }) => AsyncGenerator<ChannelLaneEvent>
 }
 
@@ -219,7 +230,7 @@ export function createChannelLane(options: {
       if (!providers().includes(channel)) return undefined
       return { channel, modelId: id.slice(separator + 1) }
     },
-    turn: (input) => runTurn({ llm, attachments: attachments?.(), ...input }),
+    turn: (input) => runTurn({ llm, attachments: attachments?.(), sessionId: input.sessionId, ...input }),
   }
 }
 
@@ -393,8 +404,9 @@ async function* runTurn(input: {
   body: Record<string, unknown>
   signal: AbortSignal
   attachments: ChannelLaneAttachments | undefined
+  sessionId: string | undefined
 }): AsyncGenerator<ChannelLaneEvent> {
-  const { llm, channel, modelId, body, signal, attachments } = input
+  const { llm, channel, modelId, body, signal, attachments, sessionId } = input
   const incoming = Array.isArray(body.messages) ? body.messages as IncomingMessage[] : []
   // Awaited one message at a time rather than mapped: an image part has to be
   // written to the store before the block can name it, and a lost write must
@@ -429,6 +441,21 @@ async function* runTurn(input: {
     messages: converted.filter(message => message.role !== 'system'),
     signal,
   }
+  /**
+   * Carry the Session id through to the host adapter.
+   *
+   * This lane rebuilds the request from an OpenAI body, so every host field has
+   * to be re-attached by hand — and `sessionId` was the one nobody had a reason
+   * to add until the composer started reporting which account a conversation
+   * runs on. Without it, a channel model's turn reaches the host with no session
+   * identity at all, and half the picker's models would be invisible to that
+   * readout.
+   *
+   * Assigned only when known: `sessionId: undefined` is not the same as omitting
+   * the key on this seam, because the host spreads the options into a request it
+   * freezes and a present-but-undefined field reads as a session named nothing.
+   */
+  if (sessionId !== undefined) options.sessionId = sessionId
   if (system.length > 0) options.system = system[0]!.content
   if (typeof body.max_tokens === 'number') options.maxTokens = body.max_tokens
   if (typeof body.temperature === 'number') options.temperature = body.temperature
