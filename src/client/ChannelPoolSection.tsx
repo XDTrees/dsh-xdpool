@@ -53,6 +53,7 @@ import {
   setChannelModelContextBudget,
   sortChannelModels,
   type ChannelBalance,
+  type ChannelCreditPackage,
   type ChannelCreditStatus,
   type ChannelModel,
   type ChannelProviderStatus,
@@ -1094,6 +1095,48 @@ const MARVIS_DAILY_TOKENS = 10_000_000
 
 function amount(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2)
+}
+
+/**
+ * 这一包的 `remaining` 是百分比还是绝对值。
+ *
+ * `ChannelCreditPackage.remaining` 的注释写「百分比」，但那只在**配额类渠道**成立：
+ * Gemini 的窗口是 `remaining: 62, total: 100, unit: "%"`；qoder / codearts / trae 这些积分渠道
+ * 给的是 `remaining: 1748, total: 1900`，`remaining` 就是剩余积分。
+ */
+function packageIsPercent(entry: ChannelCreditPackage | undefined): boolean {
+  if (entry === undefined) return false
+  return entry.unit === "%" || entry.unit === "percent" || entry.unit === "quota"
+}
+
+/** 进度条用的百分比：绝对值按 remaining / total 折算，百分比原样。 */
+function packagePercent(entry: ChannelCreditPackage | undefined): number | undefined {
+  if (entry === undefined) return undefined
+  if (packageIsPercent(entry)) {
+    return typeof entry.remaining === "number" ? Math.max(0, Math.min(100, Math.round(entry.remaining))) : undefined
+  }
+  if (typeof entry.total === "number" && entry.total > 0 && typeof entry.remaining === "number") {
+    return Math.max(0, Math.min(100, Math.round((entry.remaining / entry.total) * 100)))
+  }
+  return undefined
+}
+
+/**
+ * 「积分明细」里的一行：`剩余 / 总量`。
+ *
+ * 旧实现两种量纲都按 `total * remaining / 100` 算，于是 qoder 的 `1748 / 1900` 显示成
+ * `33212 / 1900`（1900 * 1748 / 100）。这个系数只对百分比包成立。
+ */
+function packageDetailText(entry: ChannelCreditPackage): string {
+  const percent = packageIsPercent(entry)
+  if (typeof entry.total === "number" && typeof entry.remaining === "number") {
+    const left = percent ? Math.round((entry.total * entry.remaining) / 100) : entry.remaining
+    return `${amount(left)} / ${amount(entry.total)}`
+  }
+  if (typeof entry.total === "number" && typeof entry.amount === "number") return `${amount(entry.amount)} / ${amount(entry.total)}`
+  if (typeof entry.remaining === "number") return percent ? `剩余 ${String(Math.round(entry.remaining))}%` : amount(entry.remaining)
+  if (typeof entry.amount === "number") return amount(entry.amount)
+  return "—"
 }
 async function cachedProviderStatus(providers: readonly string[]): Promise<ChannelRpcEnvelope> {
   // The key is the provider SET, not just a timestamp: a channel list that changed
@@ -3116,7 +3159,7 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
                 const disabled = account.enabled === false
                 const soon = expiryText(account.expiresAt, t)
                 /* 进度条：有分包就用第一包的剩余百分比；没有就不画（不编一个数） */
-                const pct = buckets[0]?.remaining
+                const pct = packagePercent(buckets[0])
                 return (
                   <article key={account.id} className="acct" data-off={disabled}>
                     <div className="acct-head">
@@ -3154,7 +3197,7 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
                       {soon === undefined ? null : <span className="acct-soon">{soon}</span>}
                     </div>
                     {pct === undefined ? null : (
-                      <div className="acct-bar" title={buckets.map(b => `${b.name} ${String(Math.round(b.remaining ?? 0))}%`).join(' · ')}>
+                      <div className="acct-bar" title={buckets.map(b => `${b.name} ${packageDetailText(b)}`).join(' · ')}>
                         <span style={{ width: `${String(Math.max(0, Math.min(100, Math.round(pct))))}%` }} />
                       </div>
                     )}
@@ -3164,20 +3207,8 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
                         {buckets.map((b, i) => (
                           <div className="fact" key={`${b.name}-${String(i)}`}>
                             <dt>{b.name}</dt>
-                            {/* 设计稿写的是「398 / 500」—— 剩余 / 总量 */}
-                            <dd>
-                              {typeof b.total === 'number'
-                                ? <>
-                                    {typeof b.remaining === 'number'
-                                      ? amount(Math.round(b.total * b.remaining / 100))
-                                      : (typeof b.amount === 'number' ? amount(b.amount) : '—')}
-                                    {' / '}
-                                    {amount(b.total)}
-                                  </>
-                                : typeof b.remaining === 'number'
-                                  ? `剩余 ${String(Math.round(b.remaining))}%`
-                                  : '—'}
-                            </dd>
+                            {/* 设计稿写的是「398 / 500」—— 剩余 / 总量；只有百分比包才按比例折算 */}
+                            <dd>{packageDetailText(b)}</dd>
                           </div>
                         ))}
                         {channel.credits?.status !== true && checkin === undefined ? null : (
