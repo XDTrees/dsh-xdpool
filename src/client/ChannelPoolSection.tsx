@@ -3113,10 +3113,12 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
                 const value = balance === undefined ? undefined : balanceAmount(balance.balance)
                 const checkin = statusOf(account.id)
                 const buckets = balance === undefined ? [] : balancePackages(balance.balance)
+                /* 已用完（remaining = 0）的批次不进明细：一次几十行，全是没有的数字 */
+                const visibleBuckets = buckets.filter(b => typeof b.remaining !== "number" || b.remaining > 0)
                 const disabled = account.enabled === false
                 const soon = expiryText(account.expiresAt, t)
                 /* 进度条：有分包就用第一包的剩余百分比；没有就不画（不编一个数） */
-                const pct = buckets[0]?.remaining
+                const pct = visibleBuckets[0]?.remaining
                 return (
                   <article key={account.id} className="acct" data-off={disabled}>
                     <div className="acct-head">
@@ -3161,7 +3163,7 @@ export function ChannelPoolSection({ t, active, onAddAccount, autoClaim, autoCla
                     <details className="acct-detail">
                       <summary>{t?.('channelpool.accountDetail') ?? '积分明细'}</summary>
                       <dl className="facts">
-                        {buckets.map((b, i) => (
+                        {visibleBuckets.map((b, i) => (
                           <div className="fact" key={`${b.name}-${String(i)}`}>
                             <dt>{b.name}</dt>
                             {/* 设计稿写的是「398 / 500」—— 剩余 / 总量 */}

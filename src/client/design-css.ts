@@ -1031,9 +1031,11 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
   display:flex;flex-direction:column;gap:4px;margin:0;
   padding:var(--s2);border-radius:var(--r-md);
   background:var(--surface-2);
+  /* 一个账号可能有几十个积分包：限高 + 内部滚动，卡片高度不再随批次数量膨胀 */
+  max-height:220px;overflow:auto;overscroll-behavior:contain;
 }
 .acct-detail>.facts .fact{display:flex;align-items:baseline;gap:var(--s2);font-size:var(--fs-xs)}
-.acct-detail>.facts .fact dt{flex:0 0 auto;color:var(--faint);min-width:56px}
+.acct-detail>.facts .fact dt{flex:0 0 auto;color:var(--faint);min-width:56px;max-width:58%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .acct-detail>.facts .fact dd{flex:1 1 auto;margin:0;color:var(--text);font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .acct-detail>summary{
   display:inline-flex;align-items:center;gap:4px;
@@ -1068,7 +1070,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 .acct-soon{color:var(--warn);font-size:var(--fs-xs)}
 .acct-bar{height:3px;border-radius:var(--r-pill);background:var(--surface-3);overflow:hidden}
 .acct-bar span{display:block;height:100%;border-radius:var(--r-pill);background:var(--accent)}
-.acct-more{display:flex;align-items:center;gap:6px;padding-top:var(--s1)}
+.acct-more{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:var(--s1)}
 .tiny{padding:2px 9px;border-radius:var(--r-sm);border:1px solid var(--line-2);background:transparent;color:var(--muted);font-size:var(--fs-xs);line-height:17px;white-space:nowrap;transition:background var(--t-base) var(--ease),color var(--t-base) var(--ease)}
 .tiny:hover{background:var(--surface-2);color:var(--text)}
 .tiny-primary{border-color:transparent;background:var(--accent);color:var(--accent-ink);font-weight:600}
@@ -1757,7 +1759,7 @@ export const DESIGN_DETAIL_CSS = `/* XD Pool 公共骨架
 .acct-head{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap}
 .acct-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:0 0 auto}
 .acct-name{font-size:var(--fs-md);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1 1 auto}
-.acct-more{display:flex;align-items:center;gap:6px;margin-top:auto}
+.acct-more{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:auto}
 
 /* token 用量：比积分条更显眼，因为每天归零 */
 .quota{display:flex;flex-direction:column;gap:5px}
