@@ -233,26 +233,50 @@ export function apply(ctx: WorkBuddyClientContext): void {
       console.error('[dsh-xdpool] sidebar entry unavailable (settings page unaffected):', error)
     }
     /**
-     * The credit dot beside the model name, in the composer's own row.
+     * The credit dot beside the model name, on the composer's toolbar row.
      *
-     * `conversation.composer.dock` is inside `InputBar`, on the line that already holds
-     * the back button, the model name and the reasoning level. That adjacency is the
-     * point: the dot is a statement about the model it sits next to, so putting it
-     * anywhere else would leave the reader to work out which channel it describes.
+     * The row it belongs to is `conversation.input.right` — the tool row that holds the model
+     * name and the reasoning level (`InputBar` renders it inside `.standardControls`, just
+     * before the model slot). The dot is a statement about the model it sits next to, so it
+     * has to live on that line.
      *
-     * It renders on the `composer` variant only (the host gates it), and does not appear
-     * on the hero screen where no session exists yet.
+     * It used to register into `conversation.composer.dock`. That slot is NOT the same line:
+     * `InputBar` renders the dock as a separate row BELOW the card, and hosts that restyle the
+     * composer move or empty that row — the Claude-style theme pulls the tool row into the card
+     * and leaves the dock blank, which strands the dot on an empty line, visually detached from
+     * the model it describes. `conversation.input.right` is a `list` slot declared by the same
+     * package (`dsh-client-ui-conversation`), so it is the supported placement for a control
+     * that belongs beside the model.
      *
-     * Own try/catch: a host line without this slot must not take the settings page down
-     * with it.
+     * It renders on the `composer` variant only (the host gates it), and does not appear on
+     * the hero screen where no session exists yet.
+     *
+     * Both registrations stay behind one try/catch, and the dock remains the fallback for a
+     * host line that does not declare `conversation.input.right`: a rejected slot must not
+     * take the settings page down with it.
      */
     try {
-      ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
-        name: 'conversation.composer.dock',
+      const dotEntry = (slotName: string): {
+        name: string
+        id: string
+        order: number
+        inject: () => { t?: PoolCardInjected['t'] }
+      } => ({
+        name: slotName,
         id: 'xdpool-credit-dot',
         order: 20,
         inject: (): { t?: PoolCardInjected['t'] } => (t === undefined ? {} : { t }),
-      }, CreditDot))
+      })
+      const registerDot = (slotName: string) => (): (() => void) | undefined => {
+        try {
+          return ctx.slots.register(dotEntry(slotName), CreditDot)
+        } catch (error: unknown) {
+          console.error(`[dsh-xdpool] the credit dot could not use the ${slotName} slot:`, error)
+          if (slotName === 'conversation.composer.dock') return undefined
+          return ctx.slots.register(dotEntry('conversation.composer.dock'), CreditDot)
+        }
+      }
+      ctx.slots.inject('conversation.input.right', registerDot('conversation.input.right'))
     } catch (error: unknown) {
       console.error('[dsh-xdpool] composer credit dot unavailable (everything else unaffected):', error)
     }

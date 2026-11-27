@@ -56,4 +56,8 @@ export const CREDIT_DOT_CSS = `
 /* 认出渠道的依据、「同一模型的其他渠道」这种小字 */
 .dsm-xdpool-dotpanel-k-sub{display:block;font-size:11px;line-height:15px;color:var(--dsw-alias-label-tertiary,#8a90a0);margin-top:-3px}
 .dsm-xdpool-dotpanel-more .dsm-xdpool-dotpanel-k-sub{margin:0 0 2px}
+/* 工具行里的落位：20px 高，与模型选择器那一排对齐。克劳德风格把工具行收进卡片，
+   圆点落在模型名左边；它自家的 seat 自带 4px 内边距，这里再让出 6px 呼吸。 */
+.dsm-xdpool-dotwrap{height:20px}
+body[data-dsh-claude-style] .dsm-xdpool-dotwrap{margin:0 6px 0 0}
 `
