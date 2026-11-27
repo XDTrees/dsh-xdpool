@@ -34,8 +34,72 @@ import {
 import type { MarketExpert, TaskEventChain } from './task-events.ts'
 import { DEFAULT_AUTOMATION_HOURS, type PoolWebAutomationItem } from './status-paths.ts'
 
+/**
+ * Read a non-negative millisecond/minute knob from the environment.
+ *
+ * The pacing knobs live in the environment rather than in the settings
+ * document because they are a mitigation, not a feature: retuning them after a
+ * gateway behaviour change must not require a settings migration, and an
+ * operator who has to re-install a patched build to change a number will not
+ * change it at all.
+ */
+function pacingEnv(name: string, fallback: number): number {
+  const raw = typeof process === 'object' && process !== null ? process.env[name] : undefined
+  if (typeof raw !== 'string' || raw.trim() === '') return fallback
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
 /** Per-account gap between upstream calls, so a pool of accounts is not a burst. */
 export const AUTOMATION_ACCOUNT_DELAY_MS = 800
+
+/** Base gap between two upstream calls; see {@link pacedDelay}. */
+export const PACING_ACCOUNT_DELAY_MS = pacingEnv('XDPOOL_ACCOUNT_DELAY_MS', 6_000)
+
+/** Uniform jitter added on top of the base gap. 0 restores the upstream timing. */
+export const PACING_ACCOUNT_DELAY_JITTER_MS = pacingEnv('XDPOOL_ACCOUNT_DELAY_JITTER', 6_000)
+
+/**
+ * Spread, in minutes, across which a configured hour's job is actually fired.
+ * 0 restores the upstream "top of the hour" timing.
+ */
+export const PACING_SCHEDULE_JITTER_MIN = pacingEnv('XDPOOL_SCHEDULE_JITTER_MIN', 45)
+
+/**
+ * Gap to sleep between two upstream calls, with optional uniform jitter.
+ *
+ * WHY THIS EXISTS. A fixed millisecond gap across dozens of accounts sharing
+ * one upstream is a machine signature: measured 2026-11-27, 27 of 38 domestic
+ * accounts had their refresh token revoked by idsvc inside a 59-minute window
+ * that began right after three automation passes had run every account at a
+ * constant 800 ms. Jitter makes the cadence irregular without making the pass
+ * meaninglessly slow; with the jitter at 0 the behaviour is exactly the
+ * original, so the change is a deliberate act rather than a silent default.
+ */
+export function pacedDelay(baseMs: number): number {
+  if (!(baseMs > 0)) return 0
+  if (!(PACING_ACCOUNT_DELAY_JITTER_MS > 0)) return baseMs
+  return baseMs + Math.floor(Math.random() * PACING_ACCOUNT_DELAY_JITTER_MS)
+}
+
+/**
+ * Minute offset inside a configured hour at which that slot actually fires.
+ *
+ * Derived FROM THE SLOT STRING, not rolled per run, so a restart, a re-tick or
+ * a manual run cannot re-fire a slot early (which would double-spend a pass)
+ * and cannot lose it either. Every job firing on the exact top of its hour is
+ * the second machine signature the same revocation event followed.
+ */
+export function slotMinuteOffset(slot: string): number {
+  const span = Math.min(59, Math.floor(PACING_SCHEDULE_JITTER_MIN))
+  if (!(span > 0)) return 0
+  let hash = 2166136261
+  for (let i = 0; i < slot.length; i += 1) {
+    hash ^= slot.charCodeAt(i)
+    hash = Math.imul(hash, 16777619) >>> 0
+  }
+  return hash % (span + 1)
+}
 /**
  * Gap between two expert summon chains.
  *
@@ -450,6 +514,7 @@ function zonedParts(date: Date, timeZone: string = AUTOMATION_TIME_ZONE): {
   month: string
   day: string
   hour: string
+  minute: string
 } {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -457,10 +522,17 @@ function zonedParts(date: Date, timeZone: string = AUTOMATION_TIME_ZONE): {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
+    minute: '2-digit',
     hourCycle: 'h23',
   }).formatToParts(date)
   const pick = (type: string): string => parts.find(part => part.type === type)?.value ?? '00'
-  return { year: pick('year'), month: pick('month'), day: pick('day'), hour: pick('hour') }
+  return {
+    year: pick('year'),
+    month: pick('month'),
+    day: pick('day'),
+    hour: pick('hour'),
+    minute: pick('minute'),
+  }
 }
 
 export function dayKey(date: Date, timeZone: string = AUTOMATION_TIME_ZONE): string {
@@ -638,7 +710,7 @@ export class WorkBuddyScheduler {
     this.client = client
     this.logger = options.logger ?? {}
     this.now = options.now ?? (() => new Date())
-    this.delayMs = options.accountDelayMs ?? AUTOMATION_ACCOUNT_DELAY_MS
+    this.delayMs = options.accountDelayMs ?? PACING_ACCOUNT_DELAY_MS
     this.eventScoreWaitMs = options.eventScoreWaitMs ?? EVENT_SCORE_WAIT_MS
     this.expertGapMs = options.expertGapMs ?? EXPERT_SUMMON_GAP_MS
     this.loadEarnings = options.loadEarnings
@@ -922,14 +994,21 @@ export class WorkBuddyScheduler {
   private dueSlot(kind: JobKind, now: Date): string | undefined {
     const hours = this.hoursOf(kind)
     if (hours.length === 0) return undefined
-    const current = Number(zonedParts(now).hour)
+    const parts = zonedParts(now)
+    const current = Number(parts.hour)
+    const currentMinute = Number(parts.minute)
     const today = dayKey(now)
     const fired = this.firedSlotsOf(kind)
     // Ordered by configured hour, so the first match is the earliest due one.
     for (const candidate of [...hours].sort((a, b) => a - b)) {
       if (candidate > current) break
       const slot = `${today}T${String(candidate).padStart(2, '0')}`
-      if (!fired.has(slot)) return slot
+      if (fired.has(slot)) continue
+      // Hold the slot until its per-slot minute offset has arrived. Only the
+      // CURRENT hour can be held: a slot whose hour has already passed is a
+      // catch-up and must fire at once, jitter or not.
+      if (candidate === current && currentMinute < slotMinuteOffset(slot)) break
+      return slot
     }
     return undefined
   }
@@ -1275,7 +1354,7 @@ export class WorkBuddyScheduler {
         this.logger.warn?.(`automation ${accountWord} ${account.label} failed:`, error)
       }
       // Serial spacing, but never sleep after the final account.
-      if (index < accounts.length - 1 && this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
+      if (index < accounts.length - 1 && this.delayMs > 0 && !this.stopped) await sleep(pacedDelay(this.delayMs))
     }
 
     const state = this.states[kind]
@@ -1417,7 +1496,7 @@ export class WorkBuddyScheduler {
             this.logger.warn?.(`automation events ${account.label}: ${task.taskCode} failed:`, error)
             break
           }
-          if (this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
+          if (this.delayMs > 0 && !this.stopped) await sleep(pacedDelay(this.delayMs))
         }
       }
     }
@@ -1603,7 +1682,7 @@ export class WorkBuddyScheduler {
     }
     const expert = expertFromTask(expertId, task.title)
     await this.client.reportDesktopEvents(credential, expertSummonEvents(expert))
-    if (this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
+    if (this.delayMs > 0 && !this.stopped) await sleep(pacedDelay(this.delayMs))
     const chat = await this.client.openConversation(credential, expert.expertId)
     if (chat === undefined) throw new Error(`${task.taskCode}: no server conversation`)
     return [{
@@ -1640,7 +1719,7 @@ export class WorkBuddyScheduler {
       if (this.stopped) break
       try {
         await this.client.reportDesktopEvents(credential, expertSummonEvents(expert))
-        if (this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
+        if (this.delayMs > 0 && !this.stopped) await sleep(pacedDelay(this.delayMs))
         const chat = await this.client.openConversation(credential, expert.expertId)
         if (chat === undefined) continue
         out.push({
@@ -1680,7 +1759,7 @@ export class WorkBuddyScheduler {
       this.logger.warn?.('automation events lighthouse list:', error)
     }
     await this.client.reportDesktopEvents(credential, expertSummonEvents(expert))
-    if (this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
+    if (this.delayMs > 0 && !this.stopped) await sleep(pacedDelay(this.delayMs))
     const chat = await this.client.openConversation(credential, expert.expertId)
     if (chat === undefined) throw new Error('Expert_lighthouse: no server conversation')
     const use = expertActualUseEvent(expert, chat.conversationId, chat.requestId, 'LOCAL')
@@ -1770,7 +1849,7 @@ export class WorkBuddyScheduler {
         items.push({ title: label, status: 'already' })
         this.logger.info?.(`automation claim ${account.label}: ${task.taskCode} already claimed`)
       }
-      if (this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
+      if (this.delayMs > 0 && !this.stopped) await sleep(pacedDelay(this.delayMs))
     }
 
     return { claimed, credit, energy, claimableCount: claimable.length, titles, items }
@@ -1802,7 +1881,7 @@ export class WorkBuddyScheduler {
       } catch (error: unknown) {
         this.logger.warn?.(`automation streak ${account.label}: redeem ${tier.tier} failed:`, error)
       }
-      if (this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
+      if (this.delayMs > 0 && !this.stopped) await sleep(pacedDelay(this.delayMs))
     }
 
     // Draw whatever the redemptions just granted, plus anything left over.
@@ -1818,7 +1897,7 @@ export class WorkBuddyScheduler {
         // read before it started, and a failing draw would otherwise spin.
         break
       }
-      if (this.delayMs > 0 && !this.stopped) await sleep(this.delayMs)
+      if (this.delayMs > 0 && !this.stopped) await sleep(pacedDelay(this.delayMs))
     }
 
     // Nothing to redeem yet is the normal state, not a fault: hand back the
